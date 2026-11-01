@@ -1,3 +1,5 @@
+> **Derek's development fork.** This fork is being developed around a clearer generation workspace, editable LoRA controls, named aspect ratios, in-window exploration, and a persistent image library. The agreed scope and current implementation status are in [the development plan](docs/FORK-PLAN.md). The interface and library changes are planned and are not implemented yet. This README was updated for the fork on November 1, 2026.
+
 English · [Français](README.fr.md)
 
 # Siliconed
