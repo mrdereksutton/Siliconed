@@ -53,4 +53,6 @@ The full local revision can later be offered upstream as independently reviewabl
 
 The GitHub fork and local development branch are created. This document records the agreed scope. The interface and library changes are not implemented yet. The installed release is Siliconed 0.17; the fork starts from upstream commit `4667d200acb80211b7e51b28ad854a8452127625`.
 
-The Mac has Swift 6.4 and the macOS 27 SDK. The standard app-packaging script also calls `xcstringstool`, which is not present in the installed Command Line Tools. A development build and packaging check comes before interface changes.
+The baseline app compiles successfully with Swift 6.4, the installed macOS 26.5 SDK, and SwiftPM's native build backend. The rendering-engine target also builds. The local macOS 27 SDK fails to provide the SwiftUI macro component needed by this Command Line Tools installation; using the 26.5 SDK resolves that compile failure without source changes.
+
+The standard app-packaging script also calls `xcstringstool`, which is not present in the installed Command Line Tools. Packaging the separate development app remains a setup task. The verified compile command and remaining setup work are in [LOCAL-BUILD.md](LOCAL-BUILD.md).
