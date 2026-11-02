@@ -193,19 +193,26 @@ private struct Wires: View {
 struct RackView: View {
     @Bindable var app: AppState
     @State private var hoversTitle = false
+    /// Fork: the fixed stages (text encoder, image encoder, VAE) and the wire legend are not drawn:
+    /// nothing in them can be set, and each image's details keep their times. `true` brings them back.
+    static let showsStages = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             header
             if app.editingPossible { ImagesNode(app: app).node(.images) }
             PromptNode(app: app).node(.prompt)
-            HStack(alignment: .top, spacing: 10) {
-                textEncoder.node(.textEncoder)
-                if encodesImages { imageEncoder.node(.imageEncoder) }
+            if Self.showsStages {
+                HStack(alignment: .top, spacing: 10) {
+                    textEncoder.node(.textEncoder)
+                    if encodesImages { imageEncoder.node(.imageEncoder) }
+                }
             }
             DiTBox(app: app).node(.dit)
-            vae.node(.vae)
-            legend
+            if Self.showsStages {
+                vae.node(.vae)
+                legend
+            }
         }
         .padding(.leading, 12 + railInset)
         .padding(.trailing, 12 + railInset)
