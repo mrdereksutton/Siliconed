@@ -1,8 +1,7 @@
-// Fork: **the size, picked by aspect ratio and resolution.** Two compact buttons show only the current
-// ratio (its shape and name) and the current resolution; each opens its full list when clicked, the
-// other choices staying out of sight until then. 1K is about a megapixel, 2K about four. The pair names
-// a size in `SizeTable`; a size typed by hand (the pencil) shows its pixels instead. An edit keeps
-// image 1's framing (`DiTBox`), as upstream.
+// Fork: **the size, picked by aspect ratio and resolution.** Two cells show only the current ratio (its
+// shape and name) and the current resolution; each opens its full list when clicked, the other choices
+// staying out of sight until then. 1K is about a megapixel, 2K about four. The pair names a size in
+// `SizeTable`; a size typed by hand shows its pixels instead. An edit keeps image 1's framing, as upstream.
 
 import AppKit
 import Siliconed
@@ -79,8 +78,8 @@ struct SizePicker: View {
     }
 }
 
-/// **The ratio and the resolution as two pills**, each opening its list only when clicked; under the
-/// ratios, a size typed by hand. The size in pixels is the composer's status line.
+/// **The ratio and the resolution as two pills** (upstream's rack, `SizePicker`), each opening its list
+/// only when clicked. The composer shows the same lists in its own panels (`Composer`).
 struct SizePills: View {
     @Bindable var app: AppState
     @State private var choosingRatio = false
@@ -88,8 +87,6 @@ struct SizePills: View {
 
     var body: some View {
         let current = SizeTable.match(app.format)
-        let tier = current?.tier ?? .oneK
-        let ratio = current?.ratio ?? SizeTable.square
         HStack(spacing: 8) {
             Pill(isPresented: $choosingRatio) {
                 if let current {
@@ -100,49 +97,78 @@ struct SizePills: View {
                 }
             } choices: {
                 VStack(alignment: .leading, spacing: 0) {
-                    ChoiceList(title: "Aspect ratio") {
-                        ForEach(SizeTable.ratios) { r in
-                            let fits = app.renders(SizeTable.format(r, tier))
-                            ChoiceRow(selected: current?.ratio == r, enabled: fits || app.renders(SizeTable.format(r, .oneK))) {
-                                app.pickSize(r, fits ? tier : .oneK)
-                                choosingRatio = false
-                            } label: {
-                                RatioShape(ratio: r, side: 14)
-                                Text(verbatim: r.label).monospacedDigit()
-                            }
-                        }
-                    }
-                    Divider().padding(.horizontal, 14)
-                    // The size typed by hand closes the list once taken (its `dismiss`).
-                    CustomSize(app: app, title: "Custom size")
+                    RatioChoices(app: app) { choosingRatio = false }
+                    Rectangle().fill(Silicon.edge).frame(height: 1).padding(.horizontal, 14)
+                    CustomSize(app: app, title: "Custom size") { choosingRatio = false }
                 }
             }
             .help("Aspect ratio")
-            if current != nil {
+            if let current {
                 Pill(isPresented: $choosingTier) {
                     Image(systemName: "diamond").imageScale(.small)
-                    Text(verbatim: tier.label)
+                    Text(verbatim: current.tier.label)
                 } choices: {
-                    ChoiceList(title: "Resolution") {
-                        ForEach(SizeTable.Tier.allCases, id: \.self) { t in
-                            let f = SizeTable.format(ratio, t)
-                            ChoiceRow(selected: t == tier, enabled: app.renders(f)) {
-                                app.pickSize(ratio, t)
-                                choosingTier = false
-                            } label: {
-                                Text(verbatim: t.label).frame(width: 22, alignment: .leading)
-                                // Beyond this Mac's memory: the Mac it needs, said where the choice is made.
-                                if let n = app.macNeeded(f, images: 0) {
-                                    Text("\(String(f.width)) × \(String(f.height)) — needs a Mac with \(String(n)) GB")
-                                        .foregroundStyle(.secondary)
-                                } else {
-                                    Text(verbatim: "\(f.width) × \(f.height)").monospacedDigit().foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    }
+                    TierChoices(app: app) { choosingTier = false }
                 }
                 .help("Resolution")
+            }
+        }
+    }
+}
+
+/// **The aspect ratios**, tallest to widest, each with its shape; a ratio beyond this Mac's memory at
+/// the current resolution falls back to 1K, one this Mac cannot render at all is greyed.
+struct RatioChoices: View {
+    @Bindable var app: AppState
+    let done: () -> Void
+
+    var body: some View {
+        let current = SizeTable.match(app.format)
+        let tier = current?.tier ?? .oneK
+        ChoiceList(title: "Aspect ratio") {
+            ForEach(SizeTable.ratios) { r in
+                let fits = app.renders(SizeTable.format(r, tier))
+                ChoiceRow(selected: current?.ratio == r, enabled: fits || app.renders(SizeTable.format(r, .oneK))) {
+                    app.pickSize(r, fits ? tier : .oneK)
+                    done()
+                } label: {
+                    RatioShape(ratio: r, side: 14)
+                    Text(verbatim: r.label).monospacedDigit()
+                    Spacer(minLength: 8)
+                    let f = SizeTable.format(r, fits ? tier : .oneK)
+                    Text(verbatim: "\(f.width) × \(f.height)").font(Silicon.readout).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+/// **The resolutions** at the current ratio: 1K about a megapixel, 2K about four — with the pixels, or
+/// the Mac a size needs when this one's memory falls short.
+struct TierChoices: View {
+    @Bindable var app: AppState
+    let done: () -> Void
+
+    var body: some View {
+        let current = SizeTable.match(app.format)
+        let tier = current?.tier ?? .oneK
+        let ratio = current?.ratio ?? SizeTable.square
+        ChoiceList(title: "Resolution") {
+            ForEach(SizeTable.Tier.allCases, id: \.self) { t in
+                let f = SizeTable.format(ratio, t)
+                ChoiceRow(selected: t == tier, enabled: app.renders(f)) {
+                    app.pickSize(ratio, t)
+                    done()
+                } label: {
+                    Text(verbatim: t.label).frame(width: 24, alignment: .leading)
+                    // Beyond this Mac's memory: the Mac it needs, said where the choice is made.
+                    if let n = app.macNeeded(f, images: 0) {
+                        Text("\(String(f.width)) × \(String(f.height)) — needs a Mac with \(String(n)) GB")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text(verbatim: "\(f.width) × \(f.height)").font(Silicon.readout).foregroundStyle(.secondary)
+                    }
+                }
             }
         }
     }
@@ -163,9 +189,9 @@ struct RatioShape: View {
     }
 }
 
-// MARK: - Pills
+// MARK: - Pills (upstream's rack) and lists
 
-/// **A pill's face**: an icon and a word on a soft rounded plate, brighter under the pointer or open.
+/// **A pill's face**: an icon and a word on a cell, brighter under the pointer or open.
 struct PillFace<Content: View>: View {
     var active = false
     @ViewBuilder var content: Content
@@ -177,8 +203,8 @@ struct PillFace<Content: View>: View {
             .padding(.horizontal, 11)
             .frame(height: 30)
             .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color.primary.opacity(hovering || active ? 0.15 : 0.08)))
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Palette.hairline))
+                .fill(hovering || active ? Silicon.cellHover : Silicon.cell))
+            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Silicon.edge))
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
             .animation(Motion.pick(.easeOut(duration: 0.12)), value: hovering)
@@ -194,23 +220,11 @@ struct Pill<Label: View, Choices: View>: View {
     var body: some View {
         Button { isPresented.toggle() } label: { PillFace(active: isPresented) { label } }
             .buttonStyle(.plain)
-            // Above the pill: the composer sits at the foot of the window.
             .popover(isPresented: $isPresented, arrowEdge: .top) { choices }
     }
 }
 
-/// A pill that acts at once.
-struct PillButton<Label: View>: View {
-    let action: () -> Void
-    @ViewBuilder var label: Label
-
-    var body: some View {
-        Button(action: action) { PillFace { label } }
-            .buttonStyle(.plain)
-    }
-}
-
-/// The list a pill opens: its title, then one row per choice.
+/// **A list of choices**: its spec-sheet title, then one row per choice.
 struct ChoiceList<Rows: View>: View {
     let title: LocalizedStringKey
     var minWidth: CGFloat = 170
@@ -218,11 +232,10 @@ struct ChoiceList<Rows: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            SpecCaption(title)
                 .padding(.horizontal, 8)
-                .padding(.bottom, 4)
+                .padding(.top, 2)
+                .padding(.bottom, 6)
             rows
         }
         .padding(8)
@@ -230,7 +243,7 @@ struct ChoiceList<Rows: View>: View {
     }
 }
 
-/// A choice: what it is, and a check when it is the current one; lit under the pointer.
+/// A choice: what it is, and a check when it is the current one — on a blue tint; lit under the pointer.
 struct ChoiceRow<Label: View>: View {
     let selected: Bool
     let enabled: Bool
@@ -244,14 +257,16 @@ struct ChoiceRow<Label: View>: View {
                 label
                 Spacer(minLength: 12)
                 Image(systemName: "checkmark")
-                    .font(.caption.weight(.semibold))
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.accentColor)
                     .opacity(selected ? 1 : 0)
             }
             .font(.callout)
             .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color.primary.opacity(hovering ? 0.1 : selected ? 0.06 : 0)))
+            .padding(.vertical, 7)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(selected ? Color.accentColor.opacity(hovering ? 0.24 : 0.16)
+                               : hovering ? Silicon.cellHover : Color.clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

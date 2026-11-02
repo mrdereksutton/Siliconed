@@ -47,10 +47,10 @@ struct Banner: View {
     private var sizeControl: some View {
         VStack(alignment: .trailing, spacing: 6) {
             Text(app.history.count == 1 ? String(localized: "1 image") : String(localized: "\(app.history.count) images"))
-                .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                .font(Silicon.readout).foregroundStyle(.secondary)
             HStack(spacing: 4) {
                 Image(systemName: "photo").imageScale(.small)
-                Slider(value: $app.thumbnailSide, in: 48...140).frame(width: 80).controlSize(.mini)
+                SiliconSlider(value: $app.thumbnailSide, range: 48...140).frame(width: 80)
                 Image(systemName: "photo").imageScale(.large)
             }
             .foregroundStyle(.secondary)
@@ -79,11 +79,13 @@ private struct Thumbnail: View {
             .interpolation(.medium)
             .scaledToFill()
             .frame(width: side * min(1, l / h), height: side * min(1, h / l))
-            .clipShape(RoundedRectangle(cornerRadius: 5))
-            .overlay(RoundedRectangle(cornerRadius: 5)
-                .strokeBorder(marked ? Color.accentColor : hover ? Color.secondary : Palette.hairline,
-                              lineWidth: marked ? (shown ? 3.5 : 2.5) : 1))
-            .opacity(marked || hover ? 1 : 0.88)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(marked ? Color.accentColor : hover ? Silicon.edgeStrong : Silicon.edge,
+                              lineWidth: marked ? (shown ? 3 : 2) : 1))
+            // Fork: the chosen image glows in the app's blue.
+            .shadow(color: marked ? Color.accentColor.opacity(0.55) : .clear, radius: 8)
+            .opacity(marked || hover ? 1 : 0.82)
             .frame(height: side + 4)
             .contentShape(Rectangle())
             .onHover { hover = $0 }
@@ -271,7 +273,7 @@ struct MenuEntry: View {
             }
             Button(entry.grid == nil ? "Reuse These Settings" : "Reuse This Grid") { app.restoreSettings(entry) }
             if entry.grid == nil { EditButtons(app: app, entry: entry) }
-            if entry.grid == nil { Button("Open in the Prompt Lab") { LabModel.shared.load(image: entry.png); LabWindow.shared.show() } }
+            if entry.grid == nil, Fork.promptLab { Button("Open in the Prompt Lab") { LabModel.shared.load(image: entry.png); LabWindow.shared.show() } }
             Divider()
             Button("Remove from History", role: .destructive) { app.delete(entry) }
         }

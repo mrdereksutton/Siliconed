@@ -21,6 +21,10 @@ struct MainView: View {
     /// Fork: the left column folded away on the Generate tab (the composer has it all), shown on Explore.
     @State private var columns: NavigationSplitViewVisibility = .detailOnly
 
+    private static func columns(_ tab: SidebarTab) -> NavigationSplitViewVisibility {
+        tab == .explore ? .all : .detailOnly
+    }
+
     var body: some View {
         NavigationSplitView(columnVisibility: $columns) {
             Sidebar(app: app)
@@ -29,33 +33,22 @@ struct MainView: View {
             GraphCanvas(app: app)
         }
         .onChange(of: app.sidebarTab, initial: true) { _, tab in
-            withAnimation(Motion.pick(.easeInOut(duration: 0.25))) { columns = tab == .explore ? .all : .detailOnly }
+            app.composerPanel = nil
+            withAnimation(Motion.pick(.easeInOut(duration: 0.25))) { columns = Self.columns(tab) }
             guard tab == .explore else { return }
             if app.explorePrompt.isEmpty { app.explorePrompt = app.prompt }
             app.gridDefaults()
         }
+        // Fork: one place per setting — the column is Explore's form and nothing else: on Generate the
+        // composer has every setting, so the column never opens there (nor folds away on Explore).
+        .onChange(of: columns) { _, shown in
+            let wanted = Self.columns(app.sidebarTab)
+            if shown != wanted { columns = wanted }
+        }
         .toolbar {
-            // Fork: the left column on demand — Explore's form, or on Generate the composer's settings
-            // laid out side by side (`SettingsColumn`). This window has no View ▸ Show Sidebar.
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    withAnimation(Motion.pick(.easeInOut(duration: 0.25))) {
-                        columns = columns == .detailOnly ? .all : .detailOnly
-                    }
-                } label: {
-                    Label("Show or hide the left column", systemImage: "sidebar.left")
-                }
-                .help("Show or hide the left column")
-            }
             // Fork: the window's two modes, in the middle of the toolbar.
             ToolbarItem(placement: .principal) {
-                Picker("Exploration", selection: $app.sidebarTab) {
-                    Text("Generate").tag(SidebarTab.generate)
-                    Text("Explore").tag(SidebarTab.explore)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
+                ModeSwitch(app: app).fixedSize()
             }
             ToolbarItemGroup(placement: .primaryAction) {
                 let group = app.targets
@@ -115,12 +108,6 @@ extension View {
     }
 }
 
-/// The canvas background: a near-black gray in dark, a light gray in light — neutral, so that
-/// the image alone carries the color.
-private let canvasBackground = Color(nsColor: NSColor(name: nil) { appearance in
-    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        ? NSColor(white: 0.075, alpha: 1) : NSColor(white: 0.9, alpha: 1)
-})
 
 // MARK: - The canvas
 
@@ -156,13 +143,15 @@ private struct GraphCanvas: View {
                 .animation(Motion.pick(.easeInOut(duration: 0.2)), value: app.activityShows)
             }
         }
-        .background(canvasBackground)
+        // Fork: graphite over a wafer's die grid (`WaferBackground`) — still neutral: the image alone
+        // carries the color.
+        .background(WaferBackground())
         .overlay(alignment: .top) {
             if let toast = app.toast {
                 Text(toast)
                     .font(.callout)
                     .padding(.horizontal, 16).padding(.vertical, 9)
-                    .glass(Capsule())
+                    .siliconPanel(Capsule(), sheen: true)
                     .padding(.top, 14)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }

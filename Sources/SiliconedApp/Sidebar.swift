@@ -42,11 +42,14 @@ struct Sidebar: View {
                     .padding(.top, 12)
                 ExplorationPanel(app: app)
             } else {
-                // Fork: on the Generate tab the column is folded away; shown, it holds what the composer's
-                // pills open — an edit's images, the LoRA stack, the settings (`SettingsColumn`).
-                SettingsColumn(app: app)
+                // Fork: on the Generate tab the column stays folded away (`MainView`): the composer holds
+                // every setting, one place each.
+                Color.clear
             }
         }
+        // Fork: the column in the window's materials.
+        .background(Silicon.panel)
+        .scrollContentBackground(.hidden)
         // A `.safetensors` or a `.gguf` dropped on the column is imported (model or LoRA).
         .dropDestination(for: URL.self) { urls, _ in
             let s = urls.filter(AppState.importable)
@@ -71,19 +74,29 @@ extension AppState {
 struct CustomSize: View {
     let app: AppState
     var title: LocalizedStringKey = "Size"
+    /// Fork: what closes the list it sits in, once the size is taken (the composer's panel); a popover
+    /// closes itself.
+    var done: (() -> Void)? = nil
     @State private var text = ""
     @State private var refusal: Problem?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.headline)
-            HStack {
+            SpecCaption(title)
+            HStack(spacing: 8) {
                 TextField("Size", text: $text, prompt: Text(verbatim: "832x1216"))
                     .labelsHidden()
-                    .frame(width: 140)
+                    .textFieldStyle(.plain)
+                    .font(Silicon.readout)
+                    .padding(.horizontal, 8)
+                    .frame(width: 140, height: 26)
+                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Silicon.cell))
+                    .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Silicon.edge))
                     .onSubmit(apply)
-                Button("Use", action: apply).keyboardShortcut(.defaultAction)
+                Button("Use", action: apply)
+                    .buttonStyle(SiliconButtonStyle(prominent: true))
+                    .keyboardShortcut(.defaultAction)
             }
             if let refusal {
                 Text(refusal.title).font(.caption).foregroundStyle(.red)
@@ -96,13 +109,14 @@ struct CustomSize: View {
             }
         }
         .padding(14)
-        .frame(width: 280)
+        .frame(width: 280, alignment: .leading)
         .onAppear { text = "\(app.format.width)x\(app.format.height)" }
     }
 
     private func apply() {
         refusal = app.setCustomFormat(text)
-        if refusal == nil { dismiss() }
+        guard refusal == nil else { return }
+        if let done { done() } else { dismiss() }
     }
 }
 
@@ -255,7 +269,7 @@ struct ActivityCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glass(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .siliconPanel(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     /// **What remains to be done**: the running render first — a batch is one job, its images rendered

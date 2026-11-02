@@ -4339,126 +4339,6 @@
         }
       }
     },
-    "512 × 512" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "512 × 512"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "512 × 512"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "512 × 512"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "512 × 512"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "512 × 512"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "512 × 512"
-          }
-        }
-      }
-    },
-    "512 × 768" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "512 × 768"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "512 × 768"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "512 × 768"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "512 × 768"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "512 × 768"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "512 × 768"
-          }
-        }
-      }
-    },
-    "768 × 512" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "768 × 512"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "768 × 512"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "768 × 512"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "768 × 512"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "768 × 512"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "768 × 512"
-          }
-        }
-      }
-    },
     "8-bit weights" : {
       "localizations" : {
         "de" : {
@@ -5619,42 +5499,42 @@
         }
       }
     },
-    "A sketch stops early: the later it stops, the closer to the finished image (a LoRA’s style can settle late), the longer it takes. The step count is the rack’s" : {
+    "A sketch stops early: the later it stops, the closer to the finished image (a LoRA’s style can settle late), the longer it takes. The step count is Generate’s" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Eine Skizze stoppt früh: Je später sie stoppt, desto näher ist sie am fertigen Bild (der Stil einer LoRA kann sich spät zeigen) und desto länger dauert sie. Die Schrittzahl ist die des Racks"
+            "value" : "Eine Skizze stoppt früh: Je später sie stoppt, desto näher ist sie am fertigen Bild (der Stil einer LoRA kann sich spät zeigen) und desto länger dauert sie. Die Schrittzahl ist die von Generieren"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Un boceto se detiene pronto: cuanto más tarde se detiene, más se parece a la imagen terminada (el estilo de un LoRA puede aparecer tarde) y más tarda. El número de pasos es el del rack"
+            "value" : "Un boceto se detiene pronto: cuanto más tarde se detiene, más se parece a la imagen terminada (el estilo de un LoRA puede aparecer tarde) y más tarda. El número de pasos es el de Generar"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Une esquisse s’arrête tôt : plus elle s’arrête tard, plus elle ressemble à l’image finie (le style d’une LoRA peut venir tard), plus elle prend de temps. Le nombre de pas est celui du rack"
+            "value" : "Une esquisse s’arrête tôt : plus elle s’arrête tard, plus elle ressemble à l’image finie (le style d’une LoRA peut venir tard), plus elle prend de temps. Le nombre de pas est celui de Générer"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Uno schizzo si ferma presto: più tardi si ferma, più si avvicina all’immagine finita (lo stile di una LoRA può arrivare tardi), più tempo richiede. Il numero di passi è quello del rack"
+            "value" : "Uno schizzo si ferma presto: più tardi si ferma, più si avvicina all’immagine finita (lo stile di una LoRA può arrivare tardi), più tempo richiede. Il numero di passi è quello di Genera"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "スケッチは途中で止まります：止めるのが遅いほど完成画像に近づき（LoRAのスタイルは後から現れることがあります）、時間もかかります。ステップ数はラックのものです"
+            "value" : "スケッチは途中で止まります：止めるのが遅いほど完成画像に近づき（LoRAのスタイルは後から現れることがあります）、時間もかかります。ステップ数は「生成」のものです"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "草稿会提前停止：停得越晚，越接近成图（LoRA 的风格可能较晚才定型），耗时也越长。步数与调节栏一致"
+            "value" : "草稿会提前停止：停得越晚，越接近成图（LoRA 的风格可能较晚才定型），耗时也越长。步数与“生成”一致"
           }
         }
       }
@@ -6465,42 +6345,42 @@
         }
       }
     },
-    "Adds the solvers Euler a, DPM++ 2M and UniPC to the DiT’s box and to the exploration’s axes. The default, Euler, is the one the models were distilled for." : {
+    "Adds the solvers Euler a, DPM++ 2M and UniPC to Generate’s settings and to the exploration’s axes. The default, Euler, is the one the models were distilled for." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Fügt die Solver Euler a, DPM++ 2M und UniPC zur Box des DiT und zu den Achsen der Erkundung hinzu. Standard ist Euler, der Solver, für den die Modelle destilliert wurden."
+            "value" : "Fügt die Solver Euler a, DPM++ 2M und UniPC zu den Einstellungen von Generieren und zu den Achsen der Erkundung hinzu. Standard ist Euler, der Solver, für den die Modelle destilliert wurden."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Añade los solvers Euler a, DPM++ 2M y UniPC a la caja del DiT y a los ejes de la exploración. El predeterminado, Euler, es aquel para el que se destilaron los modelos."
+            "value" : "Añade los solvers Euler a, DPM++ 2M y UniPC a los ajustes de Generar y a los ejes de la exploración. El predeterminado, Euler, es aquel para el que se destilaron los modelos."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ajoute les solveurs Euler a, DPM++ 2M et UniPC à la boîte du DiT et aux axes de l’exploration. Euler, par défaut, est celui pour lequel les modèles ont été distillés."
+            "value" : "Ajoute les solveurs Euler a, DPM++ 2M et UniPC aux réglages de Générer et aux axes de l’exploration. Euler, par défaut, est celui pour lequel les modèles ont été distillés."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Aggiunge i solver Euler a, DPM++ 2M e UniPC al riquadro del DiT e agli assi dell’esplorazione. Quello predefinito, Euler, è quello per cui i modelli sono stati distillati."
+            "value" : "Aggiunge i solver Euler a, DPM++ 2M e UniPC alle impostazioni di Genera e agli assi dell’esplorazione. Quello predefinito, Euler, è quello per cui i modelli sono stati distillati."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ソルバー Euler a、DPM++ 2M、UniPC を DiT のボックスと探索の軸に追加します。標準の Euler は、モデルが蒸留されたときのソルバーです。"
+            "value" : "ソルバー Euler a、DPM++ 2M、UniPC を「生成」の設定と探索の軸に追加します。標準の Euler は、モデルが蒸留されたときのソルバーです。"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在 DiT 的方框和探索的轴中添加求解器 Euler a、DPM++ 2M 和 UniPC。默认的 Euler 是这些模型蒸馏时所用的求解器。"
+            "value" : "在“生成”的设置和探索的轴中添加求解器 Euler a、DPM++ 2M 和 UniPC。默认的 Euler 是这些模型蒸馏时所用的求解器。"
           }
         }
       }
@@ -15655,6 +15535,86 @@
         }
       }
     },
+    "Generate takes this cell whole — model, prompt, size, steps, LoRAs, seed — without rendering" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Generieren übernimmt diese Zelle vollständig – Modell, Prompt, Format, Schritte, LoRAs, Seed –, ohne zu rendern"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Generar toma la celda entera — modelo, prompt, tamaño, pasos, LoRA, semilla — sin renderizar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Générer reprend toute la case — modèle, prompt, taille, pas, LoRA, graine — sans rendre"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Genera riprende l’intera cella — modello, prompt, dimensione, passi, LoRA, seme — senza eseguire il rendering"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「生成」はこのセルをそのまま取り込みます — モデル、プロンプト、サイズ、ステップ、LoRA、シード — 生成はしません"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“生成”会完整采用此单元格——模型、提示词、尺寸、步数、LoRA、种子——但不进行生成"
+          }
+        }
+      }
+    },
+    "Generate takes this cell, then renders it to its end: the image this sketch announced (double-click a cell)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Generieren übernimmt diese Zelle und rendert sie zu Ende: das Bild, das diese Skizze ankündigte (Doppelklick auf eine Zelle)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Generar toma la celda y la renderiza hasta el final: la imagen que anunciaba el boceto (doble clic en una celda)"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Générer reprend la case, puis la rend jusqu’au bout : l’image que l’esquisse annonçait (double-clic sur une case)"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Genera riprende la cella, poi ne esegue il rendering fino in fondo: l’immagine che lo schizzo annunciava (doppio clic su una cella)"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「生成」はこのセルを取り込み、最後まで生成します：このスケッチが予告した画像です（セルをダブルクリック）"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“生成”采用此单元格，然后将其生成到底：即此草稿所预告的图像（双击单元格）"
+          }
+        }
+      }
+    },
     "Generates, and edits a photo by instruction: “change her jacket to red”." : {
       "localizations" : {
         "de" : {
@@ -15691,6 +15651,86 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "可生成图像，也可按指令编辑照片：“把她的夹克改成红色”。"
+          }
+        }
+      }
+    },
+    "Generate’s LoRAs, seed and images to edit: the exploration varies them" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die LoRAs, der Seed und die zu bearbeitenden Bilder von Generieren: Die Erkundung variiert sie"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Los LoRA, la semilla y las imágenes que editar de Generar: la exploración los varía"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les LoRA, la graine et les images à éditer de Générer : l’exploration les fait varier"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le LoRA, il seme e le immagini da modificare di Genera: l’esplorazione le fa variare"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「生成」のLoRA、シード、編集する画像：探索はこれらを変化させます"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“生成”的 LoRA、种子和要编辑的图像：探索会改变它们"
+          }
+        }
+      }
+    },
+    "Generate’s model: changing it here changes it there" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Modell von Generieren: Eine Änderung hier ändert es auch dort"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El modelo de Generar: cambiarlo aquí lo cambia allí"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le modèle de Générer : le changer ici le change là-bas"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il modello di Genera: cambiarlo qui lo cambia anche lì"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「生成」のモデル：ここで変えると、あちらでも変わります"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“生成”的模型：在这里更改，那里也随之更改"
           }
         }
       }
@@ -25565,6 +25605,46 @@
         }
       }
     },
+    "Ratio" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verhältnis"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Proporción"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ratio"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Proporzioni"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "比率"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "比例"
+          }
+        }
+      }
+    },
     "Read its license and accept it, then render again." : {
       "localizations" : {
         "de" : {
@@ -28682,42 +28762,42 @@
         }
       }
     },
-    "Settings of the cell taken by the rack" : {
+    "Settings of the cell taken for Generate" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Einstellungen der Zelle vom Rack übernommen"
+            "value" : "Einstellungen der Zelle für Generieren übernommen"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ajustes de la celda tomados por el rack"
+            "value" : "Ajustes de la celda tomados para Generar"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Réglages de la case repris par le rack"
+            "value" : "Réglages de la case repris pour Générer"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Impostazioni della cella riprese dal rack"
+            "value" : "Impostazioni della cella riprese per Genera"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ラックに取り込まれたセルの設定"
+            "value" : "セルの設定を「生成」に取り込みました"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "调节栏采用的单元格设置"
+            "value" : "已将单元格设置用于“生成”"
           }
         }
       }
@@ -29038,46 +29118,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在访达中显示"
-          }
-        }
-      }
-    },
-    "Show or hide the left column" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Linke Spalte ein- oder ausblenden"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mostrar u ocultar la columna izquierda"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Afficher ou masquer la colonne de gauche"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mostra o nascondi la colonna di sinistra"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "左側の列の表示・非表示"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "显示或隐藏左栏"
           }
         }
       }
@@ -30350,42 +30390,42 @@
         }
       }
     },
-    "Stacked together, the rack’s own. To compare LoRAs, choose “LoRA to Compare” on an axis." : {
+    "Stacked together, the same as Generate’s. To compare LoRAs, choose “LoRA to Compare” on an axis." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Zusammen gestapelt, die des Racks. Um LoRAs zu vergleichen, wählen Sie „Zu vergleichende LoRA“ auf einer Achse."
+            "value" : "Zusammen gestapelt, dieselben wie bei Generieren. Um LoRAs zu vergleichen, wählen Sie „Zu vergleichende LoRA“ auf einer Achse."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Apilados juntos, los del rack. Para comparar LoRA, elige «LoRA que comparar» en un eje."
+            "value" : "Apilados juntos, los mismos que en Generar. Para comparar LoRA, elige «LoRA que comparar» en un eje."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Empilées ensemble, celles du rack. Pour comparer des LoRA, choisissez « LoRA à comparer » sur un axe."
+            "value" : "Empilées ensemble, les mêmes que dans Générer. Pour comparer des LoRA, choisissez « LoRA à comparer » sur un axe."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Impilate insieme, quelle del rack. Per confrontare delle LoRA, scegli «LoRA da confrontare» su un asse."
+            "value" : "Impilate insieme, le stesse di Genera. Per confrontare delle LoRA, scegli «LoRA da confrontare» su un asse."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "まとめてスタックされる、ラックのものです。LoRAを比較するには、軸で「比較するLoRA」を選んでください。"
+            "value" : "まとめてスタックされる、「生成」と同じものです。LoRAを比較するには、軸で「比較するLoRA」を選んでください。"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "一同叠加，使用调节栏自己的 LoRA。若要对比 LoRA，请在某个轴上选择“用于对比的 LoRA”。"
+            "value" : "一同叠加，与“生成”的 LoRA 相同。若要对比 LoRA，请在某个轴上选择“用于对比的 LoRA”。"
           }
         }
       }
@@ -35577,86 +35617,6 @@
         }
       }
     },
-    "The rack takes this cell whole — model, prompt, size, steps, LoRAs, seed — without rendering" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Das Rack übernimmt diese Zelle vollständig – Modell, Prompt, Format, Schritte, LoRAs, Seed –, ohne zu rendern"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "El rack toma la celda entera — modelo, prompt, tamaño, pasos, LoRA, semilla — sin renderizar"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Le rack reprend toute la case — modèle, prompt, taille, pas, LoRA, graine — sans rendre"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Il rack riprende l’intera cella — modello, prompt, dimensione, passi, LoRA, seme — senza eseguire il rendering"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ラックはこのセルをそのまま取り込みます — モデル、プロンプト、サイズ、ステップ、LoRA、シード — 生成はしません"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "调节栏会完整采用此单元格——模型、提示词、尺寸、步数、LoRA、种子——但不进行生成"
-          }
-        }
-      }
-    },
-    "The rack takes this cell, then renders it to its end: the image this sketch announced (double-click a cell)" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Das Rack übernimmt diese Zelle und rendert sie zu Ende: das Bild, das diese Skizze ankündigte (Doppelklick auf eine Zelle)"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "El rack toma la celda y la renderiza hasta el final: la imagen que anunciaba el boceto (doble clic en una celda)"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Le rack reprend la case, puis la rend jusqu’au bout : l’image que l’esquisse annonçait (double-clic sur une case)"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Il rack riprende la cella, poi ne esegue il rendering fino in fondo: l’immagine che lo schizzo annunciava (doppio clic su una cella)"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ラックはこのセルを取り込み、最後まで生成します：このスケッチが予告した画像です（セルをダブルクリック）"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "调节栏采用此单元格，然后将其生成到底：即此草稿所预告的图像（双击单元格）"
-          }
-        }
-      }
-    },
     "The rack will receive" : {
       "localizations" : {
         "de" : {
@@ -35733,86 +35693,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "机架将切换到 %@。"
-          }
-        }
-      }
-    },
-    "The rack’s LoRAs, seed and images to edit: the exploration varies them" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Die LoRAs, der Seed und die zu bearbeitenden Bilder des Racks: Die Erkundung variiert sie"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Los LoRA, la semilla y las imágenes que editar del rack: la exploración los varía"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Les LoRA, la graine et les images à éditer du rack : l’exploration les fait varier"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Le LoRA, il seme e le immagini da modificare del rack: l’esplorazione le fa variare"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ラックのLoRA、シード、編集する画像：探索はこれらを変化させます"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "调节栏的 LoRA、种子和要编辑的图像：探索会改变它们"
-          }
-        }
-      }
-    },
-    "The rack’s model: changing it here changes it there" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Das Modell des Racks: Eine Änderung hier ändert es auch dort"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "El modelo del rack: cambiarlo aquí lo cambia allí"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Le modèle du rack : le changer ici le change là-bas"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Il modello del rack: cambiarlo qui lo cambia anche lì"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ラックのモデル：ここで変えると、あちらでも変わります"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "调节栏的模型：在这里更改，那里也随之更改"
           }
         }
       }
@@ -36017,42 +35897,42 @@
         }
       }
     },
-    "The seeds that follow the rack’s seed, or the seeds you list" : {
+    "The seeds that follow Generate’s seed, or the seeds you list" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Die Seeds, die auf den Seed des Racks folgen, oder die Seeds, die Sie angeben"
+            "value" : "Die Seeds, die auf den Seed von Generieren folgen, oder die Seeds, die Sie angeben"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Las semillas que siguen a la del rack, o las que indiques"
+            "value" : "Las semillas que siguen a la de Generar, o las que indiques"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Les graines qui suivent celle du rack, ou celles que vous listez"
+            "value" : "Les graines qui suivent celle de Générer, ou celles que vous listez"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "I semi che seguono quello del rack, o i semi che elenchi"
+            "value" : "I semi che seguono quello di Genera, o i semi che elenchi"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ラックのシードに続くシード、またはリストにしたシード"
+            "value" : "「生成」のシードに続くシード、またはリストにしたシード"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "调节栏种子之后的各个种子，或你列出的种子"
+            "value" : "“生成”的种子之后的各个种子，或你列出的种子"
           }
         }
       }
@@ -38653,42 +38533,42 @@
         }
       }
     },
-    "This model does not sketch: its cells are finished images. The step count is the rack’s (a steps axis overrides it)" : {
+    "This model does not sketch: its cells are finished images. The step count is Generate’s (a steps axis overrides it)" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Dieses Modell skizziert nicht: Seine Zellen sind fertige Bilder. Die Schrittzahl ist die des Racks (eine Schritte-Achse ersetzt sie)"
+            "value" : "Dieses Modell skizziert nicht: Seine Zellen sind fertige Bilder. Die Schrittzahl ist die von Generieren (eine Schritte-Achse ersetzt sie)"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Este modelo no hace bocetos: sus celdas son imágenes terminadas. El número de pasos es el del rack (un eje de pasos lo sustituye)"
+            "value" : "Este modelo no hace bocetos: sus celdas son imágenes terminadas. El número de pasos es el de Generar (un eje de pasos lo sustituye)"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ce modèle n’esquisse pas : ses cases sont des images finies. Le nombre de pas est celui du rack (un axe de pas le remplace)"
+            "value" : "Ce modèle n’esquisse pas : ses cases sont des images finies. Le nombre de pas est celui de Générer (un axe de pas le remplace)"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Questo modello non fa schizzi: le sue celle sono immagini finite. Il numero di passi è quello del rack (un asse di passi lo sostituisce)"
+            "value" : "Questo modello non fa schizzi: le sue celle sono immagini finite. Il numero di passi è quello di Genera (un asse di passi lo sostituisce)"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "このモデルはスケッチしません：セルは完成画像です。ステップ数はラックのものです（ステップの軸があればそちらが優先されます）"
+            "value" : "このモデルはスケッチしません：セルは完成画像です。ステップ数は「生成」のものです（ステップの軸があればそちらが優先されます）"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此模型不生成草稿：其单元格都是完成的图像。步数与调节栏一致（步数轴会覆盖它）"
+            "value" : "此模型不生成草稿：其单元格都是完成的图像。步数与“生成”一致（步数轴会覆盖它）"
           }
         }
       }
@@ -40449,42 +40329,42 @@
         }
       }
     },
-    "Variations: cousins of this image, same scene, slightly different — as many as the rack’s Batch" : {
+    "Variations: cousins of this image, same scene, slightly different — as many as the Batch field" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Variationen: Verwandte dieses Bilds, gleiche Szene, leicht anders – so viele, wie das Feld „Anzahl“ des Racks angibt"
+            "value" : "Variationen: Verwandte dieses Bilds, gleiche Szene, leicht anders – so viele, wie das Feld „Anzahl“ angibt"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Variaciones: primas de esta imagen, misma escena, algo distintas — tantas como indique el campo Lote del rack"
+            "value" : "Variaciones: primas de esta imagen, misma escena, algo distintas — tantas como indique el campo Lote"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Variations : des cousines de cette image, même scène, un peu différentes — autant que le champ Lot du rack"
+            "value" : "Variations : des cousines de cette image, même scène, un peu différentes — autant que le champ Lot"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Variazioni: parenti di questa immagine, stessa scena, leggermente diverse — tante quante indica il campo Lotto del rack"
+            "value" : "Variazioni: parenti di questa immagine, stessa scena, leggermente diverse — tante quante indica il campo Lotto"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "バリエーション：この画像の仲間で、同じシーンを少しずつ変えたもの — ラックの「バッチ」の枚数だけ"
+            "value" : "バリエーション：この画像の仲間で、同じシーンを少しずつ変えたもの — 「バッチ」の枚数だけ"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "变体：这张图像的“近亲”，场景相同，略有不同——数量与调节栏的“批量”一致"
+            "value" : "变体：这张图像的“近亲”，场景相同，略有不同——数量与“批量”一致"
           }
         }
       }

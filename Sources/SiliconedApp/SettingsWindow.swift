@@ -87,17 +87,39 @@ struct SettingsView: View {
         Binding(get: { app.neuralEngine(for: app.identifier) }, set: { app.setNeuralEngine($0, for: app.identifier) })
     }
 
+    /// Fork: the pane shown — on Silicon's capsule tabs, as the main window's modes.
+    private enum Pane: CaseIterable { case general, otherMacs, advanced }
+    @State private var pane = Pane.general
+
     var body: some View {
-        // A fixed frame: a TabView takes the size of no tab in particular, and a window that changed
-        // size from one tab to the next would jump under the pointer. A tab longer than this scrolls.
-        TabView {
-            general.tabItem { Label("General", systemImage: "gearshape") }
-            Form { OtherMacsSection(macs: macs) }
-                .formStyle(.grouped)
-                .tabItem { Label("Other Macs", systemImage: "macbook.and.iphone") }
-            advanced.tabItem { Label("Advanced", systemImage: "slider.horizontal.3") }
+        // A fixed frame: the window keeps one size from one pane to the next, so that it never jumps
+        // under the pointer. A pane longer than this scrolls.
+        VStack(spacing: 0) {
+            CapsuleTabs(selection: $pane, tabs: Pane.allCases) { pane in
+                switch pane {
+                case .general: "General"
+                case .otherMacs: "Other Macs"
+                case .advanced: "Advanced"
+                }
+            }
+            .fixedSize()
+            .padding(.top, 12)
+            .padding(.bottom, 2)
+            Group {
+                switch pane {
+                case .general: general
+                case .otherMacs: Form { OtherMacsSection(macs: macs) }.formStyle(.grouped)
+                case .advanced: advanced
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: 480, height: 540)
+        // Fork: the window in Siliconed's own materials — graphite, Silicon's switches and buttons.
+        .scrollContentBackground(.hidden)
+        .background(WaferBackground())
+        .toggleStyle(SiliconToggleStyle())
+        .buttonStyle(SiliconButtonStyle())
     }
 
     /// What one comes for: the speed switch, how images are compared, where the models are.
@@ -182,7 +204,7 @@ struct SettingsView: View {
             }
             Section {
                 Toggle(isOn: $app.developerMode) {
-                    SettingLabel("More Solvers", "Adds the solvers Euler a, DPM++ 2M and UniPC to the DiT’s box and to the exploration’s axes. The default, Euler, is the one the models were distilled for.")
+                    SettingLabel("More Solvers", "Adds the solvers Euler a, DPM++ 2M and UniPC to Generate’s settings and to the exploration’s axes. The default, Euler, is the one the models were distilled for.")
                 }
                 Toggle(isOn: $app.negativeLoRAStrengths) {
                     SettingLabel("Negative LoRA Strengths", "Lets a LoRA’s strength go from −1.5 to 1.5, for “slider” LoRAs. An ordinary LoRA is damaged by a negative strength.")

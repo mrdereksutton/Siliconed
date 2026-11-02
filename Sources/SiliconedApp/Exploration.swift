@@ -179,7 +179,7 @@ extension AppState {
     /// **« Use These Settings »**: the rack takes the cell, nothing renders.
     func useCell(_ i: Int) {
         applyCell(i)
-        flash(String(localized: "Settings of the cell taken by the rack"))
+        flash(String(localized: "Settings of the cell taken for Generate"))
     }
 
     /// **« Finish This Image »**: the rack takes the cell, then renders it to its end — same seed, same
@@ -229,79 +229,125 @@ struct ExplorationPanel: View {
     @Bindable var app: AppState
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Prompt").font(.callout.weight(.semibold))
-                    TextEditor(text: $app.explorePrompt)
-                        .font(.body)
-                        .frame(minHeight: 70, maxHeight: 140)
-                        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Palette.hairline))
-                    Text("Write {brunette|blonde|red-haired} to make a group an axis.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                if !app.exploresModels {
-                    // The rack's model, chosen here too: exploring is where one tries another model.
-                    Picker("Model", selection: $app.identifier) {
-                        ForEach(app.visibleReady) { card in Text(card.name).tag(card.id) }
-                    }
-                    .font(.callout)
-                    .help("The rack’s model: changing it here changes it there")
-                    loras
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Base").font(.callout.weight(.semibold))
-                    Text(base).font(.caption).foregroundStyle(.secondary).lineLimit(3)
-                        .help("The rack’s LoRAs, seed and images to edit: the exploration varies them")
-                }
-                depth
-                Picker("Format", selection: $app.exploreShape) {
-                    Image(systemName: "square").help("512 × 512").accessibilityLabel(Text("Square")).tag(ExploreShape.square)
-                    Image(systemName: "rectangle.portrait").help("512 × 768").accessibilityLabel(Text("Portrait")).tag(ExploreShape.portrait)
-                    Image(systemName: "rectangle").help("768 × 512").accessibilityLabel(Text("Landscape")).tag(ExploreShape.landscape)
-                }
-                .pickerStyle(.segmented)
-                .help("Small and fast: 512 on the short side — the models are out of their domain below")
-                VStack(alignment: .leading, spacing: 10) {
-                    AxisRow(app: app, title: "X", form: $app.gridX, allowsNone: false)
-                    AxisRow(app: app, title: "Y", form: $app.gridY, allowsNone: true)
-                }
-                .font(.callout)
-                footer
+        // The form scrolls; its foot — the cost and « Explore » — stays at the bottom of the column, in
+        // reach at any window height (as « Generate » in the composer).
+        VStack(spacing: 0) {
+            ScrollView {
+                form.padding(16)
             }
-            .padding(16)
+            Rectangle().fill(Silicon.edge).frame(height: 1)
+            footer.padding(16)
         }
     }
 
-    /// **Where a cell stops, in one line**: « Sketch at n steps of N » — the rack's N, and the n
+    private var form: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            section("Prompt") {
+                TextEditor(text: $app.explorePrompt)
+                    .font(.system(size: 13))
+                    .scrollContentBackground(.hidden)
+                    .scrollIndicators(.never)
+                    .padding(6)
+                    .frame(minHeight: 76, maxHeight: 140)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Silicon.cell))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Silicon.edge))
+                Text("Write {brunette|blonde|red-haired} to make a group an axis.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if !app.exploresModels {
+                // Generate's model, chosen here too: exploring is where one tries another model.
+                section("Model") { model }
+                    .help("Generate’s model: changing it here changes it there")
+                loras
+            }
+            section("Base") {
+                Text(base).font(Silicon.readout).foregroundStyle(.secondary).lineLimit(3)
+            }
+            .help("Generate’s LoRAs, seed and images to edit: the exploration varies them")
+            depth
+            // Fork: the sketches' shape named as the composer names sizes, by its ratio.
+            section("Format") {
+                ChipPicker(selection: $app.exploreShape, choices: ExploreShape.allCases) { shape in
+                    HStack(spacing: 5) {
+                        RatioShape(ratio: shape.ratio, side: 11)
+                        Text(verbatim: shape.ratio.label)
+                    }
+                }
+            }
+            .help("Small and fast: 512 on the short side — the models are out of their domain below")
+            VStack(alignment: .leading, spacing: 14) {
+                AxisRow(app: app, title: "X", form: $app.gridX, allowsNone: false)
+                AxisRow(app: app, title: "Y", form: $app.gridY, allowsNone: true)
+            }
+            .font(.callout)
+        }
+    }
+
+    private func section<Content: View>(_ title: LocalizedStringKey, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SpecCaption(title)
+            content()
+        }
+    }
+
+    /// The model, as a cell that opens the list of those installed.
+    private var model: some View {
+        Menu {
+            ForEach(app.visibleReady) { card in
+                Button { app.identifier = card.id } label: {
+                    if card.id == app.identifier { Label(card.name, systemImage: "checkmark") } else { Text(card.name) }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Circle().fill(Color.accentColor).frame(width: 6, height: 6)
+                Text(verbatim: app.card?.name ?? "—").font(Silicon.value)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 11)
+            .frame(height: 32)
+            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Silicon.cell))
+            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Silicon.edge))
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+    }
+
+    /// **Where a cell stops, in one line**: « Sketch at n steps of N » — Generate's N, and the n
     /// steps a cell runs before its picture is taken — or « Finished images, N steps » when n reaches
     /// the end. n counts steps as well as evaluations: every step is one.
     ///
-    /// The line's stepper moves n when the rack's model sketches; when it does not (Qwen-Image-2.1,
+    /// The line's stepper moves n when the model sketches; when it does not (Qwen-Image-2.1,
     /// `DenoisingModule.sketches`), its cells are finished images and the stepper moves N — a
     /// shallower sketch of it is an image no one can judge, so it is not offered.
-    private var depth: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let e = app.exploreEvaluations {
+    @ViewBuilder private var depth: some View {
+        if let e = app.exploreEvaluations {
+            section("Steps") {
                 if app.chain?.denoising.sketches ?? true {
-                    Stepper(value: Binding(get: { app.exploreStop == 0 ? e.automatic : min(app.exploreStop, e.all) },
-                                           set: { app.exploreStop = $0 >= e.all ? e.all : max(1, $0) }),
-                            in: 1...e.all) {
-                        Text(sketchLine(e)).monospacedDigit()
+                    HStack(spacing: 10) {
+                        Text(sketchLine(e)).font(.callout).monospacedDigit()
+                        Spacer(minLength: 8)
+                        StepperChip(value: Binding(get: { app.exploreStop == 0 ? e.automatic : min(app.exploreStop, e.all) },
+                                                   set: { app.exploreStop = $0 >= e.all ? e.all : max(1, $0) }),
+                                    range: 1...e.all)
                     }
-                    .help("A sketch stops early: the later it stops, the closer to the finished image (a LoRA’s style can settle late), the longer it takes. The step count is the rack’s")
+                    .help("A sketch stops early: the later it stops, the closer to the finished image (a LoRA’s style can settle late), the longer it takes. The step count is Generate’s")
                 } else {
-                    Stepper(value: $app.steps, in: 1...50) {
-                        Text(sketchLine(e)).monospacedDigit()
+                    HStack(spacing: 10) {
+                        Text(sketchLine(e)).font(.callout).monospacedDigit()
+                        Spacer(minLength: 8)
+                        StepperChip(value: $app.steps, range: 1...50)
                     }
-                    .help("This model does not sketch: its cells are finished images. The step count is the rack’s (a steps axis overrides it)")
+                    .help("This model does not sketch: its cells are finished images. The step count is Generate’s (a steps axis overrides it)")
                 }
                 if app.exploreStop != 0 {
                     Button("Automatic") { app.exploreStop = 0 }.buttonStyle(.link).font(.caption)
                 }
             }
         }
-        .font(.callout)
     }
 
     private func sketchLine(_ e: (all: Int, automatic: Int)) -> String {
@@ -310,24 +356,23 @@ struct ExplorationPanel: View {
                           : String(localized: "Sketch at \(n) steps of \(app.steps)")
     }
 
-    /// **The LoRA stack — the rack's own**: one chosen here is the rack's too.
+    /// **The LoRA stack — Generate's own**: one chosen here is Generate's too.
     private var loras: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 8) {
             // A trap measured by its first user: filled, this list STACKS its LoRAs on every cell —
             // comparing them is an axis's job (“LoRA to Compare”).
-            Text("LoRAs on Every Cell").font(.callout.weight(.semibold))
-            Text("Stacked together, the rack’s own. To compare LoRAs, choose “LoRA to Compare” on an axis.")
+            SpecCaption("LoRAs on Every Cell")
+            Text("Stacked together, the same as Generate’s. To compare LoRAs, choose “LoRA to Compare” on an axis.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            ForEach($app.loras) { $slot in LoRARow(app: app, slot: $slot) }
+            ForEach($app.loras) { $slot in LoRALine(app: app, slot: $slot) }
             if app.activeLoRAs.count > 1 {
                 Label("\(app.activeLoRAs.count) LoRAs stacked on every cell", systemImage: "square.stack.3d.up")
                     .font(.caption).foregroundStyle(.orange)
             }
-            if app.canAddLoRA {
-                LoRAAddMenu(app: app).font(.callout)
-            } else if app.compatibleLoras.isEmpty {
+            if app.compatibleLoras.isEmpty {
                 Text("No LoRA for this model").font(.caption).foregroundStyle(.secondary)
             }
+            LoRAChoices(app: app).font(.callout)
         }
     }
 
@@ -340,32 +385,33 @@ struct ExplorationPanel: View {
 
     private var footer: some View {
         let blocker = app.exploreBlocker   // once per drawing
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
                 if let g = try? app.grid.get() {
-                    Label("\(g.count) sketches", systemImage: "square.grid.3x3").monospacedDigit()
+                    Text("\(g.count) sketches")
+                    Text(verbatim: "·").foregroundStyle(.tertiary)
                 }
-                Label {
-                    if let t = app.exploreCost { Text(verbatim: "≈ " + Figures.duration(t)).monospacedDigit() }
-                    else { Text("after one exploration") }
-                } icon: { Image(systemName: "clock") }
-                .help("Learned on this Mac, model by model at this size")
+                if let t = app.exploreCost { Text(verbatim: "≈ " + Figures.duration(t)) }
+                else { Text("after one exploration") }
             }
-            .font(.caption).foregroundStyle(.secondary)
+            .font(Silicon.readout).foregroundStyle(.secondary)
+            .help("Learned on this Mac, model by model at this size")
             if let why = blocker {
                 Text(why).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            HStack {
+            HStack(spacing: 8) {
                 Button { app.explore() } label: {
-                    Text("Explore").fontWeight(.semibold).frame(maxWidth: .infinity)
+                    HStack(spacing: 10) {
+                        Text("Explore")
+                        KeyCap("⌘↩")
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
+                .buttonStyle(SiliconPrimaryStyle(sweeping: app.exploring, fullWidth: true))
                 .keyboardShortcut(.return, modifiers: .command)
                 .disabled(blocker != nil)
                 if app.exploring {
                     Button("Stop") { app.stopExploring() }
-                        .controlSize(.large)
+                        .buttonStyle(SiliconButtonStyle())
                         .help("The cells still waiting leave the queue; the running one stops")
                 }
             }
@@ -373,6 +419,17 @@ struct ExplorationPanel: View {
                 Button("Show the Grid") { app.showsExploration = true; MainWindow.shared.show() }
                     .buttonStyle(.link)
             }
+        }
+    }
+}
+
+extension ExploreShape {
+    /// Fork: the shape as a ratio, the composer's way of naming a size.
+    var ratio: SizeTable.Ratio {
+        switch self {
+        case .square: SizeTable.Ratio(w: 1, h: 1)
+        case .portrait: SizeTable.Ratio(w: 2, h: 3)
+        case .landscape: SizeTable.Ratio(w: 3, h: 2)
         }
     }
 }
@@ -419,15 +476,18 @@ struct ExplorationCanvas: View {
             Image(systemName: "square.grid.3x3").foregroundStyle(.secondary)
             Text(run.grid.title).font(.headline).lineLimit(1).truncationMode(.middle)
             Spacer()
-            Text("\(run.entries.count) of \(run.jobs.count)").monospacedDigit().foregroundStyle(.secondary)
+            Text("\(run.entries.count) of \(run.jobs.count)").font(Silicon.readout).foregroundStyle(.secondary)
             HStack(spacing: 4) {
                 Image(systemName: "photo").imageScale(.small)
-                Slider(value: $app.exploreCellSide, in: AppState.cellSides).frame(width: 110).controlSize(.small)
+                SiliconSlider(value: Binding(get: { Double(app.exploreCellSide) }, set: { app.exploreCellSide = CGFloat($0) }),
+                              range: Double(AppState.cellSides.lowerBound)...Double(AppState.cellSides.upperBound))
+                    .frame(width: 110)
                 Image(systemName: "photo").imageScale(.large)
             }
             .foregroundStyle(.secondary)
             .help("Cell size — or pinch, ⌘+ and ⌘−")
             Button("Add Sheet to History") { app.addSheet(run) }
+                .buttonStyle(SiliconButtonStyle())
                 .disabled(run.entries.isEmpty || app.exploring)
                 .help("The sketches side by side, labelled — an image of the history, in memory like the others")
             Button { MainWindow.shared.showExploration() } label: { Image(systemName: "slider.horizontal.3") }
@@ -438,6 +498,8 @@ struct ExplorationCanvas: View {
                 .help("Back to the images — the grid stays at the head of the strip")
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
+        .siliconPanel(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(.horizontal, 16).padding(.top, 12)
     }
 
     private var cells: some View {
@@ -524,10 +586,10 @@ struct ExplorationCanvas: View {
     @ViewBuilder private func actions(_ i: Int) -> some View {
         HStack(spacing: 10) {
             Button("Reuse These Settings") { app.useCell(i) }
-                .help("The rack takes this cell whole — model, prompt, size, steps, LoRAs, seed — without rendering")
+                .help("Generate takes this cell whole — model, prompt, size, steps, LoRAs, seed — without rendering")
             Button("Finish This Image") { app.finishCell(i) }
                 .buttonStyle(.borderedProminent)
-                .help("The rack takes this cell, then renders it to its end: the image this sketch announced (double-click a cell)")
+                .help("Generate takes this cell, then renders it to its end: the image this sketch announced (double-click a cell)")
         }
     }
 }

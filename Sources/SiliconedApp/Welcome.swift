@@ -123,9 +123,32 @@ struct Waiting: View {
     var body: some View {
         ZStack {
             Palette.well
+            // Fork: the frame of the coming image as a die under inspection — its grid, and a light that
+            // scans it until the first step's preview arrives.
+            WaferBackground().opacity(0.9)
+            Scan()
             // The stage in words only: the spinner of the render is in the progress under this frame.
             Text(stage?.label ?? String(localized: "Preparing…"))
-                .font(.callout).foregroundStyle(.secondary)
+                .font(Silicon.caption).tracking(0.7).textCase(.uppercase)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Fork: a band of light going down the frame, again and again; still under Reduce Motion.
+private struct Scan: View {
+    @State private var phase: CGFloat = -0.2
+
+    var body: some View {
+        GeometryReader { g in
+            LinearGradient(colors: [.clear, Color.accentColor.opacity(0.18), .clear], startPoint: .top, endPoint: .bottom)
+                .frame(height: g.size.height * 0.25)
+                .offset(y: phase * g.size.height)
+        }
+        .allowsHitTesting(false)
+        .onAppear {
+            guard let a = Motion.pick(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) else { return }
+            withAnimation(a) { phase = 0.95 }
         }
     }
 }
@@ -145,7 +168,7 @@ struct ProgressIndicator: View {
                     if app.remaining(at: .now) != nil {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             Text("\(Figures.duration(app.remaining(at: context.date) ?? 0)) left")
-                                .font(.callout).monospacedDigit().foregroundStyle(.secondary)
+                                .font(Silicon.readout).foregroundStyle(.secondary)
                                 .contentTransition(.numericText())
                         }
                     }
@@ -153,9 +176,11 @@ struct ProgressIndicator: View {
                 if app.stage == .denoising, app.totalSteps > 0, app.totalSteps <= 60 {
                     HStack(spacing: 3) {
                         ForEach(1...app.totalSteps, id: \.self) { i in
+                            // Fork: the steps done lit in the app's blue, with a glow.
                             Capsule()
-                                .fill(i <= app.currentStep ? Palette.live : Palette.well)
-                                .frame(height: 4)
+                                .fill(i <= app.currentStep ? AnyShapeStyle(Silicon.accentFill) : AnyShapeStyle(Silicon.track))
+                                .frame(height: 5)
+                                .shadow(color: i <= app.currentStep ? Color.accentColor.opacity(0.6) : .clear, radius: 4)
                         }
                     }
                     .accessibilityHidden(true)
@@ -179,7 +204,7 @@ struct ProgressIndicator: View {
             .accessibilityLabel(Text("Stop"))
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
-        .glass(RoundedRectangle(cornerRadius: 16))
+        .siliconPanel(RoundedRectangle(cornerRadius: 16, style: .continuous), sheen: true)
     }
 
     private var label: String {

@@ -184,8 +184,11 @@ private struct AppCommands: Commands {
             Button("Statistics") { window.toggleStatistics() }
                 .keyboardShortcut("i", modifiers: [.command, .option])
             // By its character, never its key code: the same letter on an AZERTY keyboard. Free in the menus.
-            Button("Prompt Lab") { LabWindow.shared.show() }
-                .keyboardShortcut("l", modifiers: [.command, .option])
+            // Fork: held back until the window's look is finished (`Fork.promptLab`).
+            if Fork.promptLab {
+                Button("Prompt Lab") { LabWindow.shared.show() }
+                    .keyboardShortcut("l", modifiers: [.command, .option])
+            }
         }
     }
 }
@@ -323,7 +326,7 @@ final class MainWindow: NSObject, NSWindowDelegate {
         f.toolbarStyle = .unified
         f.titlebarSeparatorStyle = .automatic
         f.setContentSize(NSSize(width: 1480, height: 940))
-        f.contentMinSize = NSSize(width: 1000, height: 680)
+        f.contentMinSize = Self.minimumContent
         f.isReleasedWhenClosed = false
         f.delegate = self
         // Incognito: no window position retained, no state restored at the next launch.
@@ -549,6 +552,11 @@ final class MainWindow: NSObject, NSWindowDelegate {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, let w = window, event.window === w, w.attachedSheet == nil, !app.fullScreen else { return event }
+            // Fork: Esc closes the composer's open panel first, as it would a popover.
+            if event.keyCode == 53, Self.chord(event).isEmpty, app.composerPanel != nil {
+                withAnimation(Motion.pick(.easeOut(duration: 0.14))) { app.composerPanel = nil }
+                return nil
+            }
             // Esc leaves the field being typed in: the keys go back to the strip.
             if w.firstResponder is NSText {
                 guard event.keyCode == 53, Self.chord(event).isEmpty else { return event }
@@ -644,6 +652,17 @@ final class MainWindow: NSObject, NSWindowDelegate {
         case .alertThirdButtonReturn: return true
         default: return false
         }
+    }
+
+    /// Fork: **the window never gets smaller than the composer needs**. `contentMinSize` alone did not
+    /// hold once the left column folds away — the split view then sets the window's minimum from the
+    /// canvas alone, and the window could be dragged down to a sliver, the composer cut off.
+    static let minimumContent = NSSize(width: 1000, height: 680)
+
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        let content = sender.contentRect(forFrameRect: NSRect(origin: .zero, size: frameSize)).size
+        return NSSize(width: frameSize.width + max(0, Self.minimumContent.width - content.width),
+                      height: frameSize.height + max(0, Self.minimumContent.height - content.height))
     }
 
     func windowWillClose(_ notification: Notification) {

@@ -114,8 +114,9 @@ struct SceneView: View {
                 }
             }
             .aspectRatio(l / h, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Silicon.edge))
+            .shadow(color: .black.opacity(0.55), radius: 28, y: 12)
             .frame(maxWidth: l, maxHeight: h)
             .animation(Motion.pick(.easeInOut(duration: 0.25)), value: app.preview == nil)
             ProgressIndicator(app: app)
@@ -130,8 +131,9 @@ struct SceneView: View {
             .resizable()
             .interpolation(.high)
             .scaledToFit()
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Silicon.edge))
+            .shadow(color: .black.opacity(0.55), radius: 28, y: 12)
             .frame(maxWidth: CGFloat(cg.width), maxHeight: CGFloat(cg.height))
             .scaleEffect(zoom * pinchScale)
             .offset(x: liveOffset.width + dragOffset.width, y: liveOffset.height + dragOffset.height)
@@ -199,7 +201,7 @@ struct SceneView: View {
             } else {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(e.settings.prompt).font(.callout).lineLimit(1).truncationMode(.tail)
-                    Text(e.legend).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    Text(e.legend).font(Silicon.readout).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: 420, alignment: .leading)
                 Divider().frame(height: 22)
@@ -215,7 +217,7 @@ struct SceneView: View {
                     Menu { VariationButtons(app: app, entry: e) } label: { Image(systemName: "square.on.square.dashed") }
                         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                         .disabled(!app.canVary(e))
-                        .help("Variations: cousins of this image, same scene, slightly different — as many as the rack’s Batch")
+                        .help("Variations: cousins of this image, same scene, slightly different — as many as the Batch field")
                         .accessibilityLabel(Text("Variations"))
                 }
                 EnlargeButton(app: app, entry: e)
@@ -246,7 +248,7 @@ struct SceneView: View {
         .buttonStyle(.borderless)
         .imageScale(.large)
         .padding(.horizontal, 16).padding(.vertical, 8)
-        .glass(Capsule())
+        .siliconPanel(Capsule())
         .zIndex(2)
         .animation(Motion.pick(.easeInOut(duration: 0.15)), value: group.count > 1)
     }
@@ -281,13 +283,13 @@ struct SceneView: View {
             } else if app.sidebarTab == .explore {
                 // Fork: on Explore, the form is the left column's and its button is « Explore », not ⌘↩.
                 Text("Sketch first, finish the one you like")
-                    .font(.system(size: 32, weight: .semibold))
+                    .font(Silicon.display(34))
                     .foregroundStyle(.primary)
                 Text("Choose what varies on the left, then click Explore.").font(.title3).foregroundStyle(.secondary)
             } else {
-                // Fork: an invitation set as a title, the composer under it does the rest.
+                // Fork: an invitation set as a headline, the composer under it does the rest.
                 Text("What do you want to see?")
-                    .font(.system(size: 32, weight: .semibold))
+                    .font(Silicon.display(34))
                     .foregroundStyle(.primary)
                 Text("Describe an image, then press ⌘↩").font(.title3).foregroundStyle(.secondary)
                 if app.editingPossible {
@@ -297,6 +299,12 @@ struct SceneView: View {
         }
         .multilineTextAlignment(.center)
         .padding()
+        // Fork: the app's mark behind the question — a wafer, faint, its rim in the sheen.
+        .background {
+            if app.libraryBlocker == nil, !app.visibleReady.isEmpty, app.familyToInstall == nil {
+                WaferMark().frame(width: 440, height: 440)
+            }
+        }
     }
 
     private var zoomGesture: some Gesture {

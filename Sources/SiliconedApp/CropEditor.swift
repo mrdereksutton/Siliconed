@@ -381,7 +381,7 @@ struct CropEditor: View {
         }
         .imageScale(.large)
         .padding(.horizontal, 16).padding(.vertical, 8)
-        .glass(Capsule())
+        .siliconPanel(Capsule())
         .zIndex(2)
     }
 
