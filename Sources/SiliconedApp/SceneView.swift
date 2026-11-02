@@ -206,6 +206,11 @@ struct SceneView: View {
                 Button { app.redo(e) } label: { Image(systemName: "arrow.clockwise") }
                     .help("Render again: same settings, same seed (⌘R)")
                     .accessibilityLabel(Text("Render Again (Same Seed)"))
+                // Fork: the image's prompt and settings back into the composer, one click from the image
+                // (upstream keeps it in the context menu).
+                Button { app.restoreSettings(e) } label: { Image(systemName: "arrow.uturn.backward") }
+                    .help(e.grid == nil ? "Reuse These Settings" : "Reuse This Grid")
+                    .accessibilityLabel(Text(e.grid == nil ? "Reuse These Settings" : "Reuse This Grid"))
                 if e.grid == nil {
                     Menu { VariationButtons(app: app, entry: e) } label: { Image(systemName: "square.on.square.dashed") }
                         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
@@ -273,6 +278,12 @@ struct SceneView: View {
                 Button("Install…") { app.installSelectedModel() }
                     .disabled(!app.managementPossible)
                     .padding(.top, 4)
+            } else if app.sidebarTab == .explore {
+                // Fork: on Explore, the form is the left column's and its button is « Explore », not ⌘↩.
+                Text("Sketch first, finish the one you like")
+                    .font(.system(size: 32, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Text("Choose what varies on the left, then click Explore.").font(.title3).foregroundStyle(.secondary)
             } else {
                 // Fork: an invitation set as a title, the composer under it does the rest.
                 Text("What do you want to see?")

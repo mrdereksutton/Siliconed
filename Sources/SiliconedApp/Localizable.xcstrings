@@ -9505,6 +9505,46 @@
         }
       }
     },
+    "Choose what varies on the left, then click Explore." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wählen Sie links, was variiert, und klicken Sie dann auf „Erkunden“."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elige a la izquierda qué varía y haz clic en Explorar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choisissez à gauche ce qui varie, puis cliquez sur Explorer."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scegli a sinistra cosa varia, poi fai clic su Esplora."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左側で変化させる項目を選び、「探索」をクリックします。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在左侧选择要变化的设置，然后点按“探索”。"
+          }
+        }
+      }
+    },
     "Choose…" : {
       "localizations" : {
         "de" : {
@@ -11821,6 +11861,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "卷帘：在两张图像之间拖移分隔线（← →）"
+          }
+        }
+      }
+    },
+    "Custom size" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eigenes Format"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tamaño personalizado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Format personnalisé"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Formato personalizzato"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "カスタムサイズ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自定义尺寸"
           }
         }
       }
@@ -28236,6 +28316,46 @@
         }
       }
     },
+    "Seed, steps, detail and solver" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seed, Schritte, Detail und Solver"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Semilla, pasos, detalle y solver"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Graine, pas, détail et solveur"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seme, passi, dettaglio e solver"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "シード、ステップ、ディテール、ソルバー"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "种子、步数、细节与求解器"
+          }
+        }
+      }
+    },
     "Seeds" : {
       "localizations" : {
         "de" : {
@@ -28918,6 +29038,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在访达中显示"
+          }
+        }
+      }
+    },
+    "Show or hide the left column" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Linke Spalte ein- oder ausblenden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mostrar u ocultar la columna izquierda"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Afficher ou masquer la colonne de gauche"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mostra o nascondi la colonna di sinistra"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左側の列の表示・非表示"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示或隐藏左栏"
           }
         }
       }
@@ -29866,6 +30026,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "第 %lld 步（共 %lld 步）的草稿"
+          }
+        }
+      }
+    },
+    "Sketch first, finish the one you like" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erst skizzieren, dann den Favoriten fertigstellen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Primero bocetos, luego termina el que te guste"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "D’abord des esquisses, puis finissez celle qui vous plaît"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prima gli schizzi, poi finisci quello che ti piace"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "まずスケッチ、気に入った一枚を仕上げる"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "先出草图，再完成你喜欢的那张"
           }
         }
       }
@@ -34613,46 +34813,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "测量最多使用了 %@ 内存，这台 Mac 允许的上限为 %@。"
-          }
-        }
-      }
-    },
-    "The memory %@ needs at this size (computed)" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Der Arbeitsspeicher, den %@ in diesem Format braucht (berechnet)"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La memoria que necesita %@ a este tamaño (calculada)"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La mémoire qu’il faut à %@ à cette taille (calculée)"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La memoria che serve a %@ a questa dimensione (calcolata)"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@がこのサイズで必要とするメモリ（算出値）"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ 在此尺寸下所需的内存（已计算）"
           }
         }
       }
@@ -39639,46 +39799,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "同一主体的两张图片：模型将其视为一个主体的两个视角"
-          }
-        }
-      }
-    },
-    "Type a size (width × height)" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Format eingeben (Breite × Höhe)"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Escribe un tamaño (ancho × alto)"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Taper une taille (largeur × hauteur)"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Digita una dimensione (larghezza × altezza)"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "サイズを入力（幅 × 高さ）"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "输入尺寸（宽 × 高）"
           }
         }
       }

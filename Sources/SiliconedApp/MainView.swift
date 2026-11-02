@@ -18,15 +18,45 @@ import UniformTypeIdentifiers
 struct MainView: View {
     @Bindable var app: AppState
     var toggleStatistics: () -> Void = {}
+    /// Fork: the left column folded away on the Generate tab (the composer has it all), shown on Explore.
+    @State private var columns: NavigationSplitViewVisibility = .detailOnly
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columns) {
             Sidebar(app: app)
                 .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 520)
         } detail: {
             GraphCanvas(app: app)
         }
+        .onChange(of: app.sidebarTab, initial: true) { _, tab in
+            withAnimation(Motion.pick(.easeInOut(duration: 0.25))) { columns = tab == .explore ? .all : .detailOnly }
+            guard tab == .explore else { return }
+            if app.explorePrompt.isEmpty { app.explorePrompt = app.prompt }
+            app.gridDefaults()
+        }
         .toolbar {
+            // Fork: the left column on demand — Explore's form, or on Generate the composer's settings
+            // laid out side by side (`SettingsColumn`). This window has no View ▸ Show Sidebar.
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    withAnimation(Motion.pick(.easeInOut(duration: 0.25))) {
+                        columns = columns == .detailOnly ? .all : .detailOnly
+                    }
+                } label: {
+                    Label("Show or hide the left column", systemImage: "sidebar.left")
+                }
+                .help("Show or hide the left column")
+            }
+            // Fork: the window's two modes, in the middle of the toolbar.
+            ToolbarItem(placement: .principal) {
+                Picker("Exploration", selection: $app.sidebarTab) {
+                    Text("Generate").tag(SidebarTab.generate)
+                    Text("Explore").tag(SidebarTab.explore)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
             ToolbarItemGroup(placement: .primaryAction) {
                 let group = app.targets
                 Button { app.copyImages(group) } label: { Label("Copy Image", systemImage: "doc.on.doc") }
@@ -107,12 +137,23 @@ private struct GraphCanvas: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             if !app.history.isEmpty || app.explored != nil {
+                // Fork: the strip in the composer's column, its thumbnails over the prompt.
                 Banner(app: app)
+                    .frame(maxWidth: 920)
+                    .padding(.horizontal, 24)
             }
-            // Fork: the prompt and what a render needs most, at the foot of the canvas (`Composer`);
-            // the Explore tab keeps its own form.
-            if app.sidebarTab == .generate {
-                Composer(app: app)
+            // Fork: at the foot of the canvas, what goes on (`ActivityCard`) over the prompt and every
+            // setting of a render (`Composer`); the Explore tab keeps its own form in the left column.
+            if app.activityShows || app.sidebarTab == .generate {
+                VStack(spacing: 10) {
+                    if app.activityShows { ActivityCard(app: app) }
+                    if app.sidebarTab == .generate { Composer(app: app) }
+                }
+                .frame(maxWidth: 920)
+                .padding(.horizontal, 24)
+                .padding(.top, 12)
+                .padding(.bottom, 18)
+                .animation(Motion.pick(.easeInOut(duration: 0.2)), value: app.activityShows)
             }
         }
         .background(canvasBackground)

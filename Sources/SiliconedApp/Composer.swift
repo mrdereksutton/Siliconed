@@ -1,9 +1,9 @@
-// Fork: **the composer** — the prompt and what a render needs most, in one glass card at the foot of
-// the canvas, laid out as the image generators Derek works with lay it out: the prompt, then the model,
-// the aspect ratio, the resolution and the batch as pills that show only the current choice (each opens
-// its list on a click), then « Generate ». Under them, the cost before the click, what stops it, or how
-// far the running render is. The rest (an edit's images, the LoRA stack, seed, steps, detail, solver)
-// is the left column's (`GenerateSettings`). Shown on the Generate tab; Explore keeps its own form.
+// Fork: **the composer** — the prompt and every setting of a render in one glass card at the foot of
+// the canvas, laid out as the image generators Derek works with lay it out: an edit's images over the
+// prompt, then the model, the aspect ratio, the resolution, the LoRA stack, the settings and the batch
+// as pills that show only the current choice (each opens its list or its panel on a click), then
+// « Generate ». Under them, the cost before the click, or what stops it. Shown on the Generate tab;
+// Explore keeps its own form in the left column.
 
 import AppKit
 import Siliconed
@@ -14,8 +14,10 @@ struct Composer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if app.editingPossible, !app.references.isEmpty { references }
             prompt
             HStack(spacing: 8) {
+                if app.editingPossible { AttachPill(app: app) }
                 PillButton { LabWindow.shared.show() } label: {
                     Image(systemName: "wand.and.sparkles")
                 }
@@ -33,6 +35,10 @@ struct Composer: View {
                     }
                     .help("An edit keeps the framing of image 1: about 1 megapixel at its proportions, each side at least 512, 1024² at most")
                 }
+                if app.missing == nil, app.card != nil {
+                    LoRAPill(app: app)
+                    SettingsPill(app: app)
+                }
                 BatchPill(app: app)
                 Spacer(minLength: 8)
                 GenerateButton(app: app)
@@ -41,28 +47,93 @@ struct Composer: View {
         }
         .padding(16)
         .glass(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .frame(maxWidth: 920)
-        .padding(.horizontal, 24)
-        .padding(.top, 12)
-        .padding(.bottom, 18)
+        // As on the canvas: a PNG Siliconed wrote brings back its settings; on a model that edits, any
+        // other image joins the edit.
+        .dropDestination(for: DroppedImage.self) { items, _ in
+            var files: [URL] = []
+            var pasted: [Data] = []
+            for item in items {
+                switch item {
+                case .file(let url) where !AppState.importable(url): files.append(url)
+                case .file: break
+                case .png(let data): pasted.append(data)
+                }
+            }
+            if items.count == 1, files.count == 1, app.restoreSettings(fromPNG: files[0]) { return true }
+            guard app.editingPossible, !(files.isEmpty && pasted.isEmpty) else { return false }
+            pasted.forEach { app.addReference(png: $0) }
+            app.addReferences(files)
+            return true
+        }
     }
 
+    /// **The prompt**: as tall as its text — two lines to seven, then it scrolls. Return makes a new
+    /// line; ⌘↩ renders.
     private var prompt: some View {
-        ZStack(alignment: .topLeading) {
-            TextEditor(text: $app.prompt)
-                .accessibilityLabel(Text("Prompt"))
-                .font(.system(size: 15))
-                .scrollContentBackground(.hidden)
-                .scrollIndicators(.automatic)
-                .frame(height: 64)
-            if app.prompt.isEmpty {
-                Text(app.references.isEmpty ? "Describe the image…" : "Say what changes…")
-                    .font(.system(size: 15))
-                    .foregroundStyle(.tertiary)
-                    .padding(.leading, 5)
-                    .allowsHitTesting(false)
+        // The text, invisible, gives the editor its height (`TextEditor` takes any height it is offered);
+        // its line limit is the cap — a `frame(maxHeight:)` would grow to the height offered.
+        Text(verbatim: app.prompt + " ")
+            .font(.system(size: 15))
+            .lineLimit(7)
+            .padding(.horizontal, 5)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
+            .opacity(0)
+            .accessibilityHidden(true)
+            .overlay {
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $app.prompt)
+                        .accessibilityLabel(Text("Prompt"))
+                        .font(.system(size: 15))
+                        .scrollContentBackground(.hidden)
+                        .scrollIndicators(.never)
+                    if app.prompt.isEmpty {
+                        Text(app.references.isEmpty ? "Describe the image…" : "Say what changes…")
+                            .font(.system(size: 15))
+                            .foregroundStyle(.tertiary)
+                            .padding(.leading, 5)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .allowsHitTesting(false)
+                    }
+                }
+            }
+    }
+
+    /// An edit's images, numbered as the prompt names them — image 1 is the one edited.
+    private var references: some View {
+        ScrollView(.horizontal) {
+            HStack(alignment: .top, spacing: 8) {
+                ForEach(Array(app.references.enumerated()), id: \.element.id) { n, reference in
+                    ReferenceThumbnail(app: app, reference: reference, number: n + 1,
+                                       last: n == app.references.count - 1)
+                }
             }
         }
+        .scrollIndicators(.never)
+    }
+}
+
+// MARK: - An edit's images
+
+/// **« + » for an image**: the one to edit first, then the ones the prompt draws from. Greyed beyond the
+/// model's count or this Mac's memory (the reason is the tooltip).
+private struct AttachPill: View {
+    @Bindable var app: AppState
+
+    var body: some View {
+        let refusal = app.canAddReference ? app.nextReferenceRefusal() : nil
+        let enabled = app.canAddReference && refusal == nil
+        PillButton { app.chooseReferences() } label: {
+            Image(systemName: "photo.badge.plus")
+            if !app.references.isEmpty {
+                Text(verbatim: "\(app.references.count)/\(app.maxReferences)").monospacedDigit()
+            }
+        }
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
+        .help(refusal.map { Text($0) }
+              ?? (app.references.isEmpty ? Text("The image to edit — or drop or paste it here (⌘V)")
+                                         : Text("Add an image the prompt can draw from — or drop or paste it here (⌘V)")))
+        .accessibilityLabel(Text("Add an Image"))
     }
 }
 
@@ -135,6 +206,59 @@ enum ModelBlurb {
     }
 }
 
+// MARK: - The LoRA stack and the settings
+
+/// **The LoRA stack as a pill**: the word and, once some are in, how many; a click opens the stack —
+/// each LoRA with its strength slider, « Add », « Import… ».
+private struct LoRAPill: View {
+    @Bindable var app: AppState
+    @State private var open = false
+
+    var body: some View {
+        Pill(isPresented: $open) {
+            Image(systemName: "square.stack.3d.up").imageScale(.small)
+            Text("LoRA")
+            if !app.loras.isEmpty {
+                Text(verbatim: "\(app.loras.count)")
+                    .font(.caption.weight(.bold)).monospacedDigit()
+                    .foregroundStyle(.white)
+                    .frame(minWidth: 16, minHeight: 16)
+                    .background(Circle().fill(Color.accentColor))
+            }
+        } choices: {
+            LoRAStack(app: app)
+                .font(.callout)
+                .padding(14)
+                .frame(width: 340, alignment: .leading)
+        }
+        .help("Add a LoRA to the stack (3 at most)")
+    }
+}
+
+/// **The settings as a pill**: the steps on its face; a click opens the seed, the steps, the detail,
+/// the solver and the step previews.
+private struct SettingsPill: View {
+    @Bindable var app: AppState
+    @State private var open = false
+
+    var body: some View {
+        Pill(isPresented: $open) {
+            Image(systemName: "slider.horizontal.3").imageScale(.small)
+            Text("\(app.steps) steps").monospacedDigit()
+            if app.fixedSeed {
+                Image(systemName: "pin.fill").imageScale(.small).foregroundStyle(.secondary)
+            }
+        } choices: {
+            RenderOptions(app: app)
+                .font(.callout)
+                .padding(.horizontal, 14).padding(.vertical, 6)
+                .frame(width: 330)
+        }
+        .help("Seed, steps, detail and solver")
+        .accessibilityLabel(Text("Settings"))
+    }
+}
+
 // MARK: - The batch
 
 /// **How many images a click makes**, − and + on one pill: consecutive seeds, the prompt encoded once.
@@ -200,8 +324,8 @@ private struct GenerateButton: View {
 // MARK: - The status line
 
 /// **Under the pills, one line**: the cost before the click (size, memory, time learned on this Mac),
-/// then on the right what stops « Generate », the measure a first render waits for, or the running
-/// render's step and time left with its stop.
+/// then on the right what stops « Generate », the measure a first render waits for, or — when the
+/// canvas shows another image — the running render's step and time left, with its stop.
 private struct StatusLine: View {
     @Bindable var app: AppState
 
@@ -225,7 +349,9 @@ private struct StatusLine: View {
                                       : "Siliconed measures this Mac before its first render — about a minute.")
                     .lineLimit(1)
                 Text(verbatim: "\(line) · \(done + 1)/\(total)").foregroundStyle(.tertiary).lineLimit(1)
-            } else if app.state(of: .denoising) == .active, app.totalSteps > 0 {
+            } else if app.state(of: .denoising) == .active, app.totalSteps > 0,
+                      !(app.followsRender || app.history.isEmpty) {
+                // The canvas shows another image: the running render's progress is said here instead.
                 Text("step \(app.currentStep)/\(app.totalSteps)").monospacedDigit()
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     if let r = app.remaining(at: context.date) {

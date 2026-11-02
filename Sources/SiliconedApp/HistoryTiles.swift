@@ -39,9 +39,8 @@ struct Banner: View {
             sizeControl
         }
         // The strip is as tall as its thumbnails, never more: the canvas keeps the rest.
+        // Fork: no band of its own — the thumbnails sit on the canvas, over the composer.
         .frame(height: app.thumbnailSide + 20)
-        .background(.black.opacity(0.12))
-        .overlay(alignment: .top) { Divider() }
     }
 
     /// At the strip's end: how many images, and the thumbnails' size.

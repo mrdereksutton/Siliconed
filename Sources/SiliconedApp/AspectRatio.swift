@@ -79,11 +79,10 @@ struct SizePicker: View {
     }
 }
 
-/// **The ratio and the resolution as two pills**, each opening its list only when clicked, then the
-/// pencil for a size typed by hand. The size in pixels is the composer's status line.
+/// **The ratio and the resolution as two pills**, each opening its list only when clicked; under the
+/// ratios, a size typed by hand. The size in pixels is the composer's status line.
 struct SizePills: View {
     @Bindable var app: AppState
-    @State private var customSize = false
     @State private var choosingRatio = false
     @State private var choosingTier = false
 
@@ -100,19 +99,25 @@ struct SizePills: View {
                     Text(verbatim: "\(app.format.width) × \(app.format.height)").monospacedDigit()
                 }
             } choices: {
-                ChoiceList(title: "Aspect ratio") {
-                    ForEach(SizeTable.ratios) { r in
-                        let fits = app.renders(SizeTable.format(r, tier))
-                        ChoiceRow(selected: current?.ratio == r, enabled: fits || app.renders(SizeTable.format(r, .oneK))) {
-                            app.pickSize(r, fits ? tier : .oneK)
-                            choosingRatio = false
-                        } label: {
-                            RatioShape(ratio: r, side: 14)
-                            Text(verbatim: r.label).monospacedDigit()
+                VStack(alignment: .leading, spacing: 0) {
+                    ChoiceList(title: "Aspect ratio") {
+                        ForEach(SizeTable.ratios) { r in
+                            let fits = app.renders(SizeTable.format(r, tier))
+                            ChoiceRow(selected: current?.ratio == r, enabled: fits || app.renders(SizeTable.format(r, .oneK))) {
+                                app.pickSize(r, fits ? tier : .oneK)
+                                choosingRatio = false
+                            } label: {
+                                RatioShape(ratio: r, side: 14)
+                                Text(verbatim: r.label).monospacedDigit()
+                            }
                         }
                     }
+                    Divider().padding(.horizontal, 14)
+                    // The size typed by hand closes the list once taken (its `dismiss`).
+                    CustomSize(app: app, title: "Custom size")
                 }
             }
+            .help("Aspect ratio")
             if current != nil {
                 Pill(isPresented: $choosingTier) {
                     Image(systemName: "diamond").imageScale(.small)
@@ -137,14 +142,8 @@ struct SizePills: View {
                         }
                     }
                 }
+                .help("Resolution")
             }
-            Pill(isPresented: $customSize) {
-                Image(systemName: "pencil").imageScale(.small)
-            } choices: {
-                CustomSize(app: app)
-            }
-            .help("Type a size (width × height)")
-            .accessibilityLabel(Text("Type a size (width × height)"))
         }
     }
 }
@@ -186,7 +185,7 @@ struct PillFace<Content: View>: View {
     }
 }
 
-/// A pill that shows only the current choice; its list opens under it on a click.
+/// A pill that shows only the current choice; its list opens over it on a click.
 struct Pill<Label: View, Choices: View>: View {
     @Binding var isPresented: Bool
     @ViewBuilder var label: Label
@@ -195,7 +194,8 @@ struct Pill<Label: View, Choices: View>: View {
     var body: some View {
         Button { isPresented.toggle() } label: { PillFace(active: isPresented) { label } }
             .buttonStyle(.plain)
-            .popover(isPresented: $isPresented, arrowEdge: .bottom) { choices }
+            // Above the pill: the composer sits at the foot of the window.
+            .popover(isPresented: $isPresented, arrowEdge: .top) { choices }
     }
 }
 
@@ -226,7 +226,7 @@ struct ChoiceList<Rows: View>: View {
             rows
         }
         .padding(8)
-        .frame(minWidth: minWidth, alignment: .leading)
+        .frame(minWidth: minWidth, maxWidth: .infinity, alignment: .leading)
     }
 }
 

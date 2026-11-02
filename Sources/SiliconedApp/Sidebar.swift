@@ -12,53 +12,40 @@
 // from this chain —, many small ones instead of one; not a setting, so not in the rack's header with
 // « Models… ». The cost line above counts only what « Generate » makes.
 // The queue scrolls past a few rows, so that the footer never pushes the rack out of the column.
+//
+// Fork: the column now holds the Explore form; on the Generate tab it is folded away — the composer
+// at the foot of the canvas has the prompt and every setting (`Composer`) — and the footer became a
+// card over the composer (`ActivityCard`).
 
 import AppKit
 import Siliconed
 import SwiftUI
 
-/// Fork: the left column's two tabs. Explore holds the exploration's controls, once a floating panel.
+/// Fork: the window's two modes, switched in the toolbar (`MainView`): Generate (the composer at the
+/// foot of the canvas) and Explore (its form in the left column).
 enum SidebarTab: Hashable { case generate, explore }
 
 struct Sidebar: View {
     @Bindable var app: AppState
 
     var body: some View {
-        // The footer under the scroll view, not a `safeAreaInset` of it: as an inset, the clip view
-        // shrank by the footer's height AND the scroll view kept it as a bottom content inset, so the
-        // band of rack just above the footer was drawn but took no click (the LoRA row, « Import… »)
-        // until scrolled up — hit testing measured on macOS 27, 13/10/2026.
         VStack(spacing: 0) {
-            // Fork: Explore is a tab of the column, no longer a floating panel (`MainWindow.showExploration`).
-            Picker("Exploration", selection: $app.sidebarTab) {
-                Text("Generate").tag(SidebarTab.generate)
-                Text("Explore").tag(SidebarTab.explore)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 21)
-            .padding(.top, 12)
             if app.sidebarTab == .explore {
+                // Fork: Explore is a mode of the window, no longer a floating panel (`MainWindow.showExploration`).
                 Text("A grid of quick 512 px sketches that vary one or two settings: seeds, steps, a LoRA’s strength, models or {a|b} choices in the prompt. Double-click the one you like to finish it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    // No `fixedSize(vertical:)` here (see `Footer`): held at its ideal height, the text
-                    // made the column taller than the window and pushed the panel's top out of sight.
+                    // No `fixedSize(vertical:)` here: held at its ideal height, the text made the column
+                    // taller than the window and pushed the panel's top out of sight.
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16)
-                    .padding(.top, 10)
+                    .padding(.top, 12)
                 ExplorationPanel(app: app)
             } else {
-                // Fork: the settings the composer leaves out, as a form (`GenerateSettings`); the prompt,
-                // model, size, batch and « Generate » are the composer's, at the foot of the canvas.
-                GenerateSettings(app: app)
-                if footerShows { Footer(app: app) }
+                // Fork: on the Generate tab the column is folded away; shown, it holds what the composer's
+                // pills open — an edit's images, the LoRA stack, the settings (`SettingsColumn`).
+                SettingsColumn(app: app)
             }
-        }
-        .onChange(of: app.sidebarTab) { _, tab in
-            guard tab == .explore else { return }
-            if app.explorePrompt.isEmpty { app.explorePrompt = app.prompt }
-            app.gridDefaults()
         }
         // A `.safetensors` or a `.gguf` dropped on the column is imported (model or LoRA).
         .dropDestination(for: URL.self) { urls, _ in
@@ -68,24 +55,29 @@ struct Sidebar: View {
             return true
         }
     }
+}
 
-    /// Fork: the footer only when it has something to say — the queue, a problem, an installation, a copy.
-    private var footerShows: Bool {
-        app.busy || (app.othersQueued > 0 && app.mirror != nil) || app.copying != nil || app.forgeInProgress != nil
-            || app.problem != nil || app.journalLine != nil || !app.settingsLines.isEmpty
+extension AppState {
+    /// Fork: the activity card only when it has something to say — renders waiting, a problem, an
+    /// installation, a copy, a line from the journal or the settings. The running render alone is the
+    /// canvas's (its progress under the coming image).
+    var activityShows: Bool {
+        !file.isEmpty || (othersQueued > 0 && mirror != nil) || copying != nil || forgeInProgress != nil
+            || problem != nil || journalLine != nil || !settingsLines.isEmpty
     }
 }
 
 /// **A size typed by hand**, judged by the engine's own rules before it is taken.
 struct CustomSize: View {
     let app: AppState
+    var title: LocalizedStringKey = "Size"
     @State private var text = ""
     @State private var refusal: Problem?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Size").font(.headline)
+            Text(title).font(.headline)
             HStack {
                 TextField("Size", text: $text, prompt: Text(verbatim: "832x1216"))
                     .labelsHidden()
@@ -205,16 +197,17 @@ struct ReferenceThumbnail: View {
     }
 }
 
-// MARK: - Under the form: the cost, generate, the queue, what went wrong
+// MARK: - Over the composer: the queue, what goes on, what went wrong
 
-private struct Footer: View {
+/// Fork: **upstream's footer, as a card over the composer** — the cost, what stops « Generate » and
+/// « Generate » itself are the composer's (`Composer`); this card keeps the renders that wait, the
+/// installations and copies in progress, and what went wrong.
+struct ActivityCard: View {
     @Bindable var app: AppState
 
     var body: some View {
-        // Fork: the cost, what stops « Generate », the measure a first render waits for and « Generate »
-        // itself moved to the composer (`Composer`); the footer keeps the queue and what goes on.
         VStack(alignment: .leading, spacing: 10) {
-            if app.busy { queue }
+            if !app.file.isEmpty { queue }
             // In a mirror: the other Mac busy with renders that are not this Mac's — why this one waits.
             if app.othersQueued > 0, let mirror = app.mirror {
                 Label(app.othersSeconds.map { s in
@@ -261,54 +254,8 @@ private struct Footer: View {
             }
         }
         .padding(14)
-        .background(.bar)
-        .overlay(alignment: .top) { Divider() }
-    }
-
-    /// **Rule 7: the cost before the click** — the memory the engine will compare to the machine's, and
-    /// the time, learned on this Mac in this session (never a constant from another machine).
-    @ViewBuilder private var cost: some View {
-        if app.missing == nil, let card = app.card {
-            let f = app.outputFormat
-            HStack(spacing: 14) {
-                Label {
-                    Text(verbatim: "\(f.width) × \(f.height)").monospacedDigit()
-                } icon: { Image(systemName: "aspectratio") }
-                if let need = app.memoryNeed {
-                    Label {
-                        Text(Figures.memory(need)).monospacedDigit()
-                    } icon: { Image(systemName: "memorychip") }
-                    .help(String(localized: "The memory \(card.name) needs at this size (computed)"))
-                }
-                if app.variantCount > 1 {
-                    // A prompt with alternatives is a series: how many renders, before the click.
-                    Label {
-                        Text("\(app.variantCount) renders").monospacedDigit()
-                    } icon: { Image(systemName: "square.stack") }
-                    .help(app.alternativesHelp)
-                }
-                Label {
-                    if let t = app.plannedCost {
-                        Text(verbatim: "≈ " + Figures.duration(t)).monospacedDigit()
-                    } else {
-                        Text("after one render")
-                    }
-                } icon: { Image(systemName: "clock") }
-                .help("Learned on this Mac: the first render at this size, with this model, sets the estimate")
-                Spacer(minLength: 0)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .labelStyle(CompactLabel())
-        }
-    }
-
-    private var label: String {
-        let n = app.variantCount
-        if app.busy { return n > 1 ? String(localized: "Add \(n) Renders to Queue") : String(localized: "Add to Queue") }
-        if !app.references.isEmpty { return n > 1 ? String(localized: "Edit Image \(n) Ways") : String(localized: "Edit Image") }
-        let images = n * max(1, app.batch)
-        return images > 1 ? String(localized: "Generate \(images) Images") : String(localized: "Generate")
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glass(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     /// **What remains to be done**: the running render first — a batch is one job, its images rendered
@@ -320,7 +267,7 @@ private struct Footer: View {
             if !app.file.isEmpty { waiting }
         }
         .padding(9)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Palette.well))
     }
 
     /// The running render: where its batch is, the time left, and a stop that leaves the queue going.
@@ -398,13 +345,6 @@ private struct Footer: View {
                 .frame(height: Self.rowHeight)
             }
         }
-    }
-}
-
-/// An icon and its text, close together.
-private struct CompactLabel: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 4) { configuration.icon; configuration.title }
     }
 }
 
