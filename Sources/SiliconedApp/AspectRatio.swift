@@ -1,7 +1,8 @@
-// Fork: **the size, picked by aspect ratio and resolution.** A chip per ratio, drawn as its shape over
-// its name, tallest to widest; then 1K (about a megapixel) or 2K (about four). The pair names a size in
-// `SizeTable`; a size typed by hand (the pencil) leaves the chips unlit. An edit keeps image 1's framing
-// (`DiTBox`), as upstream.
+// Fork: **the size, picked by aspect ratio and resolution.** Two compact buttons show only the current
+// ratio (its shape and name) and the current resolution; each opens its full list when clicked, the
+// other choices staying out of sight until then. 1K is about a megapixel, 2K about four. The pair names
+// a size in `SizeTable`; a size typed by hand (the pencil) shows its pixels instead. An edit keeps
+// image 1's framing (`DiTBox`), as upstream.
 
 import AppKit
 import Siliconed
@@ -64,93 +65,162 @@ extension AppState {
     }
 }
 
-/// The Model box's size: the ratio chips, the resolution, the size in pixels and the pencil.
+/// The Model box's size: the ratio and the resolution as two compact buttons, each opening its list,
+/// then the pencil for a size typed by hand. The size in pixels is the footer's.
 struct SizePicker: View {
     @Bindable var app: AppState
     @State private var customSize = false
+    @State private var choosingRatio = false
+    @State private var choosingTier = false
 
     var body: some View {
         let current = SizeTable.match(app.format)
         let tier = current?.tier ?? .oneK
         let ratio = current?.ratio ?? SizeTable.square
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("Aspect ratio").foregroundStyle(.secondary)
-                Spacer(minLength: 8)
-                Text(verbatim: "\(app.format.width) × \(app.format.height)")
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                Button { customSize = true } label: { Image(systemName: "pencil") }
-                    .buttonStyle(.borderless)
-                    .help("Type a size (width × height)")
-                    .accessibilityLabel(Text("Type a size (width × height)"))
-                    .popover(isPresented: $customSize, arrowEdge: .trailing) { CustomSize(app: app) }
-            }
-            .font(.callout)
-            HStack(spacing: 3) {
-                ForEach(SizeTable.ratios) { r in
-                    let fits = app.renders(SizeTable.format(r, tier))
-                    RatioChip(ratio: r, selected: current?.ratio == r,
-                              enabled: fits || app.renders(SizeTable.format(r, .oneK))) {
-                        app.pickSize(r, fits ? tier : .oneK)
+        HStack(spacing: 6) {
+            Text("Size").foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            Pill(isPresented: $choosingRatio) {
+                if let current {
+                    RatioShape(ratio: current.ratio, side: 12)
+                    Text(verbatim: current.ratio.label).monospacedDigit()
+                } else {
+                    Text(verbatim: "\(app.format.width) × \(app.format.height)").monospacedDigit()
+                }
+            } choices: {
+                ChoiceList(title: "Aspect ratio") {
+                    ForEach(SizeTable.ratios) { r in
+                        let fits = app.renders(SizeTable.format(r, tier))
+                        ChoiceRow(selected: current?.ratio == r, enabled: fits || app.renders(SizeTable.format(r, .oneK))) {
+                            app.pickSize(r, fits ? tier : .oneK)
+                            choosingRatio = false
+                        } label: {
+                            RatioShape(ratio: r, side: 14)
+                            Text(verbatim: r.label).monospacedDigit()
+                        }
                     }
                 }
             }
-            Field(title: "Resolution") {
-                Picker("Resolution", selection: Binding(get: { tier }, set: { app.pickSize(ratio, $0) })) {
-                    ForEach(SizeTable.Tier.allCases, id: \.self) { t in
-                        Text(verbatim: t.label).tag(t)
+            if current != nil {
+                Pill(isPresented: $choosingTier) {
+                    Image(systemName: "diamond").imageScale(.small)
+                    Text(verbatim: tier.label)
+                } choices: {
+                    ChoiceList(title: "Resolution") {
+                        ForEach(SizeTable.Tier.allCases, id: \.self) { t in
+                            let f = SizeTable.format(ratio, t)
+                            ChoiceRow(selected: t == tier, enabled: app.renders(f)) {
+                                app.pickSize(ratio, t)
+                                choosingTier = false
+                            } label: {
+                                Text(verbatim: t.label).frame(width: 22, alignment: .leading)
+                                // Beyond this Mac's memory: the Mac it needs, said where the choice is made.
+                                if let n = app.macNeeded(f, images: 0) {
+                                    Text("\(String(f.width)) × \(String(f.height)) — needs a Mac with \(String(n)) GB")
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text(verbatim: "\(f.width) × \(f.height)").monospacedDigit().foregroundStyle(.secondary)
+                                }
+                            }
+                        }
                     }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
             }
-            // 2K beyond this Mac's memory: said under the switch, with the Mac it needs.
-            let twoK = SizeTable.format(ratio, .twoK)
-            if let n = app.macNeeded(twoK, images: 0) {
-                Text("\(String(twoK.width)) × \(String(twoK.height)) — needs a Mac with \(String(n)) GB")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Button { customSize = true } label: { Image(systemName: "pencil") }
+                .buttonStyle(.borderless)
+                .help("Type a size (width × height)")
+                .accessibilityLabel(Text("Type a size (width × height)"))
+                .popover(isPresented: $customSize, arrowEdge: .trailing) { CustomSize(app: app) }
         }
+        .font(.callout)
     }
 }
 
-/// A ratio: its shape in an 18-point square, its name under it; lit when it is the size's.
-private struct RatioChip: View {
+/// A ratio's shape, fitted in a square of `side` points.
+struct RatioShape: View {
     let ratio: SizeTable.Ratio
+    var side: CGFloat = 14
+
+    var body: some View {
+        let w = ratio.w >= ratio.h ? side : side * CGFloat(ratio.w) / CGFloat(ratio.h)
+        let h = ratio.h >= ratio.w ? side : side * CGFloat(ratio.h) / CGFloat(ratio.w)
+        RoundedRectangle(cornerRadius: side / 6, style: .continuous)
+            .strokeBorder(.primary, lineWidth: 1.3)
+            .frame(width: w, height: h)
+            .frame(width: side, height: side)
+    }
+}
+
+/// A compact button showing only the current choice; the list opens under it on a click.
+private struct Pill<Label: View, Choices: View>: View {
+    @Binding var isPresented: Bool
+    @ViewBuilder var label: Label
+    @ViewBuilder var choices: Choices
+    @State private var hovering = false
+
+    var body: some View {
+        Button { isPresented.toggle() } label: {
+            HStack(spacing: 5) { label }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.primary.opacity(hovering || isPresented ? 0.14 : 0.08)))
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Palette.hairline))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) { choices }
+    }
+}
+
+/// The list a pill opens: its title, then one row per choice.
+private struct ChoiceList<Rows: View>: View {
+    let title: LocalizedStringKey
+    @ViewBuilder var rows: Rows
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 4)
+            rows
+        }
+        .padding(8)
+        .frame(minWidth: 170)
+    }
+}
+
+/// A choice: what it is, and a check when it is the current one; lit under the pointer.
+private struct ChoiceRow<Label: View>: View {
     let selected: Bool
     let enabled: Bool
     let pick: () -> Void
+    @ViewBuilder var label: Label
+    @State private var hovering = false
 
     var body: some View {
-        let side: CGFloat = 18
-        let w = ratio.w >= ratio.h ? side : side * CGFloat(ratio.w) / CGFloat(ratio.h)
-        let h = ratio.h >= ratio.w ? side : side * CGFloat(ratio.h) / CGFloat(ratio.w)
         Button(action: pick) {
-            VStack(spacing: 5) {
-                RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                    .strokeBorder(selected ? Color.accentColor : Color.secondary, lineWidth: 1.5)
-                    .frame(width: w, height: h)
-                    .frame(width: side, height: side)
-                Text(verbatim: ratio.label)
-                    .font(.caption2.weight(selected ? .semibold : .regular))
-                    .monospacedDigit()
-                    .foregroundStyle(selected ? Color.primary : Color.secondary)
-                    .lineLimit(1)
-                    .fixedSize()
+            HStack(spacing: 10) {
+                label
+                Spacer(minLength: 12)
+                Image(systemName: "checkmark")
+                    .font(.caption.weight(.semibold))
+                    .opacity(selected ? 1 : 0)
             }
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(selected ? Palette.well : Color.clear))
+            .font(.callout)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.primary.opacity(hovering ? 0.1 : selected ? 0.06 : 0)))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.35)
-        .accessibilityLabel(Text(verbatim: ratio.label))
+        .opacity(enabled ? 1 : 0.4)
+        .onHover { hovering = $0 && enabled }
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
