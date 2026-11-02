@@ -17307,6 +17307,46 @@
         }
       }
     },
+    "Incognito" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Inkognito"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Incógnito"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Incognito"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Incognito"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "シークレットモード"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无痕模式"
+          }
+        }
+      }
+    },
     "Incomplete installation — it will resume where it stopped" : {
       "localizations" : {
         "de" : {
@@ -21105,6 +21145,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "每边绝不低于 %@ 像素"
+          }
+        }
+      }
+    },
+    "New images stay in memory until you save them. When this is off, each new image is also saved as a PNG, with its prompt, seed and model, in Downloads › Siliconed." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neue Bilder bleiben im Speicher, bis Sie sie sichern. Ist dies aus, wird jedes neue Bild außerdem als PNG mit Prompt, Seed und Modell in Downloads › Siliconed gesichert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Las imágenes nuevas se quedan en memoria hasta que las guardes. Si está desactivado, cada imagen nueva también se guarda como PNG, con su prompt, su semilla y su modelo, en Descargas › Siliconed."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les nouvelles images restent en mémoire jusqu’à ce que vous les enregistriez. Désactivé, chaque nouvelle image est aussi enregistrée en PNG, avec son prompt, sa graine et son modèle, dans Téléchargements › Siliconed."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le nuove immagini restano in memoria finché non le salvi. Se è disattivato, ogni nuova immagine viene salvata anche come PNG, con prompt, seme e modello, in Download › Siliconed."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しい画像は、保存するまでメモリ上にだけ残ります。オフにすると、新しい画像はそれぞれプロンプト、シード、モデルを含むPNGとして「ダウンロード › Siliconed」にも保存されます。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新图片会留在内存中，直到你存储它们。关闭后，每张新图片还会以 PNG 格式存到“下载 › Siliconed”，并保留提示词、种子和模型。"
           }
         }
       }

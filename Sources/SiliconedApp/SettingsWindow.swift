@@ -103,6 +103,21 @@ struct SettingsView: View {
                     SettingLabel("Faster Rendering", "From 1024² up, the first steps at half size: faster, a slightly different image. Not with a LoRA, Detail or an edit.")
                 }
             }
+            // Fork: the library by default; Incognito keeps images in memory only (`AppState.autoSave`).
+            Section {
+                Toggle(isOn: $app.incognito) {
+                    SettingLabel("Incognito", "New images stay in memory until you save them. When this is off, each new image is also saved as a PNG, with its prompt, seed and model, in Downloads › Siliconed.")
+                }
+                LabeledContent {
+                    Button("Show in Finder") {
+                        let folder = AppState.autoSaveFolder
+                        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                        NSWorkspace.shared.activateFileViewerSelecting([folder])
+                    }
+                } label: {
+                    Text(verbatim: AppState.autoSaveFolder.path(percentEncoded: false)).font(.caption).textSelection(.enabled)
+                }
+            }
             Section {
                 LabeledContent {
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([app.library.root]) }

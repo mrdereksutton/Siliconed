@@ -147,6 +147,7 @@ extension AppState {
                                   grid: GridInfo(ordinal: run.ordinal, grid: run.grid, empty: run.jobs.count - entries.count),
                                   owner: run.owner)
                 history.insert(entry, at: 0)
+                autoSave(entry)
                 if followsRender {
                     selection = entry.id
                     marked = []; anchor = entry.id
@@ -417,6 +418,7 @@ extension AppState {
                         continue
                     }
                     history.insert(entry, at: 0)
+                    autoSave(entry)
                     if followsRender {
                         selectedImage = (entry.id, finished.image)
                         selection = entry.id

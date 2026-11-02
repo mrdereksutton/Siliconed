@@ -100,6 +100,17 @@ final class AppState {
             }
         }
     }
+    private static let incognitoKey = "incognito"
+    /// Fork: **Incognito** (Settings › General), off by default. Off, every new image of this Mac's
+    /// history is also written as a PNG to `autoSaveFolder` (`autoSave`); on, nothing leaves memory
+    /// without a gesture, as upstream.
+    var incognito = UserDefaults.standard.bool(forKey: AppState.incognitoKey) {
+        didSet { UserDefaults.standard.set(incognito, forKey: Self.incognitoKey) }
+    }
+    /// Where new images are saved while Incognito is off.
+    static var autoSaveFolder: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads/Siliconed", isDirectory: true)
+    }
     private static let fasterRenderingKey = "fasterRenderingChoices"
     /// **Faster Rendering, per model and version** (Settings): at 1024² and above, the first evaluations of the family on the
     /// half grid (`Request.fasterRendering`; three of eight, Krea 2 four) — a quarter to a third faster, another image than the
