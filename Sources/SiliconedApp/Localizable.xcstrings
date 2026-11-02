@@ -7305,6 +7305,46 @@
         }
       }
     },
+    "Aspect ratio" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seitenverhältnis"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Relación de aspecto"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Proportions"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Proporzioni"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アスペクト比"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "宽高比"
+          }
+        }
+      }
+    },
     "Attention, Siliconed kernel" : {
       "localizations" : {
         "de" : {
@@ -23723,46 +23763,6 @@
         }
       }
     },
-    "Orientation" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ausrichtung"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Orientación"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Orientation"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Orientamento"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "向き"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "方向"
-          }
-        }
-      }
-    },
     "Original" : {
       "localizations" : {
         "de" : {
@@ -24319,6 +24319,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "DiT 的一部分在神经网络引擎上以 fp16 运行：更省电（在 M1 Pro 上约省五分之一），图像与 fp32 的略有不同。点按以全程使用 fp32。"
+          }
+        }
+      }
+    },
+    "Part of the model runs in fp16 on the Neural Engine, which uses less energy and gives an image a little different from fp32. For the selected model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein Teil des Modells läuft in fp16 auf der Neural Engine. Das spart Energie und ergibt ein etwas anderes Bild als fp32. Gilt für das ausgewählte Modell."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parte del modelo se ejecuta en fp16 en el Neural Engine, lo que gasta menos energía y da una imagen un poco distinta de la de fp32. Para el modelo seleccionado."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Une partie du modèle tourne en fp16 sur le Neural Engine, ce qui consomme moins d’énergie et donne une image un peu différente de celle en fp32. Pour le modèle sélectionné."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parte del modello gira in fp16 sul Neural Engine, che consuma meno energia e dà un’immagine un po’ diversa da quella in fp32. Per il modello selezionato."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "モデルの一部をNeural Engine上でfp16で実行します。消費電力が少なくなり、fp32とは少し異なる画像になります。選択中のモデルに適用されます。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型的一部分在神经网络引擎上以 fp16 运行，耗电更少，生成的图像与 fp32 略有不同。适用于所选模型。"
           }
         }
       }
@@ -27472,6 +27512,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "恢复为 0.8"
+          }
+        }
+      }
+    },
+    "Resolution" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auflösung"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resolución"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Résolution"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Risoluzione"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "解像度"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分辨率"
           }
         }
       }

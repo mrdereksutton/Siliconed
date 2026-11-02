@@ -196,10 +196,13 @@ struct RackView: View {
     /// Fork: the fixed stages (text encoder, image encoder, VAE) and the wire legend are not drawn:
     /// nothing in them can be set, and each image's details keep their times. `true` brings them back.
     static let showsStages = false
+    /// Fork: the « Chain » header is not drawn: Measure This Mac stays in Settings › Advanced and the
+    /// Help menu, « Models… » moved beside the model menu (`DiTBox`), Compute On stays in the Render menu.
+    static let showsHeader = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            header
+            if Self.showsHeader { header }
             if app.editingPossible { ImagesNode(app: app).node(.images) }
             PromptNode(app: app).node(.prompt)
             if Self.showsStages {

@@ -82,6 +82,11 @@ struct SettingsView: View {
         Binding(get: { app.fasterRendering(for: app.identifier) }, set: { app.setFasterRendering($0, for: app.identifier) })
     }
 
+    /// Fork: « Neural Engine », moved here from the Model box: the selected model's choice (`setNeuralEngine`).
+    private var neuralEngine: Binding<Bool> {
+        Binding(get: { app.neuralEngine(for: app.identifier) }, set: { app.setNeuralEngine($0, for: app.identifier) })
+    }
+
     var body: some View {
         // A fixed frame: a TabView takes the size of no tab in particular, and a window that changed
         // size from one tab to the next would jump under the pointer. A tab longer than this scrolls.
@@ -101,6 +106,12 @@ struct SettingsView: View {
             Section {
                 Toggle(isOn: fasterRendering) {
                     SettingLabel("Faster Rendering", "From 1024² up, the first steps at half size: faster, a slightly different image. Not with a LoRA, Detail or an edit.")
+                }
+                // Fork: the Neural Engine switch, moved here from the Model box; only where this Mac's measure offers it.
+                if app.neuralEngineOffered {
+                    Toggle(isOn: neuralEngine) {
+                        SettingLabel("Neural Engine", "Part of the model runs in fp16 on the Neural Engine, which uses less energy and gives an image a little different from fp32. For the selected model.")
+                    }
                 }
             }
             // Fork: the library by default; Incognito keeps images in memory only (`AppState.autoSave`).

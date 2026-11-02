@@ -14,20 +14,28 @@ struct DiTBox: View {
     @State private var customSize = false
 
     var body: some View {
-        StageBox(title: "DiT", symbol: "sparkles", state: app.state(of: .denoising),
+        StageBox(title: "Model", symbol: "sparkles", state: app.state(of: .denoising),
                  explanation: "The model that draws (a diffusion transformer): from noise, step by step, it makes the image the prompt describes") {
-            Picker("Model", selection: $app.identifier) {
-                ForEach(app.visibleCards) { card in
-                    if app.readySet.contains(card.id) {
-                        Text(card.name).tag(card.id)
-                    } else {
-                        Text("\(card.name) (not installed)").tag(card.id)
+            HStack(spacing: 10) {
+                Picker("Model", selection: $app.identifier) {
+                    ForEach(app.visibleCards) { card in
+                        if app.readySet.contains(card.id) {
+                            Text(card.name).tag(card.id)
+                        } else {
+                            Text("\(card.name) (not installed)").tag(card.id)
+                        }
                     }
                 }
+                .labelsHidden()
+                .help("The denoiser: the publisher’s model, or a fine-tune you imported")
+                // Fork: « Models… » left the rack's header (no longer drawn) for the box of the model it manages.
+                Button("Models…") { app.managementOpen = true }
+                    .buttonStyle(.link)
+                    .font(.callout)
+                    .fixedSize()
+                    .help("Install, import, remove — and what each takes on disk (⇧⌘M)")
             }
-            .labelsHidden()
-            .help("The denoiser: the publisher’s model, or a fine-tune you imported")
-            if let card = app.card {
+            if app.card != nil {
                 if app.missing != nil {
                     HStack {
                         Text("Not installed").font(.callout).foregroundStyle(.secondary)
@@ -37,21 +45,8 @@ struct DiTBox: View {
                             .disabled(!app.managementPossible)
                     }
                 } else {
-                    // The labels on one line when they fit; the license alone above the others when not.
-                    // The labels on one line when they fit; else what is stored and what computes stay together on a line of
-                    // their own, the license and the latent on another, then each pair alone — a label is never truncated.
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 5) { license(card); precision; latent }
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack(spacing: 5) { precision }
-                            HStack(spacing: 5) { license(card); latent }
-                        }
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack(spacing: 5) { precision }
-                            license(card)
-                            latent
-                        }
-                    }
+                    // Fork: no labels under the model (weights, what computes, license, latent): nothing in them
+                    // can be set here; the Neural Engine switch is in Settings › General.
                     Divider().padding(.vertical, 2)
                     // The LoRA first: what changes the image most, under the model it modifies.
                     loras
@@ -104,39 +99,8 @@ struct DiTBox: View {
 
     @ViewBuilder private var settings: some View {
         if app.references.isEmpty {
-            Field(title: "Size") {
-                Picker("Orientation", selection: $app.orientation) {
-                    ForEach([RecommendedFormat.Orientation.square, .portrait, .landscape], id: \.self) { o in
-                        Image(systemName: o.symbol).help(o.label).accessibilityLabel(Text(verbatim: o.label)).tag(o)
-                    }
-                }
-                .pickerStyle(.segmented).labelsHidden().fixedSize()
-                // What this Mac cannot render is greyed out ahead, with the Mac it needs (B, `macNeeded`).
-                // **Its width is a plain size's, never its longest entry's**: a menu picker sizes to its
-                // widest item, and the squares list « 2048 × 2048 — needs a Mac with 32 GB » — each switch
-                // to square widened the rack's column. A hidden one-item picker sets the width; the real
-                // one is laid over it, so its list never reaches the layout.
-                Picker("Size", selection: .constant(0)) { Text(verbatim: "0000 × 0000").tag(0) }
-                    .labelsHidden().fixedSize().hidden().accessibilityHidden(true)
-                    .overlay(alignment: .trailing) {
-                        Picker("Size", selection: $app.format) {
-                            ForEach(app.pickerFormats, id: \.self) { f in
-                                if let n = app.macNeeded(f, images: 0) {
-                                    Text("\(String(f.width)) × \(String(f.height)) — needs a Mac with \(String(n)) GB")
-                                        .tag(f).disabled(true)
-                                } else {
-                                    Text(verbatim: "\(f.width) × \(f.height)").tag(f)
-                                }
-                            }
-                        }
-                        .labelsHidden()
-                    }
-                Button { customSize = true } label: { Image(systemName: "pencil") }
-                    .buttonStyle(.borderless)
-                    .help("Type a size (width × height)")
-                    .accessibilityLabel(Text("Type a size (width × height)"))
-                    .popover(isPresented: $customSize, arrowEdge: .trailing) { CustomSize(app: app) }
-            }
+            // Fork: the size by aspect ratio and resolution, not orientation boxes and pixel sizes (`SizePicker`).
+            SizePicker(app: app)
         } else {
             let f = app.outputFormat
             Field(title: "Size") {
