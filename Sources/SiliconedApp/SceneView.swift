@@ -214,7 +214,11 @@ struct SceneView: View {
                     .help(e.grid == nil ? "Reuse These Settings" : "Reuse This Grid")
                     .accessibilityLabel(Text(e.grid == nil ? "Reuse These Settings" : "Reuse This Grid"))
                 if e.grid == nil {
-                    Menu { VariationButtons(app: app, entry: e) } label: { Image(systemName: "square.on.square.dashed") }
+                    // A titled label shown as its icon: the menu carries the word itself, so VoiceOver never
+                    // falls back to the symbol's own name (« Square On A Dashed Square »).
+                    Menu { VariationButtons(app: app, entry: e) } label: {
+                        Label("Variations", systemImage: "square.on.square.dashed").labelStyle(.iconOnly)
+                    }
                         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                         .disabled(!app.canVary(e))
                         .help("Variations: cousins of this image, same scene, slightly different — as many as the Batch field")
