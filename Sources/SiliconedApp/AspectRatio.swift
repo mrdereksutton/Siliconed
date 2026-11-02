@@ -8,7 +8,9 @@ import Siliconed
 import SwiftUI
 
 /// The ratios offered and the size each takes: sides in multiples of 32, so that every model takes them
-/// (Qwen-Image-2.1 asks for 32). 9:16 and 16:9 keep upstream's 768 × 1344 and 1344 × 768; 2K doubles each side.
+/// (Qwen-Image-2.1 asks for 32). 2K doubles each side, except 9:16 and 16:9: at 1K they keep upstream's
+/// 768 × 1344 and 1344 × 768 (4:7, the nearest in multiples of 32 near a megapixel); at 2K they are the
+/// exact 1440 × 2560 and 2560 × 1440.
 enum SizeTable {
     struct Ratio: Hashable, Identifiable {
         let w: Int, h: Int
@@ -27,6 +29,11 @@ enum SizeTable {
     static let square = Ratio(w: 1, h: 1)
 
     static func format(_ r: Ratio, _ t: Tier) -> RecommendedFormat {
+        switch (r.w, r.h, t) {
+        case (9, 16, .twoK): return RecommendedFormat(1440, 2560)
+        case (16, 9, .twoK): return RecommendedFormat(2560, 1440)
+        default: break
+        }
         let (w, h): (Int, Int) = switch (r.w, r.h) {
         case (9, 16): (768, 1344)
         case (2, 3): (832, 1248)
