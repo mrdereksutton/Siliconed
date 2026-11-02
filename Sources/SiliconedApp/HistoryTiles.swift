@@ -35,9 +35,24 @@ struct Banner: View {
                 if let id { withAnimation(Motion.pick(.default)) { reader.scrollTo(id, anchor: .center) } }
             }
             }
-            Divider()
-            sizeControl
+            // Fork: the shown image's actions, at the end of its row — no bar under the image.
+            if let entry = app.shownEntry {
+                ImageActions(app: app, entry: entry)
+                    .fixedSize()
+                    .padding(.horizontal, 10)
+                    .transition(.opacity)
+            }
+            // Short of room (Explore's column beside the canvas), the thumbnails' size steps aside
+            // before the thumbnails do.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 0) {
+                    Divider()
+                    sizeControl
+                }
+                Color.clear.frame(width: 0, height: 0)
+            }
         }
+        .animation(Motion.pick(.easeInOut(duration: 0.15)), value: app.shownEntry == nil)
         // The strip is as tall as its thumbnails, never more: the canvas keeps the rest.
         // Fork: no band of its own — the thumbnails sit on the canvas, over the composer.
         .frame(height: app.thumbnailSide + 20)

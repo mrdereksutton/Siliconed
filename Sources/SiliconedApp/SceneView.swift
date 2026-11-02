@@ -17,7 +17,6 @@ struct SceneView: View {
     @State private var offset: CGSize = .zero
     @GestureState private var pinchScale: CGFloat = 1
     @GestureState private var dragOffset: CGSize = .zero
-    @State private var details = false
     /// The image's zone, the image's size in it at zoom 1, and whether the pointer is over it: what
     /// the two-finger scroll needs.
     @State private var zone: CGSize = .zero
@@ -37,14 +36,11 @@ struct SceneView: View {
                 inProgress(job)
             } else if app.showsOriginal, let original = app.original, let selected = app.selectedImage,
                       let entry = app.selectedEntry {
-                VStack(spacing: 14) {
-                    CurtainView(app: app, a: original.image, b: selected.image, width: entry.width, height: entry.height,
-                                tags: (String(localized: "Original"), String(localized: "Edited")))
-                    bar(entry)
-                }
-                .padding(28)
-            } else if !app.compared.isEmpty, let entry = app.selectedEntry {
-                VStack(spacing: 14) {
+                CurtainView(app: app, a: original.image, b: selected.image, width: entry.width, height: entry.height,
+                            tags: (String(localized: "Original"), String(localized: "Edited")))
+                    .padding(28)
+            } else if !app.compared.isEmpty, app.selectedEntry != nil {
+                Group {
                     if let pair = Curtain.pair(app), Curtain.shared.preferred {
                         // The larger's size: the smaller is stretched to it, as the curtain of an enlargement shows it.
                         let big = pair.a.entry.width >= pair.b.entry.width ? pair.a.entry : pair.b.entry
@@ -53,15 +49,12 @@ struct SceneView: View {
                     } else {
                         Comparison(app: app)
                     }
-                    bar(entry)
                 }
                 .padding(28)
-            } else if let selected = app.selectedImage, let entry = app.selectedEntry {
-                VStack(spacing: 14) {
-                    image(selected.image)
-                    bar(entry)
-                }
-                .padding(28)
+            } else if let selected = app.selectedImage, app.selectedEntry != nil {
+                // Fork: the image alone — what is done with it is in the strip's row (`ImageActions`).
+                image(selected.image)
+                    .padding(28)
             } else {
                 empty
             }
@@ -166,108 +159,6 @@ struct SceneView: View {
     /// The offset as drawn: during a pinch, moved so that the point under the fingers stays there.
     private var liveOffset: CGSize {
         pinchScale == 1 ? offset : ZoomAnchor.offset(offset, from: zoom, to: zoom * pinchScale, at: pointer, in: zone)
-    }
-
-    /// Under the image: what it is, and what is done with it — or, with several marked, what is done
-    /// with all of them.
-    @ViewBuilder private func bar(_ e: Entry) -> some View {
-        let group = app.targets
-        HStack(spacing: 12) {
-            if group.count > 1 {
-                Text("\(group.count) images selected").font(.callout).monospacedDigit()
-                    .frame(minWidth: 160, alignment: .leading)
-                Divider().frame(height: 22)
-                if app.compared.count == 2 {
-                    CurtainSwitch(app: app)
-                    Divider().frame(height: 22)
-                }
-                Button { app.export(group) } label: { Image(systemName: "square.and.arrow.down") }
-                    .help("Export the selected images to a folder (⇧⌘E)")
-                    .accessibilityLabel(Text("Export Images…"))
-                ShareLink(items: group.map(app.transferable), preview: { SharePreview($0.name) }) {
-                    Image(systemName: "square.and.arrow.up")
-                }
-                .help("Share the selected images")
-                .accessibilityLabel(Text("Share…"))
-                Button { app.copyImages(group) } label: { Image(systemName: "doc.on.doc") }
-                    .help("Copy the selected images (⇧⌘C)")
-                    .accessibilityLabel(Text("Copy Image"))
-                Button { app.delete(group) } label: { Image(systemName: "trash") }
-                    .help("Remove the selected images from the history (⌫, undo with ⌘Z)")
-                    .accessibilityLabel(Text("Remove from History"))
-                Button { app.unmark() } label: { Image(systemName: "xmark.circle") }
-                    .help("Keep only the image shown (Esc)")
-                    .accessibilityLabel(Text("Keep Only This Image"))
-            } else {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(e.settings.prompt).font(.callout).lineLimit(1).truncationMode(.tail)
-                    Text(e.legend).font(Silicon.readout).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: 420, alignment: .leading)
-                Divider().frame(height: 22)
-                Button { app.redo(e) } label: { Image(systemName: "arrow.clockwise") }
-                    .help("Render again: same settings, same seed (⌘R)")
-                    .accessibilityLabel(Text("Render Again (Same Seed)"))
-                // Fork: the image's prompt and settings back into the composer, one click from the image
-                // (upstream keeps it in the context menu).
-                Button { app.restoreSettings(e) } label: { Image(systemName: "arrow.uturn.backward") }
-                    .help(e.grid == nil ? "Reuse These Settings" : "Reuse This Grid")
-                    .accessibilityLabel(Text(e.grid == nil ? "Reuse These Settings" : "Reuse This Grid"))
-                if e.grid == nil {
-                    // A titled label shown as its icon: the menu carries the word itself, so VoiceOver never
-                    // falls back to the symbol's own name (« Square On A Dashed Square »).
-                    Menu { VariationButtons(app: app, entry: e) } label: {
-                        Label("Variations", systemImage: "square.on.square.dashed").labelStyle(.iconOnly)
-                    }
-                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                        .disabled(!app.canVary(e))
-                        .help("Variations: cousins of this image, same scene, slightly different — as many as the Batch field")
-                        .accessibilityLabel(Text("Variations"))
-                }
-                EnlargeButton(app: app, entry: e)
-                Button { app.beginCrop(e) } label: { Image(systemName: "crop") }
-                    .disabled(app.cropRefusal(e) != nil)
-                    .help(app.cropRefusal(e) ?? String(localized: "Crop: a new image, the original stays (C)"))
-                    .accessibilityLabel(Text("Crop…"))
-                if app.canCompareOriginal(e) {
-                    Button { app.comparesOriginal.toggle() } label: {
-                        Image(systemName: "square.lefthalf.filled")
-                            .foregroundStyle(app.comparesOriginal ? Color.accentColor : .primary)
-                    }
-                    .accessibilityLabel(Text("Compare with Original"))
-                    .accessibilityAddTraits(app.comparesOriginal ? .isSelected : [])
-                    .help(app.comparesOriginal ? (e.enlarged == nil ? "Show the edited image alone (Esc)" : "Show the enlarged image alone (Esc)")
-                                               : e.enlarged == nil ? "Compare with the original: the image edited, under a curtain"
-                                               : "Compare with the original, merely stretched to this size, under a curtain")
-                }
-                // Fork: what the toolbar held — the image copied, saved, shared — beside its other actions.
-                Divider().frame(height: 22)
-                Button { app.copyImages(group) } label: { Image(systemName: "doc.on.doc") }
-                    .help("Copy the image (PNG, with its metadata)")
-                    .accessibilityLabel(Text("Copy Image"))
-                Button { app.export(group) } label: { Image(systemName: "square.and.arrow.down") }
-                    .help("Save the image (⌘S)")
-                    .accessibilityLabel(Text("Save…"))
-                ShareLink(items: group.map(app.transferable), preview: { SharePreview($0.name) }) {
-                    Image(systemName: "square.and.arrow.up")
-                }
-                .help("Share — AirDrop, Messages, Mail, Photos…")
-                .accessibilityLabel(Text("Share…"))
-                Button { details.toggle() } label: { Image(systemName: "info.circle") }
-                    .help("Image details")
-                    .accessibilityLabel(Text("Image details"))
-                    .popover(isPresented: $details, arrowEdge: .top) { Details(app: app, entry: e) }
-                Button { app.fullScreen = true } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
-                    .help("Full screen (Space)")
-                    .accessibilityLabel(Text("Full Screen"))
-            }
-        }
-        .buttonStyle(.borderless)
-        .imageScale(.large)
-        .padding(.horizontal, 16).padding(.vertical, 8)
-        .siliconPanel(Capsule())
-        .zIndex(2)
-        .animation(Motion.pick(.easeInOut(duration: 0.15)), value: group.count > 1)
     }
 
     // ── Nothing yet ──
@@ -393,6 +284,112 @@ private struct Comparison: View {
     }
 }
 
+// MARK: - What is done with the shown image
+
+/// Fork: **the shown image's actions, in the strip's row** (`Banner`) — beside the thumbnails, where the
+/// row had room, instead of a bar of their own under the image: the image keeps that height. Its prompt,
+/// seed and times are one click away (ⓘ, `Details`) and on each thumbnail's tooltip. With several
+/// marked, what is done with all of them.
+struct ImageActions: View {
+    @Bindable var app: AppState
+    let entry: Entry
+    @State private var details = false
+
+    var body: some View {
+        let group = app.targets
+        let e = entry
+        HStack(spacing: 12) {
+            if group.count > 1 {
+                Text("\(group.count) images selected").font(.callout).monospacedDigit()
+                Divider().frame(height: 22)
+                if app.compared.count == 2 {
+                    CurtainSwitch(app: app)
+                    Divider().frame(height: 22)
+                }
+                Button { app.export(group) } label: { Image(systemName: "square.and.arrow.down") }
+                    .help("Export the selected images to a folder (⇧⌘E)")
+                    .accessibilityLabel(Text("Export Images…"))
+                ShareLink(items: group.map(app.transferable), preview: { SharePreview($0.name) }) {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .help("Share the selected images")
+                .accessibilityLabel(Text("Share…"))
+                Button { app.copyImages(group) } label: { Image(systemName: "doc.on.doc") }
+                    .help("Copy the selected images (⇧⌘C)")
+                    .accessibilityLabel(Text("Copy Image"))
+                Button { app.delete(group) } label: { Image(systemName: "trash") }
+                    .help("Remove the selected images from the history (⌫, undo with ⌘Z)")
+                    .accessibilityLabel(Text("Remove from History"))
+                Button { app.unmark() } label: { Image(systemName: "xmark.circle") }
+                    .help("Keep only the image shown (Esc)")
+                    .accessibilityLabel(Text("Keep Only This Image"))
+            } else {
+                Button { app.redo(e) } label: { Image(systemName: "arrow.clockwise") }
+                    .help("Render again: same settings, same seed (⌘R)")
+                    .accessibilityLabel(Text("Render Again (Same Seed)"))
+                // Fork: the image's prompt and settings back into the composer, one click from the image
+                // (upstream keeps it in the context menu).
+                Button { app.restoreSettings(e) } label: { Image(systemName: "arrow.uturn.backward") }
+                    .help(e.grid == nil ? "Reuse These Settings" : "Reuse This Grid")
+                    .accessibilityLabel(Text(e.grid == nil ? "Reuse These Settings" : "Reuse This Grid"))
+                if e.grid == nil {
+                    // A titled label shown as its icon: the menu carries the word itself, so VoiceOver never
+                    // falls back to the symbol's own name (« Square On A Dashed Square »).
+                    Menu { VariationButtons(app: app, entry: e) } label: {
+                        Label("Variations", systemImage: "square.on.square.dashed").labelStyle(.iconOnly)
+                    }
+                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                        .disabled(!app.canVary(e))
+                        .help("Variations: cousins of this image, same scene, slightly different — as many as the Batch field")
+                        .accessibilityLabel(Text("Variations"))
+                }
+                EnlargeButton(app: app, entry: e)
+                Button { app.beginCrop(e) } label: { Image(systemName: "crop") }
+                    .disabled(app.cropRefusal(e) != nil)
+                    .help(app.cropRefusal(e) ?? String(localized: "Crop: a new image, the original stays (C)"))
+                    .accessibilityLabel(Text("Crop…"))
+                if app.canCompareOriginal(e) {
+                    Button { app.comparesOriginal.toggle() } label: {
+                        Image(systemName: "square.lefthalf.filled")
+                            .foregroundStyle(app.comparesOriginal ? Color.accentColor : .primary)
+                    }
+                    .accessibilityLabel(Text("Compare with Original"))
+                    .accessibilityAddTraits(app.comparesOriginal ? .isSelected : [])
+                    .help(app.comparesOriginal ? (e.enlarged == nil ? "Show the edited image alone (Esc)" : "Show the enlarged image alone (Esc)")
+                                               : e.enlarged == nil ? "Compare with the original: the image edited, under a curtain"
+                                               : "Compare with the original, merely stretched to this size, under a curtain")
+                }
+                // Fork: what the toolbar held — the image copied, saved, shared — beside its other actions.
+                Divider().frame(height: 22)
+                Button { app.copyImages(group) } label: { Image(systemName: "doc.on.doc") }
+                    .help("Copy the image (PNG, with its metadata)")
+                    .accessibilityLabel(Text("Copy Image"))
+                Button { app.export(group) } label: { Image(systemName: "square.and.arrow.down") }
+                    .help("Save the image (⌘S)")
+                    .accessibilityLabel(Text("Save…"))
+                ShareLink(items: group.map(app.transferable), preview: { SharePreview($0.name) }) {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .help("Share — AirDrop, Messages, Mail, Photos…")
+                .accessibilityLabel(Text("Share…"))
+                Button { details.toggle() } label: { Image(systemName: "info.circle") }
+                    .help("Image details")
+                    .accessibilityLabel(Text("Image details"))
+                    .popover(isPresented: $details, arrowEdge: .top) { Details(app: app, entry: e) }
+                Button { app.fullScreen = true } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                    .help("Full screen (Space)")
+                    .accessibilityLabel(Text("Full Screen"))
+            }
+        }
+        .buttonStyle(.borderless)
+        .imageScale(.large)
+        .padding(.horizontal, 16).padding(.vertical, 8)
+        .siliconPanel(Capsule())
+        .animation(Motion.pick(.easeInOut(duration: 0.15)), value: group.count > 1)
+    }
+}
+
+
 // MARK: - An image's details
 
 /// **What the engine did for this image**: its settings, and the time and memory of each
@@ -491,5 +488,16 @@ private struct Details: View {
             Text(Figures.seconds(seconds)).monospacedDigit()
             Text(bytes > 0 ? Figures.memory(bytes) : "—").monospacedDigit().foregroundStyle(.secondary)
         }
+    }
+}
+
+extension AppState {
+    /// Fork: the image the canvas shows as chosen — what `ImageActions` acts on. None while the canvas
+    /// follows a render, crops, or shows an exploration (the same cases `SceneView` draws no image for).
+    var shownEntry: Entry? {
+        guard cropping == nil, !(showsExploration && explored != nil) else { return nil }
+        if currentJob != nil, followsRender || history.isEmpty { return nil }
+        guard let entry = selectedEntry, selectedImage != nil || !compared.isEmpty else { return nil }
+        return entry
     }
 }
