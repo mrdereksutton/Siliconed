@@ -111,6 +111,8 @@ final class AppState {
     static var autoSaveFolder: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads/Siliconed", isDirectory: true)
     }
+    /// Fork: the left column's tab, the rack (Generate) or the exploration's controls (Explore).
+    var sidebarTab: SidebarTab = .generate
     private static let fasterRenderingKey = "fasterRenderingChoices"
     /// **Faster Rendering, per model and version** (Settings): at 1024² and above, the first evaluations of the family on the
     /// half grid (`Request.fasterRendering`; three of eight, Krea 2 four) — a quarter to a third faster, another image than the

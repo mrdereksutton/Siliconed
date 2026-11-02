@@ -5019,6 +5019,46 @@
         }
       }
     },
+    "A grid of quick 512 px sketches that vary one or two settings: seeds, steps, a LoRA’s strength, models or {a|b} choices in the prompt. Double-click the one you like to finish it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein Raster schneller Skizzen mit 512 px, die eine oder zwei Einstellungen variieren (Seeds, Schritte, die Stärke einer LoRA, Modelle oder {a|b}-Varianten im Prompt). Doppelklicken Sie auf die gewünschte, um sie fertigzustellen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Una cuadrícula de bocetos rápidos de 512 px que varían uno o dos ajustes (semillas, pasos, la fuerza de un LoRA, modelos u opciones {a|b} del prompt). Haz doble clic en el que te guste para terminarlo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Une grille d’esquisses rapides de 512 px qui font varier un ou deux réglages (graines, pas, force d’une LoRA, modèles ou choix {a|b} dans le prompt). Double-cliquez sur celle qui vous plaît pour la finir."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Una griglia di schizzi rapidi da 512 px che variano una o due impostazioni (semi, passi, la forza di una LoRA, modelli o scelte {a|b} nel prompt). Fai doppio clic su quello che ti piace per completarlo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1つか2つの設定（シード、ステップ、LoRAの強さ、モデル、プロンプト内の{a|b}の選択肢）を変えた、512 pxの簡易スケッチのグリッドです。気に入ったものをダブルクリックすると仕上げられます。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一组 512 px 的快速草图网格，变化一到两个设置（种子、步数、LoRA 强度、模型，或提示词中的 {a|b} 选项）。双击喜欢的那张即可完成它。"
+          }
+        }
+      }
+    },
     "A grid that varies the model can’t take a LoRA: each LoRA is made for one model." : {
       "localizations" : {
         "de" : {
@@ -31275,46 +31315,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "细微变体"
-          }
-        }
-      }
-    },
-    "Sweep seeds, a LoRA’s strength, words of the prompt, models or the images to edit — small sketches, fast (⌥⌘G)" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Seeds, die Stärke einer LoRA, Wörter des Prompts, Modelle oder die zu bearbeitenden Bilder durchspielen – kleine Skizzen, schnell (⌥⌘G)"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Recorre semillas, la intensidad de un LoRA, palabras del prompt, modelos o las imágenes que editar — pequeños bocetos, rápidos (⌥⌘G)"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Balayez des graines, la force d’une LoRA, des mots du prompt, des modèles ou les images à éditer — de petites esquisses, vite (⌥⌘G)"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Esplora semi, l’intensità di una LoRA, parole del prompt, modelli o le immagini da modificare — piccoli schizzi, veloci (⌥⌘G)"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "シード、LoRAの強さ、プロンプトの単語、モデル、編集する画像を順に変えて、小さなスケッチを素早く生成（⌥⌘G）"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "扫过种子、LoRA 的强度、提示词中的词、模型或要编辑的图像——小草稿，快速完成（⌥⌘G）"
           }
         }
       }

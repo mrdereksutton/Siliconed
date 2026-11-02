@@ -17,6 +17,9 @@ import AppKit
 import Siliconed
 import SwiftUI
 
+/// Fork: the left column's two tabs. Explore holds the exploration's controls, once a floating panel.
+enum SidebarTab: Hashable { case generate, explore }
+
 struct Sidebar: View {
     @Bindable var app: AppState
 
@@ -26,11 +29,37 @@ struct Sidebar: View {
         // band of rack just above the footer was drawn but took no click (the LoRA row, « Import… »)
         // until scrolled up — hit testing measured on macOS 27, 13/10/2026.
         VStack(spacing: 0) {
-            ScrollView(.vertical) {
-                RackView(app: app)
+            // Fork: Explore is a tab of the column, no longer a floating panel (`MainWindow.showExploration`).
+            Picker("Exploration", selection: $app.sidebarTab) {
+                Text("Generate").tag(SidebarTab.generate)
+                Text("Explore").tag(SidebarTab.explore)
             }
-            .scrollIndicators(.automatic)
-            Footer(app: app)
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 21)
+            .padding(.top, 12)
+            if app.sidebarTab == .explore {
+                Text("A grid of quick 512 px sketches that vary one or two settings: seeds, steps, a LoRA’s strength, models or {a|b} choices in the prompt. Double-click the one you like to finish it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    // No `fixedSize(vertical:)` here (see `Footer`): held at its ideal height, the text
+                    // made the column taller than the window and pushed the panel's top out of sight.
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                ExplorationPanel(app: app)
+            } else {
+                ScrollView(.vertical) {
+                    RackView(app: app)
+                }
+                .scrollIndicators(.automatic)
+                Footer(app: app)
+            }
+        }
+        .onChange(of: app.sidebarTab) { _, tab in
+            guard tab == .explore else { return }
+            if app.explorePrompt.isEmpty { app.explorePrompt = app.prompt }
+            app.gridDefaults()
         }
         // A `.safetensors` or a `.gguf` dropped on the column is imported (model or LoRA).
         .dropDestination(for: URL.self) { urls, _ in
@@ -216,12 +245,7 @@ private struct Footer: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(blocker != nil)
                 .help(Text(verbatim: "⌘↩"))
-                Button { MainWindow.shared.showExploration() } label: {
-                    Label("Explore", systemImage: "square.grid.3x3")
-                }
-                .buttonStyle(.bordered)
-                .fixedSize()
-                .help("Sweep seeds, a LoRA’s strength, words of the prompt, models or the images to edit — small sketches, fast (⌥⌘G)")
+                // Fork: « Explore » is the column's tab now (`Sidebar`), not a button beside Generate.
             }
             .controlSize(.extraLarge)
             if app.busy { queue }

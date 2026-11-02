@@ -216,29 +216,11 @@ extension MainWindow {
     /// **The exploration's panel**: floating over the main window, it only drives — the cells show in
     /// the main window's canvas. Kept once opened; it retains nothing (incognito).
     func showExploration() {
-        if explorationPanel == nil {
-            if app.explorePrompt.isEmpty { app.explorePrompt = app.prompt }
-            app.gridDefaults()
-            // Not `.nonactivatingPanel`: its prompt is typed in.
-            let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 720),
-                            styleMask: [.titled, .closable, .resizable, .utilityWindow],
-                            backing: .buffered, defer: false)
-            p.title = String(localized: "Exploration")
-            p.isFloatingPanel = true
-            p.hidesOnDeactivate = false
-            p.isRestorable = false
-            p.isReleasedWhenClosed = false
-            p.becomesKeyOnlyIfNeeded = false
-            let host = NSHostingController(rootView: ExplorationPanel(app: app))
-            host.sizingOptions = []
-            p.contentViewController = host
-            p.setContentSize(NSSize(width: 360, height: 720))
-            p.contentMinSize = NSSize(width: 320, height: 520)
-            p.center()
-            explorationPanel = p
-        }
-        NSApp.activate()
-        explorationPanel?.makeKeyAndOrderFront(nil)
+        if app.explorePrompt.isEmpty { app.explorePrompt = app.prompt }
+        app.gridDefaults()
+        // Fork: the exploration is the left column's Explore tab (`Sidebar`), no longer a floating panel.
+        app.sidebarTab = .explore
+        show()
     }
 }
 

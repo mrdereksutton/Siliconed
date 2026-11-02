@@ -123,7 +123,8 @@ private struct AppCommands: Commands {
             // them is the key window the menu item steps aside, so that the key reaches that window's button.
             Button("Generate") { app.render() }
                 .keyboardShortcut(.return)
-                .disabled(!window.carrier.mainIsKey)
+                // Fork: on the Explore tab, ⌘↩ is the tab's « Explore ».
+                .disabled(!window.carrier.mainIsKey || app.sidebarTab == .explore)
             Button("Render Again (Same Seed)") { app.selectedEntry.map(app.redo) }
                 .keyboardShortcut("r")
             Button("Exploration") { window.showExploration() }
