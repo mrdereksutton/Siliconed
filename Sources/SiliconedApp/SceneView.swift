@@ -236,6 +236,19 @@ struct SceneView: View {
                                                : e.enlarged == nil ? "Compare with the original: the image edited, under a curtain"
                                                : "Compare with the original, merely stretched to this size, under a curtain")
                 }
+                // Fork: what the toolbar held — the image copied, saved, shared — beside its other actions.
+                Divider().frame(height: 22)
+                Button { app.copyImages(group) } label: { Image(systemName: "doc.on.doc") }
+                    .help("Copy the image (PNG, with its metadata)")
+                    .accessibilityLabel(Text("Copy Image"))
+                Button { app.export(group) } label: { Image(systemName: "square.and.arrow.down") }
+                    .help("Save the image (⌘S)")
+                    .accessibilityLabel(Text("Save…"))
+                ShareLink(items: group.map(app.transferable), preview: { SharePreview($0.name) }) {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .help("Share — AirDrop, Messages, Mail, Photos…")
+                .accessibilityLabel(Text("Share…"))
                 Button { details.toggle() } label: { Image(systemName: "info.circle") }
                     .help("Image details")
                     .accessibilityLabel(Text("Image details"))

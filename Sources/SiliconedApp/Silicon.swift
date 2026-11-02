@@ -392,6 +392,60 @@ struct ModeSwitch: View {
     }
 }
 
+/// Fork: **the name in the top bar**, in the wide face of the empty canvas's headline — the window's
+/// title, which the bar no longer draws. Beside it, when there is one, what the subtitle used to say:
+/// the Mac that computes, or this instance's name.
+struct Wordmark: View {
+    var note: String? = nil
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(verbatim: "Siliconed")
+                .font(Silicon.display(14))
+                .foregroundStyle(.primary.opacity(0.92))
+            if let note, !note.isEmpty {
+                Text(verbatim: note)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .padding(.horizontal, 8)
+                    .frame(height: 20)
+                    .background(Capsule().fill(Silicon.cell))
+                    .overlay(Capsule().strokeBorder(Silicon.edge))
+            }
+        }
+        .fixedSize()
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Fork: **a round icon button**, as tall as the mode switch beside it — a cell with its symbol,
+/// brighter under the pointer. The top bar's own, instead of the system's glass.
+struct SiliconIconStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        IconFace(label: configuration.label, pressed: configuration.isPressed)
+    }
+}
+
+private struct IconFace<Label: View>: View {
+    let label: Label
+    let pressed: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        label
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(hovering ? .primary : .secondary)
+            .frame(width: 32, height: 32)
+            .background(Circle().fill(hovering ? Silicon.cellHover : Silicon.cell))
+            .overlay(Circle().strokeBorder(Silicon.edge))
+            .opacity(pressed ? 0.75 : 1)
+            .contentShape(Circle())
+            .onHover { hovering = $0 }
+            .animation(Motion.pick(.easeOut(duration: 0.12)), value: hovering)
+    }
+}
+
 /// **Tabs on a capsule**: the chosen one on the app's blue, which slides from one to the next — the
 /// window's two modes, the Settings' panes.
 struct CapsuleTabs<Value: Hashable>: View {
@@ -470,7 +524,8 @@ struct SiliconCheckStyle: ToggleStyle {
 }
 
 /// **The action of a mode** — Generate, Explore: the app's blue lit from above, a glow under it;
-/// greyed when something stops it; while `sweeping`, a light crosses it again and again.
+/// while something stops it, the same blue body dimmed, unlit and without its glow — the button
+/// waiting, not another control; while `sweeping`, a light crosses it again and again.
 struct SiliconPrimaryStyle: ButtonStyle {
     var sweeping = false
     var fullWidth = false
@@ -491,13 +546,16 @@ private struct PrimaryFace<Label: View>: View {
         let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
         label
             .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(enabled ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+            .foregroundStyle(.white.opacity(enabled ? 1 : 0.55))
             .padding(.horizontal, 20)
             .frame(maxWidth: fullWidth ? .infinity : nil)
             .frame(height: 46)
-            .background(shape.fill(enabled ? AnyShapeStyle(Silicon.accentFill) : AnyShapeStyle(Silicon.cell)))
+            // Disabled, SwiftUI draws `Color.accentColor` grey: the waiting body takes the system's accent
+            // as AppKit gives it, which it leaves alone.
+            .background(shape.fill(enabled ? AnyShapeStyle(Silicon.accentFill)
+                                           : AnyShapeStyle(Color(nsColor: .controlAccentColor).opacity(0.4))))
             .overlay { if sweeping, enabled { Sweep().clipShape(shape) } }
-            .overlay(shape.strokeBorder(enabled ? Color.white.opacity(0.25) : Silicon.edge, lineWidth: 1))
+            .overlay(shape.strokeBorder(Color.white.opacity(enabled ? 0.25 : 0.1), lineWidth: 1))
             .shadow(color: Color.accentColor.opacity(enabled ? (hovering ? 0.7 : 0.45) : 0), radius: hovering ? 18 : 12, y: 3)
             .opacity(pressed ? 0.85 : 1)
             .contentShape(Rectangle())

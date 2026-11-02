@@ -45,29 +45,30 @@ struct MainView: View {
             let wanted = Self.columns(app.sidebarTab)
             if shown != wanted { columns = wanted }
         }
+        // Fork: **the top bar on the canvas** — no band of its own, no system title: the name on the
+        // left (`Wordmark`), the window's two modes in the middle, the statistics on the right. What
+        // acts on an image (copy, save, share) is under the image, with its other actions (`SceneView`).
+        .toolbar(removing: .sidebarToggle)
+        .toolbar(removing: .title)
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .toolbar {
-            // Fork: the window's two modes, in the middle of the toolbar.
+            // The name: beside the traffic lights on Generate; on Explore, at the head of the canvas
+            // (a split view's bar puts its items over the detail column).
+            ToolbarItem(placement: .navigation) { Wordmark(note: app.wordmarkNote) }
+                .sharedBackgroundVisibility(.hidden)
             ToolbarItem(placement: .principal) {
                 ModeSwitch(app: app).fixedSize()
             }
-            ToolbarItemGroup(placement: .primaryAction) {
-                let group = app.targets
-                Button { app.copyImages(group) } label: { Label("Copy Image", systemImage: "doc.on.doc") }
-                    .disabled(group.isEmpty)
-                    .help(group.count > 1 ? "Copy the selected images (⇧⌘C)" : "Copy the image (PNG, with its metadata)")
-                Button { app.export(group) } label: { Label("Save…", systemImage: "square.and.arrow.down") }
-                    .disabled(group.isEmpty)
-                    .help(group.count > 1 ? "Export the selected images to a folder (⇧⌘E)" : "Save the image (⌘S)")
-                ShareLink(items: group.map(app.transferable), preview: { SharePreview($0.name) }) {
-                    Label("Share…", systemImage: "square.and.arrow.up")
-                }
-                    .disabled(group.isEmpty)
-                    .help("Share — AirDrop, Messages, Mail, Photos…")
+            .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(placement: .primaryAction) {
                 Button(action: toggleStatistics) {
-                    Label("Statistics", systemImage: "gauge.with.dots.needle.33percent")
+                    Image(systemName: "gauge.with.dots.needle.33percent")
                 }
+                .buttonStyle(SiliconIconStyle())
                 .help("Render statistics (⌥⌘I)")
+                .accessibilityLabel(Text("Statistics"))
             }
+            .sharedBackgroundVisibility(.hidden)
         }
         .sheet(isPresented: $app.managementOpen) { ModelManagement(app: app) }
         .sheet(item: $app.licenseRequest) { request in LicenseSheet(app: app, card: request.card) }
@@ -77,6 +78,14 @@ struct MainView: View {
             if app.fullScreen, let image = app.selectedImage?.image { FullScreen(app: app, image: image) }
         }
         .animation(Motion.pick(.easeInOut(duration: 0.15)), value: app.fullScreen)
+    }
+}
+
+extension AppState {
+    /// Fork: beside the name in the top bar — the Mac that computes, or this instance's name (the
+    /// subtitle the bar no longer draws).
+    var wordmarkNote: String? {
+        mirror.map { String(localized: "Computing on “\($0.macName)”") } ?? MainWindow.instanceName
     }
 }
 
@@ -144,8 +153,8 @@ private struct GraphCanvas: View {
             }
         }
         // Fork: graphite over a wafer's die grid (`WaferBackground`) — still neutral: the image alone
-        // carries the color.
-        .background(WaferBackground())
+        // carries the color. It runs under the top bar, which has no band of its own.
+        .background(WaferBackground().ignoresSafeArea())
         .overlay(alignment: .top) {
             if let toast = app.toast {
                 Text(toast)

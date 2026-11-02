@@ -2,7 +2,7 @@
 // of the canvas (`Silicon.swift`): an edit's images over the prompt, then the model, the aspect ratio,
 // the resolution, the LoRA stack, the settings and the batch as spec cells that show only the current
 // choice — each opens its panel over it on a click, one at a time —, then « Generate ». Under them,
-// the cost before the click, or what stops it. Shown on the Generate tab; Explore keeps its own form in
+// only what stops a render or needs a decision; the time a click costs is Generate's tooltip. Shown on the Generate tab; Explore keeps its own form in
 // the left column.
 
 import AppKit
@@ -376,6 +376,7 @@ private struct GenerateButton: View {
         }
         .buttonStyle(SiliconPrimaryStyle(sweeping: app.busy))
         .disabled(app.formBlocker != nil || app.memoryRefusal != nil)
+        .help(app.plannedCost.map { Text(verbatim: "≈ " + Figures.duration($0)) } ?? Text(verbatim: "⌘↩"))
     }
 
     private var label: String {
@@ -389,20 +390,21 @@ private struct GenerateButton: View {
 
 // MARK: - The status line
 
-/// **Under the cells, one line**: the cost before the click (size, memory, time learned on this Mac) as
-/// a readout, then on the right what stops « Generate », the measure a first render waits for, or —
-/// when the canvas shows another image — the running render's step and time left, with its stop.
+/// **Under the cells, only when something needs saying**: what stops « Generate » (but not an empty
+/// prompt — the greyed button says it), a memory refusal with the size this Mac renders, the measure
+/// a first render waits for, or — when the canvas shows another image — the running render's step and
+/// time left, with its stop. Nothing otherwise: the size is in the cells, the time in Generate's tooltip.
 private struct StatusLine: View {
     @Bindable var app: AppState
 
     var body: some View {
         // Read once per drawing: the memory half computes the need against B (`MemoryBudget`).
-        let form = app.formBlocker
-        let refusal = form == nil ? app.memoryRefusal : nil
-        HStack(spacing: 8) {
-            cost
-            Spacer(minLength: 12)
-            Group {
+        let form = app.formBlocker.flatMap { app.promptIsEmpty ? nil : $0 }
+        let refusal = app.formBlocker == nil ? app.memoryRefusal : nil
+        let progress = app.state(of: .denoising) == .active && app.totalSteps > 0
+            && !(app.followsRender || app.history.isEmpty)
+        if form != nil || refusal != nil || app.diagnosticRunning || progress {
+            HStack(spacing: 8) {
                 if let reason = form ?? refusal?.text {
                     Text(reason).lineLimit(1).truncationMode(.tail)
                     // A memory refusal is never a dead end: a size this Mac renders.
@@ -416,8 +418,7 @@ private struct StatusLine: View {
                                           : "Siliconed measures this Mac before its first render — about a minute.")
                         .lineLimit(1)
                     Text(verbatim: "\(line) · \(done + 1)/\(total)").foregroundStyle(.tertiary).lineLimit(1)
-                } else if app.state(of: .denoising) == .active, app.totalSteps > 0,
-                          !(app.followsRender || app.history.isEmpty) {
+                } else if progress {
                     // The canvas shows another image: the running render's progress is said here instead.
                     Text("step \(app.currentStep)/\(app.totalSteps)").font(Silicon.readout)
                     TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -432,38 +433,16 @@ private struct StatusLine: View {
                     .help("Stop (⌘.)")
                     .accessibilityLabel(Text("Stop"))
                 }
+                Spacer(minLength: 0)
             }
             .font(.caption)
-        }
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 4)
-    }
-
-    /// Size · memory · renders · time: the figures, as a readout.
-    @ViewBuilder private var cost: some View {
-        if app.missing == nil, app.card != nil {
-            let f = app.outputFormat
-            HStack(spacing: 8) {
-                Text(verbatim: "\(f.width) × \(f.height)")
-                if let need = app.memoryNeed {
-                    separator
-                    Text(Figures.memory(need))
-                }
-                if app.variantCount > 1 {
-                    separator
-                    Text("\(app.variantCount) renders").help(app.alternativesHelp)
-                }
-                separator
-                if let t = app.plannedCost {
-                    Text(verbatim: "≈ " + Figures.duration(t))
-                } else {
-                    Text("after one render")
-                        .help("Learned on this Mac: the first render at this size, with this model, sets the estimate")
-                }
-            }
-            .font(Silicon.readout)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 4)
         }
     }
+}
 
-    private var separator: some View { Text(verbatim: "·").foregroundStyle(.tertiary) }
+extension AppState {
+    /// Fork: the prompt has no text — Generate is greyed, and nothing more is said.
+    var promptIsEmpty: Bool { prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 }

@@ -322,9 +322,13 @@ final class MainWindow: NSObject, NSWindowDelegate {
         let f = NSWindow(contentViewController: makeRoot())
         f.title = String(localized: "Siliconed")
         f.subtitle = Self.instanceName
-        f.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        // Fork: the canvas under the top bar — no title drawn (the name is the toolbar's `Wordmark`),
+        // no band, no separator. The title stays set: the Window menu and Mission Control read it.
+        f.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         f.toolbarStyle = .unified
-        f.titlebarSeparatorStyle = .automatic
+        f.titlebarAppearsTransparent = true
+        f.titleVisibility = .hidden
+        f.titlebarSeparatorStyle = .none
         f.setContentSize(NSSize(width: 1480, height: 940))
         f.contentMinSize = Self.minimumContent
         f.isReleasedWhenClosed = false
@@ -343,7 +347,7 @@ final class MainWindow: NSObject, NSWindowDelegate {
     }
 
     /// Two instances on one Mac (`SILICONED_ROOT`, the remote Mac's test): each window says which it is.
-    private static var instanceName: String {
+    static var instanceName: String {
         ProcessInfo.processInfo.environment["SILICONED_ROOT"].map { _ in shared.otherMacs.name } ?? ""
     }
 
