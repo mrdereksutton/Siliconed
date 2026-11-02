@@ -1,6 +1,6 @@
 // Fork: **what the composer keeps one click away** — the LoRA stack with each strength under the hand,
 // and the render's settings (seed, steps, detail, solver, step previews). The composer opens them as
-// panels from its « LoRA » and « Steps » cells: the one place they live. Drawn with Silicon's controls
+// panels from its « LoRA » and « Settings » cells: the one place they live. Drawn with Silicon's controls
 // (`Silicon.swift`): chips, a stepper cell, a slider, a switch.
 
 import AppKit

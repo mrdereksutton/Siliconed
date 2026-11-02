@@ -65,10 +65,14 @@ struct Composer: View {
                         }
                     }
                     .help("Add a LoRA to the stack (3 at most)")
-                    cell(.settings, "Steps") {
-                        Text(verbatim: "\(app.steps)")
+                    // « Settings », not « Steps »: the cell opens the seed, the steps, the detail, the
+                    // solver and the previews; its face says the steps and, pinned, that the seed is fixed.
+                    cell(.settings, "Settings") {
+                        Text("\(app.steps) steps")
                         if app.fixedSeed {
                             Image(systemName: "pin.fill").imageScale(.small).foregroundStyle(.secondary)
+                                .help("The seed is fixed: the same image again")
+                                .accessibilityLabel(Text("Fixed seed"))
                         }
                     }
                     .help("Seed, steps, detail and solver")

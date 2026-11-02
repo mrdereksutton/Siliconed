@@ -14974,6 +14974,46 @@
         }
       }
     },
+    "Fixed seed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fester Seed"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Semilla fija"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Graine fixe"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seme fisso"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "固定シード"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "固定种子"
+          }
+        }
+      }
+    },
     "Forget" : {
       "localizations" : {
         "de" : {
@@ -35893,6 +35933,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "每个求解器使用相同的种子和步数：Euler 是此模型蒸馏时所用的求解器"
+          }
+        }
+      }
+    },
+    "The seed is fixed: the same image again" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Seed ist fest: noch einmal dasselbe Bild"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La semilla es fija: la misma imagen otra vez"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La graine est fixe : la même image à nouveau"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il seme è fisso: di nuovo la stessa immagine"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "シードは固定：同じ画像をもう一度"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "种子已固定：再次得到同一张图像"
           }
         }
       }
