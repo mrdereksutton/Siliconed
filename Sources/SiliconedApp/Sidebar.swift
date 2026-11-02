@@ -49,11 +49,10 @@ struct Sidebar: View {
                     .padding(.top, 10)
                 ExplorationPanel(app: app)
             } else {
-                ScrollView(.vertical) {
-                    RackView(app: app)
-                }
-                .scrollIndicators(.automatic)
-                Footer(app: app)
+                // Fork: the settings the composer leaves out, as a form (`GenerateSettings`); the prompt,
+                // model, size, batch and « Generate » are the composer's, at the foot of the canvas.
+                GenerateSettings(app: app)
+                if footerShows { Footer(app: app) }
             }
         }
         .onChange(of: app.sidebarTab) { _, tab in
@@ -68,6 +67,12 @@ struct Sidebar: View {
             app.perform(s)
             return true
         }
+    }
+
+    /// Fork: the footer only when it has something to say — the queue, a problem, an installation, a copy.
+    private var footerShows: Bool {
+        app.busy || (app.othersQueued > 0 && app.mirror != nil) || app.copying != nil || app.forgeInProgress != nil
+            || app.problem != nil || app.journalLine != nil || !app.settingsLines.isEmpty
     }
 }
 
@@ -206,48 +211,9 @@ private struct Footer: View {
     @Bindable var app: AppState
 
     var body: some View {
-        // Read once per drawing: the memory half computes the need against B (`MemoryBudget`).
-        let form = app.formBlocker
-        let refusal = form == nil ? app.memoryRefusal : nil
-        let memory = refusal?.text
-        let blocker = form ?? memory
+        // Fork: the cost, what stops « Generate », the measure a first render waits for and « Generate »
+        // itself moved to the composer (`Composer`); the footer keeps the queue and what goes on.
         VStack(alignment: .leading, spacing: 10) {
-            cost
-            // **No `fixedSize(vertical:)` on a text of this footer** (nor in `ProblemView`): a refusal of
-            // two lines held at its ideal height made the footer taller than the column: it left the
-            // window and the rack scrolled to its end, nothing left to click (a `{` left open, a grid's
-            // LoRA axis without strengths) — measured with the footer as a `safeAreaInset`, the same
-            // in a `VStack`. Wrapping on its own, the text fits.
-            // What stops « Generate » is said above it, in the body's size: it is what to do next, read
-            // before the figures — the cost line above is caption-sized.
-            if let reason = blocker {
-                Text(reason).font(.callout)
-                // A memory refusal is never a dead end: a size this Mac renders.
-                if let f = refusal?.smaller {
-                    Button(String(localized: "Use \(String(f.width)) × \(String(f.height))")) { app.useFormat(f) }
-                        .buttonStyle(.link).font(.caption)
-                        .help("The largest of this model’s sizes this Mac renders")
-                }
-            } else if case let .running(done, total, line) = app.diagnostic {
-                // Before the first render, the measure it waits for: why nothing starts yet, and how far.
-                Text(app.settingsRead ? "The diagnostic is running: renders wait for it."
-                                      : "Siliconed measures this Mac before its first render — about a minute.")
-                    .font(.callout)
-                Text(verbatim: "\(line) · \(done + 1)/\(total)").font(.caption).foregroundStyle(.secondary)
-            }
-            // A render's gap to the measure's prediction is not said here: the model runs a long render's regime off the probes' short
-            // passes, the same way on every Mac, and an invitation to measure again could not close that gap. The gap goes with the
-            // report (the diagnostic sheet's last render).
-            HStack(spacing: 8) {
-                Button { app.render() } label: {
-                    Text(label).fontWeight(.semibold).frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(blocker != nil)
-                .help(Text(verbatim: "⌘↩"))
-                // Fork: « Explore » is the column's tab now (`Sidebar`), not a button beside Generate.
-            }
-            .controlSize(.extraLarge)
             if app.busy { queue }
             // In a mirror: the other Mac busy with renders that are not this Mac's — why this one waits.
             if app.othersQueued > 0, let mirror = app.mirror {

@@ -109,6 +109,11 @@ private struct GraphCanvas: View {
             if !app.history.isEmpty || app.explored != nil {
                 Banner(app: app)
             }
+            // Fork: the prompt and what a render needs most, at the foot of the canvas (`Composer`);
+            // the Explore tab keeps its own form.
+            if app.sidebarTab == .generate {
+                Composer(app: app)
+            }
         }
         .background(canvasBackground)
         .overlay(alignment: .top) {

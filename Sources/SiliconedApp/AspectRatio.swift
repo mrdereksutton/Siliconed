@@ -65,9 +65,23 @@ extension AppState {
     }
 }
 
-/// The Model box's size: the ratio and the resolution as two compact buttons, each opening its list,
-/// then the pencil for a size typed by hand. The size in pixels is the footer's.
+/// The size as a labelled row (`DiTBox`, upstream's rack): the word, then the pills.
 struct SizePicker: View {
+    @Bindable var app: AppState
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("Size").foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            SizePills(app: app)
+        }
+        .font(.callout)
+    }
+}
+
+/// **The ratio and the resolution as two pills**, each opening its list only when clicked, then the
+/// pencil for a size typed by hand. The size in pixels is the composer's status line.
+struct SizePills: View {
     @Bindable var app: AppState
     @State private var customSize = false
     @State private var choosingRatio = false
@@ -77,12 +91,10 @@ struct SizePicker: View {
         let current = SizeTable.match(app.format)
         let tier = current?.tier ?? .oneK
         let ratio = current?.ratio ?? SizeTable.square
-        HStack(spacing: 6) {
-            Text("Size").foregroundStyle(.secondary)
-            Spacer(minLength: 8)
+        HStack(spacing: 8) {
             Pill(isPresented: $choosingRatio) {
                 if let current {
-                    RatioShape(ratio: current.ratio, side: 12)
+                    RatioShape(ratio: current.ratio, side: 13)
                     Text(verbatim: current.ratio.label).monospacedDigit()
                 } else {
                     Text(verbatim: "\(app.format.width) × \(app.format.height)").monospacedDigit()
@@ -126,13 +138,14 @@ struct SizePicker: View {
                     }
                 }
             }
-            Button { customSize = true } label: { Image(systemName: "pencil") }
-                .buttonStyle(.borderless)
-                .help("Type a size (width × height)")
-                .accessibilityLabel(Text("Type a size (width × height)"))
-                .popover(isPresented: $customSize, arrowEdge: .trailing) { CustomSize(app: app) }
+            Pill(isPresented: $customSize) {
+                Image(systemName: "pencil").imageScale(.small)
+            } choices: {
+                CustomSize(app: app)
+            }
+            .help("Type a size (width × height)")
+            .accessibilityLabel(Text("Type a size (width × height)"))
         }
-        .font(.callout)
     }
 }
 
@@ -151,32 +164,56 @@ struct RatioShape: View {
     }
 }
 
-/// A compact button showing only the current choice; the list opens under it on a click.
-private struct Pill<Label: View, Choices: View>: View {
-    @Binding var isPresented: Bool
-    @ViewBuilder var label: Label
-    @ViewBuilder var choices: Choices
+// MARK: - Pills
+
+/// **A pill's face**: an icon and a word on a soft rounded plate, brighter under the pointer or open.
+struct PillFace<Content: View>: View {
+    var active = false
+    @ViewBuilder var content: Content
     @State private var hovering = false
 
     var body: some View {
-        Button { isPresented.toggle() } label: {
-            HStack(spacing: 5) { label }
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Color.primary.opacity(hovering || isPresented ? 0.14 : 0.08)))
-                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Palette.hairline))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .popover(isPresented: $isPresented, arrowEdge: .bottom) { choices }
+        HStack(spacing: 6) { content }
+            .font(.callout)
+            .padding(.horizontal, 11)
+            .frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color.primary.opacity(hovering || active ? 0.15 : 0.08)))
+            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Palette.hairline))
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .animation(Motion.pick(.easeOut(duration: 0.12)), value: hovering)
+    }
+}
+
+/// A pill that shows only the current choice; its list opens under it on a click.
+struct Pill<Label: View, Choices: View>: View {
+    @Binding var isPresented: Bool
+    @ViewBuilder var label: Label
+    @ViewBuilder var choices: Choices
+
+    var body: some View {
+        Button { isPresented.toggle() } label: { PillFace(active: isPresented) { label } }
+            .buttonStyle(.plain)
+            .popover(isPresented: $isPresented, arrowEdge: .bottom) { choices }
+    }
+}
+
+/// A pill that acts at once.
+struct PillButton<Label: View>: View {
+    let action: () -> Void
+    @ViewBuilder var label: Label
+
+    var body: some View {
+        Button(action: action) { PillFace { label } }
+            .buttonStyle(.plain)
     }
 }
 
 /// The list a pill opens: its title, then one row per choice.
-private struct ChoiceList<Rows: View>: View {
+struct ChoiceList<Rows: View>: View {
     let title: LocalizedStringKey
+    var minWidth: CGFloat = 170
     @ViewBuilder var rows: Rows
 
     var body: some View {
@@ -189,12 +226,12 @@ private struct ChoiceList<Rows: View>: View {
             rows
         }
         .padding(8)
-        .frame(minWidth: 170)
+        .frame(minWidth: minWidth, alignment: .leading)
     }
 }
 
 /// A choice: what it is, and a check when it is the current one; lit under the pointer.
-private struct ChoiceRow<Label: View>: View {
+struct ChoiceRow<Label: View>: View {
     let selected: Bool
     let enabled: Bool
     let pick: () -> Void

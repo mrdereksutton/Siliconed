@@ -250,8 +250,9 @@ struct SceneView: View {
 
     private var empty: some View {
         VStack(spacing: 12) {
-            if !app.visibleReady.isEmpty {
-                Image(systemName: app.missing == nil ? "sparkles" : "shippingbox")
+            // Fork: no stock sparkles over the empty canvas; the box stays for a model not installed.
+            if !app.visibleReady.isEmpty, app.missing != nil {
+                Image(systemName: "shippingbox")
                     .font(.system(size: 46, weight: .light))
                     .foregroundStyle(.secondary)
             }
@@ -273,6 +274,10 @@ struct SceneView: View {
                     .disabled(!app.managementPossible)
                     .padding(.top, 4)
             } else {
+                // Fork: an invitation set as a title, the composer under it does the rest.
+                Text("What do you want to see?")
+                    .font(.system(size: 32, weight: .semibold))
+                    .foregroundStyle(.primary)
                 Text("Describe an image, then press ⌘↩").font(.title3).foregroundStyle(.secondary)
                 if app.editingPossible {
                     Text("Drop an image here to edit it.").font(.callout).foregroundStyle(.secondary)
