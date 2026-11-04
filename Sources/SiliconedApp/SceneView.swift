@@ -213,6 +213,10 @@ struct SceneView: View {
                 WaferMark().frame(width: 440, height: 440)
             }
         }
+        // Fork: the empty canvas steps back while a composer panel is open over it — a panel is never laid
+        // across the bright headline.
+        .opacity(app.composerPanel == nil ? 1 : 0.25)
+        .animation(Motion.pick(.easeOut(duration: 0.14)), value: app.composerPanel == nil)
     }
 
     private var zoomGesture: some Gesture {

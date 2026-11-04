@@ -95,7 +95,7 @@ struct CustomSize: View {
                     .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Silicon.edge))
                     .onSubmit(apply)
                 Button("Use", action: apply)
-                    .buttonStyle(SiliconButtonStyle(prominent: true))
+                    .buttonStyle(SiliconButtonStyle())
                     .keyboardShortcut(.defaultAction)
             }
             if let refusal {
@@ -108,8 +108,8 @@ struct CustomSize: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(14)
-        .frame(width: 280, alignment: .leading)
+        .padding(.horizontal, 16).padding(.vertical, 14)
+        .frame(minWidth: 280, alignment: .leading)
         .onAppear { text = "\(app.format.width)x\(app.format.height)" }
     }
 

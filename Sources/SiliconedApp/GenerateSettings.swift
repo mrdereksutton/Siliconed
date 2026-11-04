@@ -7,31 +7,37 @@ import AppKit
 import Siliconed
 import SwiftUI
 
-/// **The LoRA stack**: how many of the three and « Import… », one line per LoRA with its strength, then
-/// the model's LoRAs not yet in the stack — a click adds one.
+/// **The LoRA stack**, as the composer's other panels are laid out: its caption with how many of the three,
+/// one line per LoRA with its strength, the model's LoRAs not yet in the stack — a click adds one —, then
+/// « Import… » in the footer, as under the model list.
 struct LoRAStack: View {
     @Bindable var app: AppState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                SpecCaption("LoRA")
-                if !app.loras.isEmpty {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    SpecCaption("LoRA")
                     Text(verbatim: "\(app.loras.count)/\(AppState.maxLoRA)").font(Silicon.readout).foregroundStyle(.secondary)
                 }
-                Spacer(minLength: 4)
+                .padding(.horizontal, 8).padding(.top, 2)
+                if app.compatibleLoras.isEmpty {
+                    Text("No LoRA for this model").foregroundStyle(.secondary).padding(.horizontal, 8)
+                }
+                ForEach($app.loras) { $slot in LoRALine(app: app, slot: $slot) }
+                LoRAChoices(app: app)
+            }
+            .padding(8)
+            Rectangle().fill(Silicon.edge).frame(height: 1).padding(.horizontal, 16)
+            HStack {
+                Spacer()
                 Button("Import…") { app.chooseToImport() }
                     .buttonStyle(SiliconButtonStyle())
                     .disabled(!app.importPossible)
                     .help("A model (.safetensors or .gguf) or a LoRA (.safetensors), as published on Civitai")
             }
-            if app.compatibleLoras.isEmpty {
-                Text("No LoRA for this model").font(.callout).foregroundStyle(.secondary)
-            } else if app.loras.isEmpty {
-                Text("Add a LoRA to the stack (3 at most)").font(.callout).foregroundStyle(.secondary)
-            }
-            ForEach($app.loras) { $slot in LoRALine(app: app, slot: $slot) }
-            LoRAChoices(app: app)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
         }
     }
 }
@@ -51,7 +57,7 @@ struct LoRAChoices: View {
                         app.loras.append(LoRASlot(path: l.path))
                     } label: {
                         HStack(spacing: 8) {
-                            Image(systemName: "plus").font(.caption.weight(.bold)).foregroundStyle(Color.accentColor)
+                            Image(systemName: "plus").font(.caption.weight(.bold)).foregroundStyle(.secondary)
                             Text(verbatim: l.name).lineLimit(1).truncationMode(.middle)
                         }
                     }

@@ -26,9 +26,6 @@ struct Composer: View {
                 cell(.model, "Model") {
                     Circle().fill(Color.accentColor).frame(width: 6, height: 6)
                     Text(verbatim: app.card?.name ?? "—")
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.secondary)
                 }
                 .help("The denoiser: the publisher’s model, or a fine-tune you imported")
                 if app.references.isEmpty {
@@ -137,15 +134,15 @@ struct Composer: View {
         withAnimation(Motion.pick(.easeOut(duration: 0.14))) { app.composerPanel = nil }
     }
 
-    /// **The open panel, over its cell** — its foot 10 points above the cell, its left edge on the cell's,
-    /// kept inside the composer's width. Moved there by an offset: an overlay sets its content in the
-    /// composer's own frame (its top left on the composer's), and the panel has to rise above it.
+    /// **The open panel, above the composer** — its foot 10 points over the composer's top edge, never over the
+    /// prompt; its left edge on its cell's, kept inside the composer's width. Moved there by an offset: an
+    /// overlay sets its content in the composer's own frame (its top left on the composer's).
     @ViewBuilder private var panels: some View {
         if let open = app.composerPanel, let cell = cells[open] {
-            // The room above the cell, up to under the toolbar: a taller panel scrolls.
-            let room = max(160, frame.minY + cell.minY - 80)
+            // The room above the composer, up to under the toolbar: a taller panel scrolls.
+            let room = max(160, frame.minY - 80)
             panel(open, room: room)
-                .offset(x: min(cell.minX, max(0, frame.width - Self.width(open))), y: cell.minY - 10 - room)
+                .offset(x: min(cell.minX, max(0, frame.width - Self.width(open))), y: -10 - room)
                 .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .bottom)))
         }
     }
@@ -180,17 +177,17 @@ struct Composer: View {
             case .ratio:
                 VStack(alignment: .leading, spacing: 0) {
                     RatioChoices(app: app, done: close)
-                    Rectangle().fill(Silicon.edge).frame(height: 1).padding(.horizontal, 14)
+                    Rectangle().fill(Silicon.edge).frame(height: 1).padding(.horizontal, 16)
                     CustomSize(app: app, title: "Custom size", done: close)
                 }
             case .tier:
                 TierChoices(app: app, done: close)
             case .lora:
                 LoRAStack(app: app)
-                    .padding(14)
             case .settings:
-                RenderOptions(app: app)
-                    .padding(.horizontal, 14).padding(.vertical, 6)
+                ChoiceList(title: "Settings") {
+                    RenderOptions(app: app).padding(.horizontal, 8)
+                }
             }
         }
         .frame(width: Self.width(open))
@@ -294,6 +291,7 @@ private struct BatchCell: View {
         return Button { app.batch = min(8, max(1, app.batch + by)) } label: {
             Image(systemName: symbol).font(.system(size: 9, weight: .bold))
                 .frame(width: 16, height: 20).contentShape(Rectangle())
+                .padding(.vertical, -2)
         }
         .buttonStyle(.plain)
         .disabled(blocked)
@@ -317,10 +315,15 @@ private struct ModelChoices: View {
                         done()
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
-                            if app.readySet.contains(card.id) {
+                            let installed = app.readySet.contains(card.id)
+                            HStack(spacing: 6) {
                                 Text(verbatim: card.name).fontWeight(.medium)
-                            } else {
-                                Text("\(card.name) (not installed)").fontWeight(.medium)
+                                    .foregroundStyle(installed ? .primary : .secondary)
+                                if !installed {
+                                    Image(systemName: "arrow.down.circle").imageScale(.small).foregroundStyle(.secondary)
+                                        .help(Text("Not installed"))
+                                        .accessibilityLabel(Text("Not installed"))
+                                }
                             }
                             if let blurb = ModelBlurb.text(card) {
                                 Text(verbatim: blurb).font(.caption).foregroundStyle(.secondary)
@@ -329,7 +332,7 @@ private struct ModelChoices: View {
                     }
                 }
             }
-            Rectangle().fill(Silicon.edge).frame(height: 1).padding(.horizontal, 14)
+            Rectangle().fill(Silicon.edge).frame(height: 1).padding(.horizontal, 16)
             HStack {
                 Button("Models…") { done(); app.managementOpen = true }
                     .help("Install, import, remove — and what each takes on disk (⇧⌘M)")
@@ -339,7 +342,7 @@ private struct ModelChoices: View {
                     .help("A model (.safetensors or .gguf) or a LoRA (.safetensors), as published on Civitai")
             }
             .buttonStyle(SiliconButtonStyle())
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 16)
             .padding(.vertical, 10)
         }
     }

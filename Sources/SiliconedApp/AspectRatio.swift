@@ -72,8 +72,7 @@ struct RatioChoices: View {
                     done()
                 } label: {
                     RatioShape(ratio: r, side: 14)
-                    Text(verbatim: r.label).monospacedDigit()
-                    Spacer(minLength: 8)
+                    Text(verbatim: r.label).monospacedDigit().frame(width: 36, alignment: .leading)
                     let f = SizeTable.format(r, fits ? tier : .oneK)
                     Text(verbatim: "\(f.width) × \(f.height)").font(Silicon.readout).foregroundStyle(.secondary)
                 }
