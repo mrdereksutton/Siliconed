@@ -54,8 +54,8 @@ package enum MossImageStages {
     static let dit = Stage(
         model: model, name: "dit",
         proves: "one evaluation of the DiT at σ = 1, boundary by boundary — time, modulations, RoPE, text path, block 0 inside out, blocks 1, 13, 27, 41, the head —, judged at the fp64 witness",
-        options: ["--map", "--neural-engine", "--bf16-activations", "--variant"],
-        oracle: "tools/oracle/moss-image.py dit; witness; with --neural-engine or --bf16-activations, dit-bf16; with --variant compact, dit, witness and dit-bf16 with --variant \(Wording.publishers)",
+        sizes: ["512", "1024"], options: ["--map", "--neural-engine", "--bf16-activations", "--bf16-attention", "--fp16-attention", "--no-accelerators", "--variant"],
+        oracle: "tools/oracle/moss-image.py dit --size {size}; witness --size {size}; with --neural-engine, --bf16-activations, --bf16-attention or --fp16-attention, dit-bf16 --size {size}; with --variant compact, dit, witness and dit-bf16 with --variant at 512 \(Wording.publishers)",
         weights: ["DiT"],
         rule: "the rule, floor 5e-4, at the fp64 witness where it exists; model_out per latent plane at the witness; \(Wording.halfPrecision)"
     ) { invocation in try evaluate(invocation, lora: false) }
@@ -146,16 +146,6 @@ package enum MossImageStages {
         return report
     }
 
-    /// The boundaries of the DiT in the reference's tensor names, with the width of their channels.
-    static func boundaries(dim d: Int, headDim: Int, ffn: Int) -> [(name: String, columns: Int)] {
-        [("time_embedding_out", d), ("shared_modulation", d), ("head_modulation", d), ("video_embed", d),
-         ("rope", headDim), ("text_proj_out", d), ("text_block0_out", d), ("text_block1_out", d),
-         ("block0_q_out", d), ("block0_k_out", d), ("block0_v_out", d), ("block0_q_norm_out", d), ("block0_o_out", d),
-         ("block0_ffn_up_gate_out", 2 * ffn), ("block0_ffn_down_out", d),
-         ("block0_out", d), ("block1_out", d), ("block13_out", d), ("block27_out", d), ("block41_out", d),
-         ("final_norm_out", d)]
-    }
-
     static func evaluate(_ invocation: Invocation, lora useLoRA: Bool) throws -> Report {
         // The Compact's golden is the reference on Comfy-Org's int8 convrot dequantized; `dit-lora` judges the Standard's.
         let version = useLoRA ? nil : try invocation.quantizedVariant()
@@ -182,19 +172,22 @@ package enum MossImageStages {
             stack = loaded
         }
         let witnessStem = stem.replacingOccurrences(of: "goldens-moss-dit", with: "witness-moss-dit")
-            .replacingOccurrences(of: "512", with: "f64-512")
+            .replacingOccurrences(of: "-\(invocation.size)", with: "-f64-\(invocation.size)")
         let witness = invocation.goldens.optional(witnessStem + ".safetensors")
         // `dit-lora` lists no half-precision option: `half` is nil there.
         let half = useLoRA ? nil : try invocation.halfReference(
             stem + ".safetensors", script: "tools/oracle/moss-image.py dit-bf16\(version.map { " --variant " + $0.rawValue } ?? "")")
-        let dit = try MossImageDiT(artifact: artifact, gridHeight: height, gridWidth: width, maxText: t, lora: stack)
+        // Published int8 weights (the Compact): the evaluation along the int8 kernel, `model_out` once widened below (`Int8Route`).
+        let int8 = Int8Route(artifact, invocation)
+        let dit = try MossImageDiT(artifact: artifact, gridHeight: height, gridWidth: width, maxText: t,
+                                   accelerators: .on(neuralEngine: int8?.neuralEngine ?? EngineSettings.effective.plan.usesANE), lora: stack, plan: int8?.plan)
         dit.recordBoundaries = true
-        dit.recordedBlocks = [0, 1, 13, 27, 41]
+        dit.recordedBlocks = MossImageDiT.checkedBlocks
         let started = Date()
         let out = try dit.forward(latent: latent.baseAddress!, text: text.baseAddress!, textRows: t, timestep: timestep[0])
         if invocation.profile { printTimings(dit.timings, seconds: Date().timeIntervalSince(started)) }
         let recorded = dit.boundaries
-        for (name, columns) in boundaries(dim: dit.config.dim, headDim: dit.config.headDim, ffn: dit.config.hidden) {
+        for (name, columns) in dit.checkedBoundaries {
             guard let oracle = goldens.float32(name) else { continue }
             guard let engine = recorded[name] else { report.add(Judge.missing(name)); continue }
             report.add(Judge.boundary(name, engine: engine, oracle: oracle, witness: witness?.float32(name),
@@ -217,8 +210,20 @@ package enum MossImageStages {
                                              timestep: timestep[0], skipping: [22])
             report.add(Judge.planes("model_out, block 22 skipped", engine: skippedOut, oracle: expected, planes: dit.config.channels))
         }
+        if let int8 {
+            int8.account(report)
+            if int8.judgesWidened, let expected = goldens.float32("model_out") {
+                let widened = try MossImageDiT(artifact: artifact, gridHeight: height, gridWidth: width, maxText: t, lora: stack)
+                let other = try widened.forward(latent: latent.baseAddress!, text: text.baseAddress!, textRows: t, timestep: timestep[0])
+                report.add(Judge.planes("model_out per plane (widened)", engine: other, oracle: expected,
+                                        witness: witness?.float32("model_out"), reference: half?.values("model_out"),
+                                        planes: dit.config.channels))
+            }
+        }
         if invocation.neuralEngine { try NeuralEngineRun.account(report) }
         if invocation.bf16Activations { try BF16ActivationRun.account(report) }
+        if invocation.bf16Attention { try BF16AttentionRun.account(report) }
+        if invocation.fp16Attention { try FP16AttentionRun.account(report) }
         return report
     }
 }

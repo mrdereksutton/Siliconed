@@ -6,8 +6,9 @@
 // could find. **The exceptions**, each a gesture of the user: the preferences (UserDefaults) — the « More
 // Solvers » switch (`developerModeKey`), « Faster Rendering », the comparison's curtain, switch or side by side
 // (`Curtain.mode`), the beta « Negative LoRA Strengths » switch
-// (`negativeLoRAKey`), the file format of the last export (`exportFormatKey`), the Neural Engine's choice per
-// model (`neuralEngineKey`), the Macs paired and the lending switch (`OtherMacs`), and this Mac's capacity map
+// (`negativeLoRAKey`), the file format of the last export (`exportFormatKey`), the folder of « Save Every Image To… », off
+// unless the user turns it on — each new image is then written there (`EveryImage`) —, the Neural Engine's choice per
+// model (`choiceKey`), the Macs paired and the lending switch (`OtherMacs`), and this Mac's capacity map
 // with the last render's note against it (`capacityMapKey`, `renderNoteKey`), measured when
 // the user asks, like the system language the app follows —, the licenses accepted, which the library keeps itself (`<local>/accepted-licenses.json`) because its
 // engine refuses a render without them, and where the library is when the user moved it (`<local>/library-location`,
@@ -100,16 +101,12 @@ final class AppState {
             }
         }
     }
-    private static let incognitoKey = "incognito"
-    /// Fork: **Incognito** (Settings › General), off by default. Off, every new image of this Mac's
-    /// history is also written as a PNG to `autoSaveFolder` (`autoSave`); on, nothing leaves memory
-    /// without a gesture, as upstream.
-    var incognito = UserDefaults.standard.bool(forKey: AppState.incognitoKey) {
-        didSet { UserDefaults.standard.set(incognito, forKey: Self.incognitoKey) }
-    }
-    /// Where new images are saved while Incognito is off.
-    static var autoSaveFolder: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads/Siliconed", isDirectory: true)
+    /// Fork: **Incognito** (Settings › General), off by default. Off, every new image of this Mac's history is also written as a
+    /// PNG to Downloads › Siliconed — upstream's « Save Every Image To… » (`EveryImage`) with the fork's default; on, nothing
+    /// leaves memory without a gesture, as upstream.
+    var incognito: Bool {
+        get { EveryImage.shared.folder == nil }
+        set { EveryImage.shared.folder = newValue ? nil : EveryImage.downloads }
     }
     /// Fork: the left column's tab, the rack (Generate) or the exploration's controls (Explore).
     var sidebarTab: SidebarTab = .generate
@@ -120,20 +117,50 @@ final class AppState {
     /// **Faster Rendering, per model and version** (Settings): at 1024² and above, the first evaluations of the family on the
     /// half grid (`Request.fasterRendering`; three of eight, Krea 2 four) — a quarter to a third faster, another image than the
     /// recipe at full size, judged clean by eye per family. Not with a LoRA, Detail or an edit (each plan's rules). What the user
-    /// chose; absent, the version's default (`Variant.fasterRenderingByDefault`: off on the Standard, on on the Compact and the
-    /// Light), as the Neural Engine does. A new key: the single switch of earlier builds is read once, at the first launch after
+    /// chose; absent, the version's default (`Variant.fasterRenderingByDefault`: off on every version since it became a
+    /// Beta option, which gates it). A new key: the single switch of earlier builds is read once, at the first launch after
     /// the update (`adoptEarlierFasterRendering`), then removed.
     /// Every request carries the value and every history image keeps it (`RenderSettings.fasterRendering`): a redo is the same
     /// image whatever the switch says by then.
     var fasterRenderingChoices = UserDefaults.standard.dictionary(forKey: AppState.fasterRenderingKey) as? [String: Bool] ?? [:] {
         didSet { UserDefaults.standard.set(fasterRenderingChoices, forKey: Self.fasterRenderingKey) }
     }
+    /// **Faster Rendering a render of `id` takes**: nothing without the Beta option, whatever the choice kept for the model;
+    /// else its choice, else its version's default (`DiTSwitches.fasterRendering`). The one reading every render path uses.
     func fasterRendering(for id: String) -> Bool {
-        guard let card = cards.first(where: { $0.id == id }) else { return false }
-        return fasterRenderingChoices[neuralEngineKey(card)] ?? (!card.isImported && library.variant(of: card.family).fasterRenderingByDefault)
+        DiTSwitches.fasterRendering(beta: fasterRenderingBeta, choice: fasterRenderingChoice(for: id), versionDefault: fasterRenderingDefault(for: id))
+    }
+    /// What the user chose for `id` (nil: nothing yet) — what the switch of the DiT box shows, Beta on or off.
+    func fasterRenderingChoice(for id: String) -> Bool? {
+        guard let card = cards.first(where: { $0.id == id }) else { return nil }
+        return fasterRenderingChoices[choiceKey(card)]
+    }
+    private func fasterRenderingDefault(for id: String) -> Bool {
+        guard let card = cards.first(where: { $0.id == id }), !card.isImported else { return false }
+        return library.variant(of: card.family).fasterRenderingByDefault
+    }
+    /// What the switch of the DiT box shows: the model's choice, else the default — Beta aside.
+    func fasterRenderingShown(for id: String) -> Bool { fasterRenderingChoice(for: id) ?? fasterRenderingDefault(for: id) }
+    private static let fasterRenderingBetaKey = "fasterRenderingBeta"
+    /// **Faster Rendering, the Beta option** (Settings ▸ Advanced ▸ Beta): off by default. Off, no render is a faster one and the
+    /// DiT box shows no switch; the per-model choices stay in `fasterRenderingChoices` and come back with the option.
+    var fasterRenderingBeta = UserDefaults.standard.bool(forKey: AppState.fasterRenderingBetaKey) {
+        didSet { UserDefaults.standard.set(fasterRenderingBeta, forKey: Self.fasterRenderingBetaKey) }
+    }
+    private static let sizeScalesBetaKey = "sizeScalesBeta"
+    /// **Size in two scales, the Beta option** (Settings ▸ Advanced ▸ Beta): off by default. On, the rack's Size menu becomes a
+    /// proportion and a resolution (`SizeScales`). Only the rack changes: the sizes, the pencil, `silicontrol` are the same.
+    var sizeScalesBeta = UserDefaults.standard.bool(forKey: AppState.sizeScalesBetaKey) {
+        didSet { UserDefaults.standard.set(sizeScalesBeta, forKey: Self.sizeScalesBetaKey) }
+    }
+    /// Why Faster Rendering would do nothing for the render being set up in the form (nil: it applies).
+    var fasterRenderingUnavailable: DiTSwitchUnavailable? {
+        DiTSwitches.fasterRenderingUnavailable(width: format.width, height: format.height,
+                                               withLoRA: !loras.isEmpty || detail != .normal, edit: !references.isEmpty,
+                                               atRecipeSteps: steps == (card?.defaultSteps ?? 8))
     }
     func setFasterRendering(_ on: Bool, for id: String) {
-        if let card = cards.first(where: { $0.id == id }) { fasterRenderingChoices[neuralEngineKey(card)] = on }
+        if let card = cards.first(where: { $0.id == id }) { fasterRenderingChoices[choiceKey(card)] = on }
     }
     /// **The single switch of the builds before the per-model choice** (« fasterRendering », on by default): a user who turned it off
     /// asked for the recipe at full size, and an update must not turn it back on behind them — each installed model that would default
@@ -145,7 +172,7 @@ final class AppState {
         defaults.removeObject(forKey: Self.earlierFasterRenderingKey)
         guard !earlier else { return }
         var choices = fasterRenderingChoices
-        for card in cards where !card.isImported && choices[neuralEngineKey(card)] == nil { choices[neuralEngineKey(card)] = false }
+        for card in cards where !card.isImported && choices[choiceKey(card)] == nil { choices[choiceKey(card)] = false }
         fasterRenderingChoices = choices
     }
     private static let exportFormatKey = "exportFormat"
@@ -153,29 +180,44 @@ final class AppState {
     var exportFormat = ExportFormat(rawValue: UserDefaults.standard.string(forKey: AppState.exportFormatKey) ?? "") ?? .png {
         didSet { UserDefaults.standard.set(exportFormat.rawValue, forKey: Self.exportFormatKey) }
     }
-    private static let neuralEngineKey = "neuralEngine"
-    /// **The Neural Engine, per model and version** (the rack's fp32 tag, `Request.neuralEngine`): what the
-    /// user chose; absent, the version's default (`Variant.neuralEngineByDefault`).
-    var neuralEngineChoices = UserDefaults.standard.dictionary(forKey: AppState.neuralEngineKey) as? [String: Bool] ?? [:] {
-        didSet { UserDefaults.standard.set(neuralEngineChoices, forKey: Self.neuralEngineKey) }
+    /// The defaults key of the « Accelerators » choices: the Neural Engine's switch's, kept when it came to cover the GPU's tensor units
+    /// too (2/11/2026) — a model whose Neural Engine was turned off has its accelerators off, nothing turned back on behind the user.
+    private static let acceleratorsKey = "neuralEngine"
+    /// **The accelerators, per model and version** (the DiT box's switch, `Request.accelerators`): what the user chose; absent, the
+    /// version's default (`Variant.acceleratorsByDefault`, on everywhere).
+    var acceleratorChoices = UserDefaults.standard.dictionary(forKey: AppState.acceleratorsKey) as? [String: Bool] ?? [:] {
+        didSet { UserDefaults.standard.set(acceleratorChoices, forKey: Self.acceleratorsKey) }
     }
-    /// This Mac's map turned the Neural Engine on: otherwise there is nothing to choose, the denoiser is fp32.
-    /// Not before the settings are read: `effective` read at launch would freeze the defaults and the first measure could no longer
-    /// designate its plan (`EngineSettings.load` refuses it). Follows a new measure (`settingsEpoch`).
-    var neuralEngineOffered: Bool { _ = settingsEpoch; return settingsRead && EngineSettings.effective.plan.usesANE }
+    /// **What the accelerators do on this Mac** (`AcceleratorOffer`), for a render whose switch is on: the Neural Engine where the map
+    /// gives it rows, the GPU's tensor units where it chooses them. `nil` before the settings are read: `effective` read at launch would
+    /// freeze the defaults and the first measure could no longer designate its plan (`EngineSettings.load` refuses it). Follows a new
+    /// measure (`settingsEpoch`).
+    var acceleratorOffer: AcceleratorOffer? {
+        _ = settingsEpoch
+        guard settingsRead else { return nil }
+        let plan = EngineSettings.effective.plan
+        return AcceleratorOffer(plan: plan.forDenoiser(.on(neuralEngine: plan.usesANE)))
+    }
+    /// This Mac's map chooses some accelerator: otherwise there is nothing to choose, the denoiser is fp32.
+    var acceleratorsOffered: Bool { acceleratorOffer.map { !$0.isNone } ?? false }
     /// The key of a choice: the model and its installed version — another version starts from its own default.
     /// (Also the key of Faster Rendering's choice.)
-    private func neuralEngineKey(_ card: ModelCard) -> String {
+    private func choiceKey(_ card: ModelCard) -> String {
         card.isImported ? card.id : "\(card.id) \(library.variant(of: card.family).rawValue)"
     }
-    /// Whether `id`'s denoiser may take the Neural Engine: the user's choice, else its version's default;
-    /// an imported model is the Standard's case.
-    func neuralEngine(for id: String) -> Bool {
+    /// Whether `id`'s denoiser may use the accelerators: the user's choice, else its version's default — on everywhere, an imported
+    /// model too.
+    func accelerators(for id: String) -> Bool {
         guard let card = cards.first(where: { $0.id == id }) else { return false }
-        return neuralEngineChoices[neuralEngineKey(card)] ?? (!card.isImported && library.variant(of: card.family).neuralEngineByDefault)
+        return acceleratorChoices[choiceKey(card)] ?? (card.isImported || library.variant(of: card.family).acceleratorsByDefault)
     }
-    func setNeuralEngine(_ on: Bool, for id: String) {
-        if let card = cards.first(where: { $0.id == id }) { neuralEngineChoices[neuralEngineKey(card)] = on }
+    func setAccelerators(_ on: Bool, for id: String) {
+        if let card = cards.first(where: { $0.id == id }) { acceleratorChoices[choiceKey(card)] = on }
+    }
+    /// What the accelerators do for the model in the form, as its render will be told: `none` with its switch off.
+    var acceleratorsInEffect: AcceleratorOffer {
+        guard accelerators(for: identifier), let offer = acceleratorOffer else { return .none }
+        return offer
     }
     /// The range of a LoRA's strength slider.
     var loraStrengthRange: ClosedRange<Double> { negativeLoRAStrengths ? -1.5...1.5 : 0...1.5 }
@@ -208,7 +250,14 @@ final class AppState {
     private var defaultIdentifier: String { visibleReady.first?.id ?? ModelCard.zImage.id }
 
     // ── What the user sets ──
-    var identifier = "" { didSet { if identifier != oldValue { modelChanged() } } }
+    var identifier = "" {
+        didSet {
+            guard identifier != oldValue else { return }
+            // Each family has its own default strength: a strength chosen for one does not follow to another.
+            if cards.first(where: { $0.id == oldValue })?.family != card?.family { chosenStartStrength = nil }
+            modelChanged()
+        }
+    }
     var prompt = ""
     var orientation = RecommendedFormat.Orientation.square { didSet { orientationChanged() } }
     var format = ModelCard.recommendedFormats[0]
@@ -218,6 +267,18 @@ final class AppState {
     /// At most the denoiser's `maxReferences`. Added by the box, a drop, « Edit This Image », or carried by
     /// the Prompt Lab (the starting image, the references, the subjects the text cites: `Lab.swift`).
     var references: [ReferenceImage] = []
+    /// **The image the render starts from** (img2img: Z-Image, Anima, Krea 2 — `startsFromImage`), carried by the Prompt Lab
+    /// (`Lab.swift`) or `silicontrol start-image`, shown with its strength in the rack's Images box. `nil`: from noise. Dropped
+    /// when the rack takes a model that does not start from an image, as the references a model does not read are.
+    var startImage: ReferenceImage?
+    /// **Its strength** (diffusers' `strength`, `StartImage`): how far the render moves from the image — retouched in the rack
+    /// between two renders. In hundredths. The family's default (`StartImage.defaultStrength`) until one is chosen; forgotten
+    /// when the rack changes family.
+    var startStrength: Double {
+        get { chosenStartStrength ?? defaultStartStrength }
+        set { chosenStartStrength = newValue }
+    }
+    var chosenStartStrength: Double?
     var steps = 8
     /// **More detail** (`Detail`): Normal is the render as the model makes it. What a render takes is
     /// `effectiveDetail`: on a model that offers none (Anima, Krea 2: `DenoisingModule.acceptsDetail`), Normal.
@@ -435,7 +496,7 @@ final class AppState {
     var activity: NSObjectProtocol?
 
     // ── What the remote control reads (`RemoteControl.swift`) ──
-    private var lastJob = 0
+    private(set) var lastJob = 0
     var lastImage = 0
     /// **« Enlarge »** (`Enlarge.swift`): the image being enlarged, the model's download (0…1) while
     /// macOS fetches it, and the seconds per input megapixel learned this session.

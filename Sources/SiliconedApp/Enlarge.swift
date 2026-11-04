@@ -245,7 +245,7 @@ extension AppState {
                            footprints: Engine.Footprints(), evaluations: 0, settings: entry.settings,
                            metadata: metadata, enlarged: SuperResolution.factor, enlargedFrom: entry.png, owner: entry.owner)
         history.insert(result, at: 0)
-        autoSave(result)
+        saveIfAsked(result)
         selectedImage = (result.id, image)
         selection = result.id
         marked = []; anchor = result.id

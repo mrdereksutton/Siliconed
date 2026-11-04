@@ -21,6 +21,7 @@
 
 import AppKit
 import Siliconed
+import SilicontrolHelp
 import SwiftUI
 
 @main
@@ -296,17 +297,18 @@ final class MainWindow: NSObject, NSWindowDelegate {
     /// field's text view uses — takes the old prompt: ⌘Z in the field, or Edit ▸ Undo, brings it back, ⇧⌘Z carries again.
     /// **The field gives the keyboard up first**: a text view being edited keeps its own text over the binding's, so a
     /// carry made while the rack's Prompt had the caret (after a ⌘Z there, say) left the old prompt on screen and in the
-    /// form. Writing into the text view itself was the first way, and it lost to that too.
-    func setPrompt(_ text: String, of app: AppState) {
+    /// form. Writing into the text view itself was the first way, and it lost to that too. The prompt's clear button
+    /// comes through here as well, under its own name in Edit ▸ Undo (`action`).
+    func setPrompt(_ text: String, of app: AppState, action: String = String(localized: "Carry to the Rack")) {
         let old = app.prompt
         guard old != text else { return }
         if app === self.app, let w = window, w.firstResponder is NSText { w.makeFirstResponder(nil) }
         app.prompt = text
         guard let undo = app.undoManager else { return }
         undo.registerUndo(withTarget: app) { [weak self] app in
-            if let self { self.setPrompt(old, of: app) } else { app.prompt = old }
+            if let self { self.setPrompt(old, of: app, action: action) } else { app.prompt = old }
         }
-        undo.setActionName(String(localized: "Carry to the Rack"))
+        undo.setActionName(action)
     }
 
     /// Empties `<root>/cache/` (incognito, `Delegate`). A failure costs nothing but disk: the next
@@ -330,7 +332,6 @@ final class MainWindow: NSObject, NSWindowDelegate {
         f.titleVisibility = .hidden
         f.titlebarSeparatorStyle = .none
         f.setContentSize(NSSize(width: 1480, height: 940))
-        f.contentMinSize = Self.minimumContent
         f.isReleasedWhenClosed = false
         f.delegate = self
         // Incognito: no window position retained, no state restored at the next launch.
@@ -403,7 +404,7 @@ final class MainWindow: NSObject, NSWindowDelegate {
         let style: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
                                                     .foregroundColor: NSColor.secondaryLabelColor]
         let credits = NSMutableAttributedString(
-            string: String(localized: "An image engine for Apple silicon, in Swift and Metal — fp32, verified stage by stage against the reference; the Neural Engine beside it where you choose.\n\nLibrary: \(app.library.displayPath)")
+            string: String(localized: "An image engine for Apple silicon, in Swift and Metal, verified stage by stage against the reference: the Neural Engine and the GPU’s tensor units (bf16) where this Mac’s measure chooses them, fp32 throughout when you turn them off.\n\nLibrary: \(app.library.displayPath)")
                 + "\n\n" + String(localized: "New versions:") + " ",
             attributes: style)
         var link = style
@@ -658,15 +659,14 @@ final class MainWindow: NSObject, NSWindowDelegate {
         }
     }
 
-    /// Fork: **the window never gets smaller than the composer needs**. `contentMinSize` alone did not
-    /// hold once the left column folds away — the split view then sets the window's minimum from the
-    /// canvas alone, and the window could be dragged down to a sliver, the composer cut off.
+    /// **The smallest the window gets** (`MinimumContent`), read on screen (3/11/2026) with the column at its usual 380 pt: 1000 wide
+    /// leaves the canvas 620, where the bar under an image keeps its legend on one line beside its six or seven buttons (at 860 it
+    /// takes two lines, at 760 three and the prompt is cut to a word); 680 high leaves the rack its Prompt box above a footer that
+    /// grows with a queue (four rows and a half) and a problem's card, and the canvas an image of about 480 pt over its strip.
     static let minimumContent = NSSize(width: 1000, height: 680)
 
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
-        let content = sender.contentRect(forFrameRect: NSRect(origin: .zero, size: frameSize)).size
-        return NSSize(width: frameSize.width + max(0, Self.minimumContent.width - content.width),
-                      height: frameSize.height + max(0, Self.minimumContent.height - content.height))
+        sender === window ? MinimumContent.clamp(frameSize, of: sender, to: Self.minimumContent) : frameSize
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -679,11 +679,24 @@ final class MainWindow: NSObject, NSWindowDelegate {
     }
 }
 
+/// **A window's minimum, held by its delegate.** `contentMinSize` does not hold under SwiftUI: the hosting controller sets it
+/// back to zero once it lays the window out (read on macOS 27, 3/11/2026: 0 × 0 on the main window and the Prompt Lab's,
+/// both set to more before), and a window could then be dragged down to its title bar (issue #7).
+enum MinimumContent {
+    /// The frame size a live resize asks for, grown so that its content is never smaller than `minimum`.
+    @MainActor static func clamp(_ frameSize: NSSize, of window: NSWindow, to minimum: NSSize) -> NSSize {
+        let content = window.contentRect(forFrameRect: NSRect(origin: .zero, size: frameSize)).size
+        return NSSize(width: frameSize.width + max(0, minimum.width - content.width),
+                      height: frameSize.height + max(0, minimum.height - content.height))
+    }
+}
+
 /// **The `silicontrol` command** ships inside the bundle (`Contents/Helpers/silicontrol`); this links it
 /// into `/usr/local/bin`, like `code` for VS Code. On a fresh Mac `/usr/local/bin` may not exist and
 /// belongs to root: the link is made as administrator (macOS asks for the password); if that is
 /// refused or fails, the alert shows the two commands to paste into a terminal. The link follows the
-/// app: a rebuilt or moved app stays the one it drives, as long as the link points into it.
+/// app: a rebuilt or moved app stays the one it drives, as long as the link points into it. An app run
+/// translocated by Gatekeeper (`SilicontrolLink`) gets no link: it would dangle at the next launch.
 enum SilicontrolCommand {
     static let destination = "/usr/local/bin/silicontrol"
     /// The helper inside this app — what the link must point to.
@@ -705,6 +718,12 @@ enum SilicontrolCommand {
         guard FileManager.default.isExecutableFile(atPath: source) else {
             alert.messageText = String(localized: "The silicontrol command is missing from this app.")
             alert.informativeText = String(localized: "Build the app with tools/app.sh.")
+            alert.runModal()
+            return
+        }
+        guard !SilicontrolLink.isTranslocated(Bundle.main.bundleURL) else {
+            alert.messageText = String(localized: "Move Siliconed to the Applications folder first.")
+            alert.informativeText = String(localized: "macOS runs this copy from a temporary place, made again at each launch: a command linked to it would stop working. Move Siliconed to Applications, open it from there, then install the command.")
             alert.runModal()
             return
         }

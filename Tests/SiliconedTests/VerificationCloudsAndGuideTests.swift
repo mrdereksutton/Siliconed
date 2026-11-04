@@ -76,7 +76,7 @@ final class VerificationCloudsAndGuideTests: XCTestCase {
         XCTAssertEqual(m.atWitness!.engine, 0.03, accuracy: 1e-6)
         XCTAssertEqual(m.atWitness!.reference, 0.10, accuracy: 1e-6)
         XCTAssertEqual(m.threshold, 0.125, accuracy: 1e-6)
-        XCTAssertEqual(m.note, "clouds: engine median of 5 draws, oracle worst of 3")
+        XCTAssertEqual(m.note, "clouds of one-ulp moves: engine median of 5 draws, oracle worst of 3")
     }
 
     func testAFailureStaysAFailureWhenTheMedianIsPastTheAllowance() throws {
@@ -116,5 +116,124 @@ final class VerificationCloudsAndGuideTests: XCTestCase {
         let wrong = try arbitrate(failed(), oracle: [0.1, 0.1], engine: [0, 0, 0, 0], shape: [3, 1])
         XCTAssertFalse(wrong.passed)
         XCTAssertEqual(wrong.note, "no oracle draws to arbitrate")
+    }
+
+    // MARK: - Clouds of summation orders
+
+    /// The oracle's order draws (seeds 2, 5, 7) at 0.12, 0.30, 0.06 beside its ulp draws 0.10 and 0.05: its cloud holds the
+    /// five and its nominal, worst 0.30, bar 0.375. The engine draws the same three seeds — never the ulp moves — and its
+    /// median of four (0.2 at the witness, 0.1, 0.3, 0.35) is judged: 0.3 passes.
+    func testTheOrdersJudgeWhenTheOracleDrewThem() throws {
+        let orders = zip([UInt64(2), 5, 7], try draws([0.12, 0.30, 0.06])).map { (seed: $0, file: $1) }
+        var asked: [UInt64] = [], moved = 0
+        let byOrder: [UInt64: Float] = [2: 0.1, 5: 0.3, 7: 0.35]
+        var clouds = Clouds(draws: try draws([0.10, 0.05]), orders: orders,
+                            engineOrder: { seed in asked.append(seed); return ["h": self.away(byOrder[seed]!)] }) { _ in
+            moved += 1
+            return ["h": self.away(0)]
+        }
+        let m = try truth.withUnsafeBufferPointer { try clouds.arbitrate(failed(), exact: $0, columns: 1) }
+        XCTAssertEqual(asked, [2, 5, 7])
+        XCTAssertEqual(moved, 0)
+        XCTAssertEqual(m.threshold, 0.375, accuracy: 1e-6)
+        XCTAssertEqual(m.atWitness!.engine, 0.3, accuracy: 1e-6)   // sorted 0.1 0.2 0.3 0.35: the upper median
+        XCTAssert(m.passed)
+        XCTAssertEqual(m.note, "clouds of summation orders: engine median of 4 (nominal + 3 orders), oracle worst of 6 (nominal + 2 ulp + 3 orders)")
+    }
+
+    /// Without the engine's own order draws (a stage that cannot draw them), the oracle's are left out and the ulp moves judge.
+    func testOrdersWithoutTheEnginesDrawsAreLeftOut() throws {
+        let orders = zip([UInt64(1), 2], try draws([0.9, 0.9])).map { (seed: $0, file: $1) }
+        var clouds = Clouds(draws: try draws([0.10, 0.05]), orders: orders) { _ in ["h": self.away(0.01)] }
+        let m = try truth.withUnsafeBufferPointer { try clouds.arbitrate(failed(), exact: $0, columns: 1) }
+        XCTAssertEqual(m.threshold, 0.125, accuracy: 1e-6)
+        XCTAssertEqual(m.note, "clouds of one-ulp moves: engine median of 5 draws, oracle worst of 3")
+    }
+
+    /// The trajectory's way in: a step's measure (`v_2`) judged under the draws' name (`model_out`), the oracle's order draws
+    /// read by `Clouds.orders` from the step's stem — `permgroup1` and up, never `permgroup0` (the identity by another path)
+    /// nor `permfull` — and the engine asked for exactly those seeds.
+    func testATrajectoryStepIsJudgedByTheOrdersOfItsStem() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("orders-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory.appendingPathComponent("krea2"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stem = "krea2/draw-krea2-512-step2"
+        for (suffix, x) in [("permgroup0", Float(5)), ("permgroup1", 0.12), ("permgroup3", 0.30), ("permfull1", 5)] {
+            let path = directory.appendingPathComponent("\(stem)-\(suffix).safetensors").path
+            try ForgeDiT.writeSafetensors([(name: "model_out", dtype: "F32", shape: [2, 1], bytes: away(x).withUnsafeBytes { Data($0) })],
+                                          to: path)
+        }
+        let goldens = Goldens(directory: directory.path)
+        let orders = Clouds.orders(goldens, stem)
+        XCTAssertEqual(orders.map(\.seed), [1, 3])
+        var asked: [UInt64] = []
+        var clouds = Clouds(draws: [], orders: orders, engineOrder: { seed in
+            asked.append(seed)
+            return ["model_out": self.away(seed == 1 ? 0.1 : 0.3)]
+        }) { _ in XCTFail("no ulp draw where the orders judge"); return [:] }
+        let step = Measure(boundary: "v_2", worst: 0.3, median: 0.3, channel: 0, atWitness: (0.2, 0.08),
+                           threshold: 0.1, passed: false, note: "")
+        let m = try truth.withUnsafeBufferPointer { try clouds.arbitrate(step, exact: $0, columns: 1, as: "model_out") }
+        XCTAssertEqual(asked, [1, 3])
+        XCTAssertEqual(m.boundary, "v_2")
+        XCTAssertEqual(m.threshold, 0.375, accuracy: 1e-6)                  // 1.25 · 0.30
+        XCTAssertEqual(m.atWitness!.engine, 0.2, accuracy: 1e-6)            // sorted 0.1 0.2 0.3
+        XCTAssert(m.passed)
+        XCTAssertEqual(m.note, "clouds of summation orders: engine median of 3 (nominal + 2 orders), oracle worst of 3 (nominal + 0 ulp + 2 orders)")
+    }
+
+    // MARK: - Seed outside
+
+    /// The trajectory's order draws: one setup (a permuted map) per seed, prepared once and released before the next,
+    /// however many failing steps want it — 8 maps for 1 step as for 5, never 8 per step.
+    func testOneMapIsWrittenPerSeedWhateverTheNumberOfSteps() throws {
+        for steps in [1, 5] {
+            var prepared: [UInt64] = [], released = 0, alive = 0, evaluated: [(Int, UInt64)] = []
+            let requests = Array(repeating: Array(UInt64(1)...8), count: steps)
+            let results = try SeedOutside.run(requests, prepare: { seed -> UInt64 in
+                XCTAssertEqual(alive, 0, "one map on the disk at a time")
+                prepared.append(seed); alive += 1
+                return seed
+            }, release: { _ in released += 1; alive -= 1 }, evaluate: { i, seed, map in
+                XCTAssertEqual(map, seed)
+                evaluated.append((i, seed))
+                return ["model_out": [Float(i), Float(seed)]]
+            })
+            XCTAssertEqual(prepared, Array(1...8))
+            XCTAssertEqual(released, 8)
+            XCTAssertEqual(evaluated.count, 8 * steps)
+            XCTAssertEqual(results.count, steps)
+            for (i, r) in results.enumerated() {
+                XCTAssertEqual(r.keys.sorted(), Array(1...8))
+                XCTAssertEqual(r[3]?["model_out"], [Float(i), 3])
+            }
+        }
+    }
+
+    /// Requests that want different seeds: the union is prepared once each, each request gets only its own.
+    func testSeedsAreTheUnionOfTheRequests() throws {
+        var prepared: [UInt64] = []
+        let results = try SeedOutside.run([[2, 5], [], [5, 7]], prepare: { prepared.append($0); return $0 },
+                                          release: { _ in }, evaluate: { _, seed, _ in ["h": [Float(seed)]] })
+        XCTAssertEqual(prepared, [2, 5, 7])
+        XCTAssertEqual(results.map { $0.keys.sorted() }, [[2, 5], [], [5, 7]])
+    }
+
+    /// `judgesByOrders` is the question `arbitrate` answers: a failing measure with two order draws, not a passed one, not
+    /// one without its witness, not one whose draws are of another size.
+    func testJudgesByOrdersIsWhatArbitrateDoes() throws {
+        let orders = zip([UInt64(1), 2], try draws([0.1, 0.1])).map { (seed: $0, file: $1) }
+        let clouds = Clouds(draws: [], orders: orders, engineOrder: { _ in ["h": self.away(0.1)] }) { _ in [:] }
+        try truth.withUnsafeBufferPointer { exact in
+            XCTAssertTrue(clouds.judgesByOrders(failed(), exact: exact))
+            let passed = Measure(boundary: "h", worst: 0.1, median: 0.1, channel: 0, atWitness: (0.01, 0.08), threshold: 0.1,
+                                 passed: true, note: "")
+            XCTAssertFalse(clouds.judgesByOrders(passed, exact: exact))
+            XCTAssertFalse(clouds.judgesByOrders(failed(), exact: nil))
+            XCTAssertFalse(clouds.judgesByOrders(failed(), exact: exact, as: "elsewhere"))
+        }
+        let wrong = zip([UInt64(1), 2], try draws([0.1, 0.1], shape: [3, 1])).map { (seed: $0, file: $1) }
+        let other = Clouds(draws: [], orders: wrong, engineOrder: { _ in [:] }) { _ in [:] }
+        try truth.withUnsafeBufferPointer { XCTAssertFalse(other.judgesByOrders(failed(), exact: $0)) }
     }
 }

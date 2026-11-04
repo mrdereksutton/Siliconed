@@ -212,10 +212,10 @@ enum QwenImageStages {
 
     static let dit = Stage(
         model: model, name: "dit",
-        proves: "one evaluation three ways — prefill of the conditions, the step from their K/V cache, the full pass under the block-causal mask — plus the layout and the modulation",
-        options: ["--edit", "--map", "--neural-engine", "--bf16-activations", "--variant"], variants: edits,
-        oracle: "tools/oracle/qwen-image-2.1.py dit [--edit N]; witness; with --neural-engine or --bf16-activations, bf16 [--edit N]; with --variant compact or light (no --edit), dit and bf16 with --variant \(Wording.publishers)", weights: ["DiT"],
-        rule: "layout bit for bit; the rule, floor 5e-4, at the fp64 witness where one exists; cache and full pass ≤ 1e-5 apart; a second step the same bits; \(Wording.halfPrecision), cache and full pass too"
+        proves: "one evaluation three ways — prefill of the conditions, the step from their K/V cache, the full pass under the block-causal mask — plus the layout and the modulation; on published int8 weights, along the int8 kernel a render's map may pick (gemm_int8), and the step once on the widened weights",
+        options: ["--edit", "--map", "--neural-engine", "--bf16-activations", "--bf16-attention", "--fp16-attention", "--no-accelerators", "--variant"], variants: edits,
+        oracle: "tools/oracle/qwen-image-2.1.py dit [--edit N]; witness; with --neural-engine, --bf16-activations, --bf16-attention or --fp16-attention, bf16 [--edit N]; with --variant compact or light (no --edit), dit and bf16 with --variant \(Wording.publishers)", weights: ["DiT"],
+        rule: "layout bit for bit; the rule, floor 5e-4, at the fp64 witness where one exists; cache and full pass ≤ 1e-5 apart; a second step the same bits; \(Wording.halfPrecision), cache and full pass too; on int8 weights, every route by the same rule"
     ) { invocation in
         let n = invocation.edit ?? 0
         let tag = n > 0 ? "-edit\(n)" : ""
@@ -270,7 +270,10 @@ enum QwenImageStages {
             latents.append(l)
             offset += cells
         }
-        let dit = try QwenImage21DiT(artifact: artifact, sequence: sequence, lora: nil, fullPass: true)
+        // Published int8 weights (the Compact): the evaluation along the int8 kernel, the step once widened below (`Int8Route`).
+        let int8 = Int8Route(artifact, invocation)
+        let dit = try QwenImage21DiT(artifact: artifact, sequence: sequence, lora: nil, fullPass: true,
+                                     accelerators: .on(neuralEngine: int8?.neuralEngine ?? EngineSettings.effective.plan.usesANE), plan: int8?.plan)
         dit.recordBoundaries = true
         let d = config.dim
         let half = try invocation.halfReference(file + ".safetensors", script: "tools/oracle/qwen-image-2.1.py bf16\(version.map { " --variant " + $0.rawValue } ?? "")")
@@ -316,15 +319,26 @@ enum QwenImageStages {
         // Under the ANE the two paths cut their rows between the engines at different heights (prefill and
         // step against the whole sequence): they differ by fp16 rounding, bounded by the bf16 bar instead.
         var apart = (bound: 1e-5, note: "")
-        if invocation.neuralEngine || invocation.bf16Activations, let bf16 = half?.values("model_out"), let golden = goldens.float32("model_out") {
+        if invocation.halfPrecision, let bf16 = half?.values("model_out"), let golden = goldens.float32("model_out") {
             apart = (1.25 * channelError(bf16, golden, columns: c).worst, invocation.neuralEngine ? "under the ANE, the bf16 bar" : "on rounded activations, the bf16 bar")
         }
         report.add(fullOut.withUnsafeBufferPointer {
             Judge.bound("prefill + cache against full pass", channelError(cachedOut, $0, columns: c).worst, apart.bound,
                         unit: "per channel", note: apart.note)
         })
+        int8?.account(report)
+        if int8?.judgesWidened == true {
+            // The other route of the same weights, the process's plan: the step from a fresh prefill, by the same rule.
+            let widened = try QwenImage21DiT(artifact: artifact, sequence: sequence, lora: nil, fullPass: true)
+            try embeds.baseAddress.map { try widened.prefill(hidden: $0, references: references.map { UnsafePointer($0) }) }
+            let step = try target.withUnsafeBufferPointer { try widened.forward(latent: $0.baseAddress!, sigma: sigma) }
+            report.add(goldens, "model_out (step, widened)", channelsLast(step, channels: c), name: "model_out",
+                       witness: witness("model_out"), half: half?.values("model_out"), columns: c)
+        }
         if invocation.neuralEngine { try NeuralEngineRun.account(report) }
         if invocation.bf16Activations { try BF16ActivationRun.account(report) }
+        if invocation.bf16Attention { try BF16AttentionRun.account(report) }
+        if invocation.fp16Attention { try FP16AttentionRun.account(report) }
         return report
     }
 

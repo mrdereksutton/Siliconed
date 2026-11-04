@@ -5,21 +5,20 @@
 //     ┌──────────────────────────────────────────────────────┐
 //     │        [ General ]  Other Macs   Advanced             │
 //     │ ┌──────────────────────────────────────────────────┐ │
-//     │ │ Faster Rendering   the first steps at half size   │ │
 //     │ │ Models             where the library is, shown in │ │
 //     │ │                    the Finder; moved to another   │ │
 //     │ │                    disk, opened, brought back     │ │
 //     │ └──────────────────────────────────────────────────┘ │
 //     └──────────────────────────────────────────────────────┘
 //
-//     General     what an everyday user touches: Faster Rendering for the model in the rack, the library.
+//     General     what an everyday user touches: the library; Save Every Image To… (off by default: `EveryImage`).
 //     Other Macs  lend this Mac, compute on another (`OtherMacsView.swift`).
 //     Advanced    kept out of the way: This Mac (the capacity map, measured only when asked), Command
-//                 Line (silicontrol, linked into /usr/local/bin), Beta (More Solvers, Negative LoRA
-//                 Strengths: off by default, may change; named subjects moved to the Prompt Lab).
+//                 Line (silicontrol, linked into /usr/local/bin), Beta (More Solvers, Faster Rendering,
+//                 Size in Two Scales, Negative LoRA Strengths: off by default, may change; named subjects moved to the Prompt Lab).
 //                 ┌ This Mac ───── [Measure This Mac…]
 //                 ├ Command Line ─ [Install…]
-//                 └ Beta ───────── More Solvers · Negative LoRA Strengths
+//                 └ Beta ───────── More Solvers · Faster Rendering · Size in Two Scales · Negative LoRA Strengths
 //
 // - **Incognito**: an NSWindow of ours, as `MainWindow` — not SwiftUI's `Settings` scene, which would
 //   keep its frame; not restorable. What it sets are the app's preferences (`AppState`'s header), the
@@ -32,6 +31,7 @@
 //   window says where the session stands and opens it.
 
 import AppKit
+import Siliconed
 import SwiftUI
 
 /// **The settings window**: one per process, opened by « Settings… ».
@@ -77,16 +77,6 @@ struct SettingsView: View {
     /// The state the window shows: the Mac that computes, whose switch and map these are.
     private var shown: AppState { MainWindow.shared.carrier.mirror ?? app }
 
-    /// « Faster Rendering »: this Mac's preference, which rides on each job — the lender's own is never touched.
-    private var fasterRendering: Binding<Bool> {
-        Binding(get: { app.fasterRendering(for: app.identifier) }, set: { app.setFasterRendering($0, for: app.identifier) })
-    }
-
-    /// Fork: « Neural Engine », moved here from the Model box: the selected model's choice (`setNeuralEngine`).
-    private var neuralEngine: Binding<Bool> {
-        Binding(get: { app.neuralEngine(for: app.identifier) }, set: { app.setNeuralEngine($0, for: app.identifier) })
-    }
-
     /// Fork: the pane shown — on Silicon's capsule tabs, as the main window's modes.
     private enum Pane: CaseIterable { case general, otherMacs, advanced }
     @State private var pane = Pane.general
@@ -122,33 +112,59 @@ struct SettingsView: View {
         .buttonStyle(SiliconButtonStyle())
     }
 
-    /// What one comes for: the speed switch, how images are compared, where the models are.
+    /// What one comes for: where the models are.
     private var general: some View {
         Form {
             Section {
-                Toggle(isOn: fasterRendering) {
-                    SettingLabel("Faster Rendering", "From 1024² up, the first steps at half size: faster, a slightly different image. Not with a LoRA, Detail or an edit.")
-                }
-                // Fork: the Neural Engine switch, moved here from the Model box; only where this Mac's measure offers it.
-                if app.neuralEngineOffered {
-                    Toggle(isOn: neuralEngine) {
-                        SettingLabel("Neural Engine", "Part of the model runs in fp16 on the Neural Engine, which uses less energy and gives an image a little different from fp32. For the selected model.")
+                // Fork: the DiT box's two switches (`DiTBox.switches`) live here — the window never draws the rack. Each is the
+                // selected model's; one that cannot apply is greyed and says why.
+                let id = app.identifier
+                let reason = DiTSwitches.acceleratorsUnavailable(measured: app.settingsRead, offered: app.acceleratorsOffered)
+                Toggle(isOn: Binding(get: { reason == nil && app.accelerators(for: id) }, set: { app.setAccelerators($0, for: id) })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Accelerators")
+                        Text(verbatim: reason.map(AcceleratorWords.unavailable) ?? AcceleratorWords.switchHelp(app.acceleratorOffer ?? .none))
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                .disabled(reason != nil)
+                // Faster Rendering is a Beta option (Advanced): no switch without it.
+                // Faster Rendering rides on each job: read from the state the composer renders from (another Mac's mirror when
+                // computing there), written to it and to this Mac's preference.
+                if app.fasterRenderingBeta {
+                    let form = shown
+                    let unavailable = form.fasterRenderingUnavailable
+                    Toggle(isOn: Binding(get: { form.fasterRenderingShown(for: form.identifier) },
+                                         set: { on in
+                                             app.setFasterRendering(on, for: form.identifier)
+                                             if form !== app { form.setFasterRendering(on, for: form.identifier) }
+                                         })) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Faster Rendering")
+                            Text(verbatim: unavailable.map(Self.sentence)
+                                 ?? String(localized: "From 1024² up, the first steps at half size: faster, a slightly different image."))
+                                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .disabled(unavailable != nil)
+                }
             }
-            // Fork: the library by default; Incognito keeps images in memory only (`AppState.autoSave`).
+            // Fork: saved by default to Downloads › Siliconed; Incognito keeps images in memory only (`EveryImage`).
             Section {
                 Toggle(isOn: $app.incognito) {
                     SettingLabel("Incognito", "New images stay in memory until you save them. When this is off, each new image is also saved as a PNG, with its prompt, seed and model, in Downloads › Siliconed.")
                 }
-                LabeledContent {
-                    Button("Show in Finder") {
-                        let folder = AppState.autoSaveFolder
-                        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-                        NSWorkspace.shared.activateFileViewerSelecting([folder])
+                if let folder = EveryImage.shared.folder {
+                    LabeledContent {
+                        Button("Show in Finder") {
+                            if folder.path == EveryImage.downloads.path {
+                                try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                            }
+                            NSWorkspace.shared.activateFileViewerSelecting([folder])
+                        }
+                    } label: {
+                        Text(verbatim: folder.path(percentEncoded: false)).font(.caption).textSelection(.enabled)
                     }
-                } label: {
-                    Text(verbatim: AppState.autoSaveFolder.path(percentEncoded: false)).font(.caption).textSelection(.enabled)
                 }
             }
             Section {
@@ -163,6 +179,16 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// Why Faster Rendering would do nothing for this render, in a sentence (`DiTBox.sentence`).
+    private static func sentence(_ reason: DiTSwitchUnavailable) -> String {
+        switch reason {
+        case .sizeUnder1024: String(localized: "Needs 1024 px or more on each side.")
+        case .withLoRADetailOrEdit: String(localized: "Not with a LoRA, Detail or an edit.")
+        case .stepsOffRecipe: String(localized: "Only at the model’s own step count.")
+        case .notMeasured, .noAccelerator: AcceleratorWords.unavailable(reason)
+        }
     }
 
     /// Out of the everyday way: the capacity map that renders are planned from, the terminal, then what
@@ -206,6 +232,10 @@ struct SettingsView: View {
                 Toggle(isOn: $app.developerMode) {
                     SettingLabel("More Solvers", "Adds the solvers Euler a, DPM++ 2M and UniPC to Generate’s settings and to the exploration’s axes. The default, Euler, is the one the models were distilled for.")
                 }
+                Toggle(isOn: $app.fasterRenderingBeta) {
+                    SettingLabel("Faster Rendering", "Adds a Faster Rendering switch to General: from 1024² up, the first steps at half size, faster, a slightly different image. Not with a LoRA, Detail or an edit. Off, no render is a faster one.")
+                }
+                // Fork: no « Size in Two Scales »: the composer always picks a ratio, then 1K or 2K (`SizeTable`).
                 Toggle(isOn: $app.negativeLoRAStrengths) {
                     SettingLabel("Negative LoRA Strengths", "Lets a LoRA’s strength go from −1.5 to 1.5, for “slider” LoRAs. An ordinary LoRA is damaged by a negative strength.")
                 }

@@ -292,20 +292,6 @@ extension AppState {
         return url
     }
 
-    /// Fork: **the library by default**. A new image of this Mac's history is written to
-    /// `autoSaveFolder` as its PNG (prompt, seed and model kept), under its export name, and counts as
-    /// saved. Nothing while Incognito is on, nor for another Mac's images.
-    func autoSave(_ entry: Entry) {
-        guard !incognito, entry.owner == nil, entry.sketch == nil else { return }
-        let folder = Self.autoSaveFolder
-        do {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try write(entry, to: Self.freeURL(in: folder, base: exportName(entry), ext: "png"))
-        } catch {
-            problem = Problem((error as? EngineError) ?? .imageWriteFailed(file: folder.path))
-        }
-    }
-
     /// Writes an image as its extension says (JPEG at 0.9 and HEIC at 0.85, both plain pictures; or the
     /// PNG with its metadata), and counts it as saved.
     func write(_ entry: Entry, to url: URL) throws {

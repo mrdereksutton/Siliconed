@@ -48,8 +48,8 @@ extension Diagnostic.CapacityProbes.Context {
                 log?(String(format: "  validate %@ %dx%dx%d  model %.2f ms  measured %.2f ms  %+.1f %%", key, m, k, n, p * 1e3, t.wall * 1e3, checks.last!.error * 100))
             }
         }
-        // The integers' route, on the same products: the ANE alone, then the GPU's int8 kernel beside it.
-        let g8 = Kernel(.gpu, .int8), a8 = Kernel(.ane, .int8)
+        // The integers' route, on the same products: the ANE alone, then each GPU int8 kernel beside it.
+        let a8 = Kernel(.ane, .int8)
         if let e = neural.neuralEngine, let line = model.lines[a8] {
             for (m, k, n) in CapacityProbes.validationShapes.map({ ($0.m, $0.k, $0.n) }) {
                 guard let plan = int8Plan(k, n) else { continue }
@@ -60,15 +60,23 @@ extension Diagnostic.CapacityProbes.Context {
                 log?(String(format: "  validate %@ %dx%dx%d  model %.2f ms  long %.2f ms  %+.1f %%", a8.description, m, k, n,
                             line.seconds(flop) * 1e3, t * 1e3, checks.last!.error * 100))
             }
-            let key = CapacityModel.key([g8, a8])
-            for (m, k, n) in CapacityProbes.validationShapes.map({ ($0.m, $0.k, $0.n) }) where model.sharing[key] != nil {
-                guard let t = trialInt8(key: key, shape: (m, k, n), model: model, pass: 3), !t.sides.isEmpty else { continue }
-                var rows: [Kernel: Int] = [:]
-                for s in t.sides { if let kernel = Kernel(s.kernel) { rows[kernel] = s.rows } }
-                guard let p = model.seconds(m: m, k: k, n: n, rows: rows) else { continue }
-                checks.append(Check(what: key, shape: [m, k, n], rows: Dictionary(uniqueKeysWithValues: t.sides.map { ($0.kernel, $0.rows) }),
-                                    predicted: p, measured: t.wall))
-                log?(String(format: "  validate %@ %dx%dx%d  model %.2f ms  measured %.2f ms  %+.1f %%", key, m, k, n, p * 1e3, t.wall * 1e3, checks.last!.error * 100))
+            restoreB()
+        }
+        // The pairs on a weight read as published (the integers' beside each GPU kernel that reads them, the rounded bf16 one), each at the
+        // rows the model's split gives.
+        if neural.neuralEngine != nil {
+            for pair in Self.integerPairs.map({ [Kernel(.gpu, $0), a8] }) + [Self.roundedPair] {
+                let (g, e) = (pair[0], pair[1])
+                let key = CapacityModel.key(pair)
+                for (m, k, n) in CapacityProbes.validationShapes.map({ ($0.m, $0.k, $0.n) }) where model.sharing[key] != nil {
+                    guard let t = trialPair(key: key, gpu: g, ane: e, shape: (m, k, n), model: model, pass: 3), !t.sides.isEmpty else { continue }
+                    var rows: [Kernel: Int] = [:]
+                    for s in t.sides { if let kernel = Kernel(s.kernel) { rows[kernel] = s.rows } }
+                    guard let p = model.seconds(m: m, k: k, n: n, rows: rows) else { continue }
+                    checks.append(Check(what: key, shape: [m, k, n], rows: Dictionary(uniqueKeysWithValues: t.sides.map { ($0.kernel, $0.rows) }),
+                                        predicted: p, measured: t.wall))
+                    log?(String(format: "  validate %@ %dx%dx%d  model %.2f ms  measured %.2f ms  %+.1f %%", key, m, k, n, p * 1e3, t.wall * 1e3, checks.last!.error * 100))
+                }
             }
             restoreB()
         }

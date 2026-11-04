@@ -6,8 +6,10 @@
 //   answer comes before the verdict, so a refusal is the command's own. An edit with no format typed
 //   leaves its size to the other Mac (image 1's, by its denoiser's rule).
 // - `wait` and `follow` read the signals the mirror gives from what the other Mac publishes.
-// - What acts on this Mac — `install` — refuses; `diagnose` and `set faster-rendering` act on the other Mac's
-//   (`MirrorMachine.swift`, `diagnose` in `RemoteControl+Commands.swift`); the window says where it computes.
+// - What acts on this Mac — `install`, `install writer`, `rewrite` and `describe` (the writer is this Mac's, as the Prompt Lab
+//   says) — refuses; `diagnose` and `set faster-rendering|accelerators` act on the other Mac's
+//   (`MirrorMachine.swift`, `diagnose` in `RemoteControl+Commands.swift`); `set beta` writes this Mac's preferences and the
+//   mirror's copy of them; the window says where it computes.
 // - `grid` (and `add` of a series with `--sketch`, `--x`, `--y`) is asked whole of the other Mac, which
 //   makes the cells (`MirrorLink.explore`) and answers with them (`gridQueued`); `wait g2` follows it
 //   from what it publishes. `vary` is the window's « Variations » (the same jobs, each answered by the
@@ -23,11 +25,18 @@ import Siliconed
 
 extension RemoteControl {
     /// The commands a mirror does not take, with the sentence that says why.
-    func refuseOnMirror(_ command: String) throws {
+    func refuseOnMirror(_ command: String, _ arguments: [String] = []) throws {
         guard let mirror = app.mirror else { return }
         let name = mirror.macName
         switch command {
-        case "install":
+        // « Stop » works on the lender's forge as on this Mac's, with no click on the other.
+        case "install" where arguments == ["stop"]:
+            break
+        // Files go up to the other Mac, whose owner confirms there.
+        case "start-image":
+            throw Refusal("remote", String(localized: "a starting image is not offered while the window computes on “\(name)”"),
+                          help: String(localized: "Render › Compute On › This Mac, then retry"))
+        case "install", "import":
             throw Refusal("remote", String(localized: "\(command) acts on this Mac, and the window computes on “\(name)”"),
                           help: String(localized: "Render › Compute On › This Mac, then retry"))
         default:
@@ -43,6 +52,11 @@ extension RemoteControl {
                                     "formats": f.formats.map { "\($0.width)x\($0.height)" },
                                     "commercial_license": f.license.commercial, "license": f.license.text,
                                     "default": f.id == "z-image", "ready": app.readySet.contains(f.id)]
+            // The choices the window's switches hold for this model, the borrower's (they ride on each job): `set` writes them.
+            if app.readySet.contains(f.id) {
+                if app.acceleratorsOffered { o["accelerators"] = app.accelerators(for: f.id) }
+                o["faster_rendering"] = app.fasterRendering(for: f.id)
+            }
             if let t = catalog?.traits[f.id] {
                 o["edit"] = t.maxReferences > 0
                 o["max_references"] = t.maxReferences
@@ -62,6 +76,11 @@ extension RemoteControl {
         // A request while the session is down would be dropped, and its command would wait for an answer
         // that cannot come.
         if let down = app.linkBlocker { throw Refusal("link", down) }
+        // The starting image does not travel to the other Mac yet: said, never dropped in silence.
+        if d.image != nil || d.strength != nil {
+            throw Refusal("remote", String(localized: "a starting image (--image) is not offered while the window computes on “\(mirror.macName)”"),
+                          help: String(localized: "Render › Compute On › This Mac, then retry"))
+        }
         // The same usage rules as here (`add`).
         if !grid, d.sketch {
             throw Refusal("usage", String(localized: "--sketch belongs to “silicontrol grid”"), help: "silicontrol help grid")
@@ -181,7 +200,7 @@ extension RemoteControl {
             let used = app.namedJob(v.prompt, settings: &settings, references: references, capacity: capacity)
             var job = Job(ordinal: 0, settings: settings, seeds: (0..<d.batch).map { firstNumber &+ UInt64($0) },
                           references: used, previews: d.previews ?? app.previews, defaultSteps: card.defaultSteps, plan: nil)
-            job.neuralEngine = d.neuralEngine
+            job.accelerators = d.accelerators
             return job
         }
 
@@ -288,7 +307,7 @@ extension RemoteControl {
                                       loras: stack, references: references.count, detail: d.detail, solver: d.solver)
         let on = mirror.macName
         do {
-            try mirror.explore(g, settings: app.resolvingFaster(settings), references: references, stopAfter: 0, neuralEngine: d.neuralEngine,
+            try mirror.explore(g, settings: app.resolvingFaster(settings), references: references, stopAfter: 0, accelerators: d.accelerators,
                                sketch: d.sketch, previews: d.previews ?? app.previews) { [self] answer in
                 switch answer {
                 case .refused(let text):
@@ -390,7 +409,13 @@ extension RemoteControl {
         guard mirror.nextRequest - first == jobs.count else {
             throw Refusal("ref", app.problem?.text ?? String(localized: "This image could not be varied"))
         }
-        var answers: [RemoteAnswer?] = Array(repeating: nil, count: jobs.count)
+        answerQueued(mirror, from: first, count: jobs.count, c)
+    }
+
+    /// **The word of the other Mac on `count` jobs a gesture just sent** (from request `first`): the command answers once all are in, with
+    /// the jobs as the other Mac numbered them, or the first refusal.
+    func answerQueued(_ mirror: MirrorLink, from first: Int, count: Int, _ c: Connection) {
+        var answers: [RemoteAnswer?] = Array(repeating: nil, count: count)
         mirror.awaiting(from: first) { [self] i, a in
             answers[i] = a
             guard answers.allSatisfy({ $0 != nil }) else { return }

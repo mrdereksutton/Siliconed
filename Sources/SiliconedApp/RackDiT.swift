@@ -14,28 +14,20 @@ struct DiTBox: View {
     @State private var customSize = false
 
     var body: some View {
-        StageBox(title: "Model", symbol: "sparkles", state: app.state(of: .denoising),
+        StageBox(title: "DiT", symbol: "sparkles", state: app.state(of: .denoising),
                  explanation: "The model that draws (a diffusion transformer): from noise, step by step, it makes the image the prompt describes") {
-            HStack(spacing: 10) {
-                Picker("Model", selection: $app.identifier) {
-                    ForEach(app.visibleCards) { card in
-                        if app.readySet.contains(card.id) {
-                            Text(card.name).tag(card.id)
-                        } else {
-                            Text("\(card.name) (not installed)").tag(card.id)
-                        }
+            Picker("Model", selection: $app.identifier) {
+                ForEach(app.visibleCards) { card in
+                    if app.readySet.contains(card.id) {
+                        Text(card.name).tag(card.id)
+                    } else {
+                        Text("\(card.name) (not installed)").tag(card.id)
                     }
                 }
-                .labelsHidden()
-                .help("The denoiser: the publisher’s model, or a fine-tune you imported")
-                // Fork: « Models… » left the rack's header (no longer drawn) for the box of the model it manages.
-                Button("Models…") { app.managementOpen = true }
-                    .buttonStyle(.link)
-                    .font(.callout)
-                    .fixedSize()
-                    .help("Install, import, remove — and what each takes on disk (⇧⌘M)")
             }
-            if app.card != nil {
+            .labelsHidden()
+            .help("The denoiser: the publisher’s model, or a fine-tune you imported")
+            if let card = app.card {
                 if app.missing != nil {
                     HStack {
                         Text("Not installed").font(.callout).foregroundStyle(.secondary)
@@ -45,8 +37,21 @@ struct DiTBox: View {
                             .disabled(!app.managementPossible)
                     }
                 } else {
-                    // Fork: no labels under the model (weights, what computes, license, latent): nothing in them
-                    // can be set here; the Neural Engine switch is in Settings › General.
+                    // The labels on one line when they fit; the license alone above the others when not.
+                    // The labels on one line when they fit; else what is stored and what computes stay together on a line of
+                    // their own, the license and the latent on another, then each pair alone — a label is never truncated.
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 5) { license(card); precision; latent }
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 5) { precision }
+                            HStack(spacing: 5) { license(card); latent }
+                        }
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 5) { precision }
+                            license(card)
+                            latent
+                        }
+                    }
                     Divider().padding(.vertical, 2)
                     // The LoRA first: what changes the image most, under the model it modifies.
                     loras
@@ -72,20 +77,13 @@ struct DiTBox: View {
 
     @ViewBuilder private var precision: some View {
         // What is stored, then what computes: two labels, two words, so that « int8 » and « fp32 » are never one thing.
-        WeightsTag(format: app.weightFormats?.dit)
-        if app.neuralEngineOffered {
-            // The model's choice, per installed version: a click switches it for the next renders.
-            let on = app.neuralEngine(for: app.identifier)
-            Button { app.setNeuralEngine(!on, for: app.identifier) } label: {
-                Tag(text: Text("computes \(on ? "fp32 · ANE" : "fp32")"), symbol: on ? "leaf" : nil)
-            }
-            .buttonStyle(.plain)
-            .help(on ? String(localized: "Part of the DiT runs in fp16 on the Neural Engine: less energy (about a fifth on an M1 Pro), an image a little different from fp32’s. Click for fp32 throughout.")
-                     : String(localized: "The DiT in fp32 throughout, the image verified against the reference. Click to run part of it in fp16 on the Neural Engine: less energy (about a fifth on an M1 Pro), an image a little different."))
-        } else {
-            Tag(text: Text("computes \("fp32")"))
-                .help("The products of the DiT are computed in fp32, the image verified against the reference.")
-        }
+        WeightsTag(format: app.weightFormats?.dit, accelerators: app.acceleratorsInEffect)
+        // A label only: the choice is the switch below, in the settings of the box (`switches`). What it says is what this Mac's map
+        // gives the accelerators (`AcceleratorWords`), the Neural Engine first.
+        let offer = app.acceleratorsInEffect
+        Tag(text: Text("computes \(AcceleratorWords.tag(offer))"), symbol: offer.neuralEngine ? "leaf" : offer.isNone ? nil : "bolt")
+            .help(AcceleratorWords.place(offer).map { String(localized: "fp32, except part of the DiT \($0)") }
+                  ?? String(localized: "The products of the DiT are computed in fp32, the image verified against the reference."))
     }
 
     @ViewBuilder private var latent: some View {
@@ -95,12 +93,111 @@ struct DiTBox: View {
         }
     }
 
+    // ── Size in two scales (Beta): a proportion, then a resolution; the table is `SizeScales` ──
+
+    /// The two menus and the pixels they give. The shown choice is read from the form's size, so a size typed by hand, or
+    /// restored with an image, shows « Custom » instead of a proportion it is not. A greyed entry says why (the model's
+    /// limit, or the Mac it needs), as the default menu does.
+    @ViewBuilder private var scales: some View {
+        let current = app.sizeCell
+        let resolution = current?.resolution ?? .oneK
+        let ratio = current?.ratio ?? SizeRatio(1, 1)
+        Field(title: "Size") {
+            Picker("Proportion", selection: Binding<SizeRatio?>(
+                get: { current?.ratio },
+                set: { if let r = $0 { app.selectScale(r, resolution) } })) {
+                if current == nil { Text("Custom").tag(SizeRatio?.none) }
+                ForEach(Array([[SizeRatio(1, 1)], SizeScales.portraits, SizeScales.landscapes].enumerated()), id: \.offset) { group in
+                    if group.offset > 0 { Divider() }
+                    ForEach(group.element, id: \.self) { r in
+                        let cell = SizeScales.cell(r, resolution)!
+                        scaleItem(cell, title: ratioTitle(cell)).tag(Optional(r))
+                    }
+                }
+            }
+            .labelsHidden().fixedSize()
+            .help(approximateHelp(current))
+            Picker("Resolution", selection: Binding<SizeResolution?>(
+                get: { current?.resolution },
+                set: { if let q = $0 { app.selectScale(ratio, q) } })) {
+                if current == nil { Text("Custom").tag(SizeResolution?.none) }
+                ForEach(SizeResolution.allCases, id: \.self) { q in
+                    scaleItem(SizeScales.cell(ratio, q)!, title: q.rawValue).tag(Optional(q))
+                }
+            }
+            .labelsHidden().fixedSize()
+            .help("1K is about 1 megapixel, 2K about 4")
+            Text(verbatim: "\(app.format.width) × \(app.format.height)").monospacedDigit().foregroundStyle(.secondary)
+            Button { customSize = true } label: { Image(systemName: "pencil") }
+                .buttonStyle(.borderless)
+                .help("Type a size (width × height)")
+                .accessibilityLabel(Text("Type a size (width × height)"))
+                .popover(isPresented: $customSize, arrowEdge: .trailing) { CustomSize(app: app) }
+        }
+    }
+
+    /// An entry of either menu: its title, or why it is greyed.
+    @ViewBuilder private func scaleItem(_ cell: SizeCell, title: String) -> some View {
+        if let why = app.scaleUnavailable(cell) {
+            Text(verbatim: "\(title) · \(why)").disabled(true)
+        } else {
+            Text(verbatim: title)
+        }
+    }
+
+    /// « 3:4 », or « ≈ 9:16 » where the pixels at this resolution are not quite that proportion.
+    private func ratioTitle(_ cell: SizeCell) -> String {
+        cell.isApproximate ? "≈ \(cell.ratio)" : cell.ratio.description
+    }
+
+    /// The footnote of an approximate proportion, as a tooltip.
+    private func approximateHelp(_ cell: SizeCell?) -> Text {
+        guard let cell, cell.isApproximate else { return Text("The proportion of the size; the resolution is next to it") }
+        let pixels = "\(cell.width) × \(cell.height)"
+        let really = cell.actualRatio.description, asked = cell.ratio.description
+        let off = cell.deviation.formatted(.percent.precision(.fractionLength(1)))
+        return Text("\(pixels) is really \(really), \(off) off \(asked): an exact \(asked) in multiples of 32 has no size near this resolution.")
+    }
+
     // ── what the DiT is told: size, seed, how many, steps ──
 
     @ViewBuilder private var settings: some View {
-        if app.references.isEmpty {
-            // Fork: the size by aspect ratio and resolution, not orientation boxes and pixel sizes (`SizePicker`).
-            SizePicker(app: app)
+        if app.references.isEmpty, app.sizeScalesBeta {
+            scales
+        } else if app.references.isEmpty {
+            Field(title: "Size") {
+                Picker("Orientation", selection: $app.orientation) {
+                    ForEach([RecommendedFormat.Orientation.square, .portrait, .landscape], id: \.self) { o in
+                        Image(systemName: o.symbol).help(o.label).accessibilityLabel(Text(verbatim: o.label)).tag(o)
+                    }
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                // What this Mac cannot render is greyed out ahead, with the Mac it needs (B, `macNeeded`).
+                // **Its width is a plain size's, never its longest entry's**: a menu picker sizes to its
+                // widest item, and the squares list « 2048 × 2048 — needs a Mac with 32 GB » — each switch
+                // to square widened the rack's column. A hidden one-item picker sets the width; the real
+                // one is laid over it, so its list never reaches the layout.
+                Picker("Size", selection: .constant(0)) { Text(verbatim: "0000 × 0000").tag(0) }
+                    .labelsHidden().fixedSize().hidden().accessibilityHidden(true)
+                    .overlay(alignment: .trailing) {
+                        Picker("Size", selection: $app.format) {
+                            ForEach(app.pickerFormats, id: \.self) { f in
+                                if let n = app.macNeeded(f, images: 0) {
+                                    Text("\(String(f.width)) × \(String(f.height)) — needs a Mac with \(String(n)) GB")
+                                        .tag(f).disabled(true)
+                                } else {
+                                    Text(verbatim: "\(f.width) × \(f.height)").tag(f)
+                                }
+                            }
+                        }
+                        .labelsHidden()
+                    }
+                Button { customSize = true } label: { Image(systemName: "pencil") }
+                    .buttonStyle(.borderless)
+                    .help("Type a size (width × height)")
+                    .accessibilityLabel(Text("Type a size (width × height)"))
+                    .popover(isPresented: $customSize, arrowEdge: .trailing) { CustomSize(app: app) }
+            }
         } else {
             let f = app.outputFormat
             Field(title: "Size") {
@@ -170,6 +267,49 @@ struct DiTBox: View {
         Toggle("Preview every step", isOn: $app.previews)
             .font(.callout)
             .help("Shows the image taking shape on the canvas after each step. It does not change the image.")
+        switches
+    }
+
+    /// **The two switches that change how the DiT computes**, each in the box of what it changes. A switch that cannot apply is
+    /// greyed and says why, in a sentence, instead of disappearing or turning into a label. The decisions are `DiTSwitches`'s.
+    @ViewBuilder private var switches: some View {
+        let id = app.identifier
+        let reason = DiTSwitches.acceleratorsUnavailable(measured: app.settingsRead, offered: app.acceleratorsOffered)
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle("Accelerators", isOn: Binding(get: { reason == nil && app.accelerators(for: id) },
+                                                 set: { app.setAccelerators($0, for: id) }))
+                .font(.callout)
+                .disabled(reason != nil)
+                .help(AcceleratorWords.switchHelp(app.acceleratorOffer ?? .none))
+            if let reason {
+                Text(Self.sentence(reason))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        // Faster Rendering is a Beta option: no switch without it.
+        if app.fasterRenderingBeta {
+            let reason = app.fasterRenderingUnavailable
+            VStack(alignment: .leading, spacing: 2) {
+                Toggle("Faster Rendering", isOn: Binding(get: { app.fasterRenderingShown(for: id) },
+                                                         set: { app.setFasterRendering($0, for: id) }))
+                    .font(.callout)
+                    .disabled(reason != nil)
+                    .help("From 1024² up, the first steps at half size: faster, a slightly different image.")
+                if let reason {
+                    Text(Self.sentence(reason)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// Why Faster Rendering would do nothing for this render, in a sentence.
+    private static func sentence(_ reason: DiTSwitchUnavailable) -> String {
+        switch reason {
+        case .sizeUnder1024: String(localized: "Needs 1024 px or more on each side.")
+        case .withLoRADetailOrEdit: String(localized: "Not with a LoRA, Detail or an edit.")
+        case .stepsOffRecipe: String(localized: "Only at the model’s own step count.")
+        case .notMeasured, .noAccelerator: AcceleratorWords.unavailable(reason)
+        }
     }
 
     /// **The LoRA stack, in the open** — as reachable as the steps or the seed: a title with « Add »
@@ -226,6 +366,45 @@ struct DiTBox: View {
 
 /// **« Add »**: the model's LoRAs not yet in the stack, in a menu — the pick goes in at 0.8, its
 /// slider ready. Greyed at three, the stack's limit.
+/// **What the accelerators do, in words** — one place for the DiT box, the rack's legend, the image's panel and `silicontrol`, read
+/// from what this Mac's map gives them (`AcceleratorOffer`), never from the chip's name: the Neural Engine first, the GPU's tensor
+/// units in half precision said in clear, « fp32 » where neither works (a Mac whose map chooses none, or the switch off).
+enum AcceleratorWords {
+    /// **Where part of the DiT goes**, as the end of a sentence: « on the Neural Engine (fp16) and the GPU’s tensor units (bf16) ».
+    /// `nil`: nowhere, fp32 throughout.
+    static func place(_ o: AcceleratorOffer) -> String? {
+        let units = o.tensorUnitsText
+        switch (o.neuralEngine, o.tensorUnits.isEmpty) {
+        case (true, true): return String(localized: "on the Neural Engine (fp16)")
+        case (true, false): return String(localized: "on the Neural Engine (fp16) and the GPU’s tensor units (\(units))")
+        case (false, false): return String(localized: "on the GPU’s tensor units (\(units))")
+        case (false, true): return nil
+        }
+    }
+
+    /// The DiT's « computes » tag: `fp32`, `fp32 · ANE`, `fp32 · GPU bf16`, `fp32 · ANE · GPU bf16, fp16` — names, not words.
+    static func tag(_ o: AcceleratorOffer) -> String {
+        (["fp32"] + (o.neuralEngine ? ["ANE"] : []) + (o.tensorUnits.isEmpty ? [] : ["GPU " + o.tensorUnitsText]))
+            .joined(separator: " · ")
+    }
+
+    /// The switch's hover: what it turns on, on this Mac, and what off gives.
+    static func switchHelp(_ o: AcceleratorOffer) -> String {
+        guard let place = place(o) else {
+            return String(localized: "The Neural Engine and the GPU’s tensor units (bf16), where this Mac’s measure chooses them; fp32 throughout when you turn them off.")
+        }
+        return String(localized: "Part of the DiT \(place), where this Mac’s measure finds it faster or more frugal: an image a little different from fp32’s, checked against the reference in bf16. Off, the DiT is in fp32 throughout, the image verified against the reference.")
+    }
+
+    /// Why the switch has nothing to choose.
+    static func unavailable(_ reason: DiTSwitchUnavailable) -> String {
+        switch reason {
+        case .notMeasured: String(localized: "This Mac is not measured yet: its first render measures it, then the accelerators can be chosen.")
+        default: String(localized: "This Mac’s measure gives the accelerators nothing to do: the DiT is computed in fp32.")
+        }
+    }
+}
+
 struct LoRAAddMenu: View {
     let app: AppState
 

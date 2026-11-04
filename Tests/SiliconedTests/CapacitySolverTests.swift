@@ -92,7 +92,8 @@ import Testing
         var m = machine(aneRate: 3e12)
         m.sharing["gpu+ane"] = .init(overhead: 0.5, keep: [.gpu: 0.2, .ane: 0.2])
         let s = try solve(m, key(4096, 4096, 1024))
-        #expect(s.assignment == .gpuAlone(1024))
+        // One engine: the GPU alone or the ANE alone, as fast as each other here — a tie the written order gives the ANE (`canonical`).
+        #expect(s.assignment == .gpuAlone(1024) || s.assignment == ProductAssignment(path: .widened, gpu: 0, ane: 1024), "\(s.assignment)")
     }
 
     @Test func theANEOnlyTakesWholeUnitsAndPaysTheStaircase() throws {
@@ -114,6 +115,45 @@ import Testing
         #expect(s.route == "gpu+ane+amx")
         // GPU 3, ANE 3, AMX 1: 3072 + 1024 + 3072 rows
         #expect(s.assignment == ProductAssignment(gpu: 3072, amx: 1024, ane: 3072))
+    }
+
+    // MARK: the ANE against the AMX (`CapacitySolver.aneOverAMX`)
+
+    /// GPU 3, AMX 1 TFLOP/s, the ANE as given; the three engines together made useless, so the duel is gpu+ane against gpu+amx.
+    func duel(aneRate: Double) -> M {
+        var m = machine(amxRate: 1e12, aneRate: aneRate)
+        m.sharing["gpu+amx+ane"] = .init(overhead: 0, keep: [.gpu: 0.1, .amx: 0.1, .ane: 0.1])
+        return m
+    }
+
+    func best(_ model: M, _ key: ProductKey, route: String) throws -> Double {
+        try #require(CS.candidates(key, model: model, constraints: constraints()).filter { $0.route == route }.map(\.seconds).min())
+    }
+
+    @Test func theANEUpTo15PercentSlowerThanTheAMXIsTaken() throws {
+        // 7168 rows: gpu+amx 5376 + 1792 (t ∝ 1792), gpu+ane 6144 + 1024 (t ∝ 2048): the ANE 14.3 % slower.
+        let m = duel(aneRate: 0.5e12), k = key(4096, 4096, 7168)
+        let (ane, amx) = (try best(m, k, route: "gpu+ane"), try best(m, k, route: "gpu+amx"))
+        #expect(ane > amx && ane <= amx * (1 + CS.aneOverAMX))
+        let s = try solve(m, k)
+        #expect(s.route == "gpu+ane" && s.assignment == ProductAssignment(gpu: 6144, ane: 1024), "\(s.assignment)")
+    }
+
+    @Test func theANEMoreThan15PercentSlowerLeavesTheAMX() throws {
+        let m = duel(aneRate: 0.25e12), k = key(4096, 4096, 7168)
+        #expect(try best(m, k, route: "gpu+ane") > (try best(m, k, route: "gpu+amx")) * (1 + CS.aneOverAMX))
+        #expect(try solve(m, k).route == "gpu+amx")
+    }
+
+    @Test func thePreferenceIsAgainstTheAMXOnlyNeverAgainstTheGPUAlone() throws {
+        // The GPU alone on a rounded activation (3.8 TFLOP/s, t ∝ 1886) is slower than gpu+amx (1792) and faster than gpu+ane (2048,
+        // within 15 % of gpu+amx). The AMX is dropped, and between what is left time decides: the GPU alone, not the ANE.
+        var m = duel(aneRate: 0.5e12)
+        m.lines[M.Kernel(.gpu, .bf16act)] = .init(t0: 0, rate: 3.8e12)
+        let k = key(4096, 4096, 7168)
+        let (ane, amx, gpu) = (try best(m, k, route: "gpu+ane"), try best(m, k, route: "gpu+amx"), try best(m, k, route: "gpu/bf16act"))
+        #expect(amx < gpu && gpu < ane && ane <= amx * (1 + CS.aneOverAMX), "gpu+amx \(amx), gpu/bf16act \(gpu), gpu+ane \(ane)")
+        #expect(try solve(m, k).route == "gpu/bf16act")
     }
 
     @Test func anEngineMayBeAlone() throws {
@@ -197,17 +237,46 @@ import Testing
         #expect(s.assignment == .gpuAlone(1024), "a K-quant widens: no native form")
     }
 
-    @Test func theNativeInt8WeightGoesBesideTheAMXOnColumns() throws {
+    /// **A K-quant's blocks read as published** (`gpu/q4kact`): on the denoiser where the map has the line and it beats the widened
+    /// route with its preparation — the GPU alone, the activation rounded —; the encoder, a slower line, a refused rounding keep the
+    /// widened weight. A tensor of the class the kernels cannot read (a Q6_K) asks the plan its answer without the route.
+    @Test func aKQuantIsReadAsPublishedOnARoundedActivationWhereItIsFaster() throws {
+        var m = machine(aneRate: 1e12)
+        m.lines[M.Kernel(.gpu, .q4kact)] = .init(t0: 0, rate: 6e12)
+        m.kquantPreparation = 5e-10
+        m.kquantStaging = 1e-11
+        let q4k = key(4096, 4096, 4096, .q4k)
+        let s = try solve(m, q4k)
+        #expect(s.route == "gpu/q4kact" && s.assignment == .gpuAlone(4096, path: .native, rounds: true))
+        #expect(abs(s.preparation - 4096 * 4096 * 1e-11) < 1e-9, "the blocks copied, not widened")
+        #expect(try solve(m, key(4096, 4096, 4096, .q4k, phase: .encoding)).assignment.path == .widened)
+        let refused = try #require(CS.product(q4k, model: m, constraints: CS.Constraints(allowsANE: true, allowsRounding: false)))
+        #expect(refused.assignment.path == .widened)
+        var slow = m
+        slow.lines[M.Kernel(.gpu, .q4kact)] = .init(t0: 0, rate: 1e11)
+        #expect(try solve(slow, q4k).assignment.path == .widened)
+        // The kernels alone: no ANE, no AMX, no fp32 activation on the blocks.
+        #expect(!ProductAssignment(path: .native, roundsActivation: true, gpu: 2048, ane: 2048).isRunnable(for: q4k))
+        #expect(!ProductAssignment(path: .native, roundsActivation: false, gpu: 4096).isRunnable(for: q4k))
+        // The fallback of an unread tensor is the plan without the route, the widened one, and the plan's own answer elsewhere.
+        let plan = CapacityPlan(model: m)
+        #expect(plan.assign(q4k).path == .native)
+        let widened = plan.assignWidened(q4k)
+        #expect(widened.path == .widened && widened.isRunnable(for: q4k))
+        #expect(plan.assignWidened(key(4096, 4096, 4096)) == plan.assign(key(4096, 4096, 4096)))
+    }
+
+    /// **No AMX beside a native weight**: the AMX's columns widened their share of the weight on every call, a line no probe measures
+    /// as the route runs, and the widened `gpu+amx` covers the case with lines measured; the solver never offers them.
+    @Test func theNativeInt8WeightNeverGoesBesideTheAMXOnColumns() throws {
         var m = machine(amxRate: 1e12)
         m.lines[M.Kernel(.gpu, .int8)] = .init(t0: 0, rate: 3e12)
         m.lines[M.Kernel(.amx, .int8)] = .init(t0: 0, rate: 1e12)
         m.preparation[.int8] = [.widened: 1e-9, .native: 1e-11]
         let s = try solve(m, key(4096, 4096, 4096, .int8))
-        #expect(s.route == "gpu+amx/int8")
-        #expect(s.assignment == ProductAssignment(path: .native, gpu: 4096, amxColumns: 1024))
-        #expect(s.rows[M.Kernel(.amx, .int8)] == 1024)
-        // the GPU's columns are whole tiles: an edge inside one would overwrite the AMX's first columns
-        #expect((4096 - s.assignment.amxColumns) % 64 == 0)
+        #expect(s.route != "gpu+amx/int8")
+        #expect(s.assignment.amxColumns == 0)
+        #expect(s.rows[M.Kernel(.amx, .int8)] == nil)
     }
 
     /// **The ANE beside the GPU's int8 kernel, both reading the integers**: offered where the model has the line `ane/int8`, chosen
@@ -312,12 +381,56 @@ import Testing
         #expect(enc.route == "gpu" && enc.preparation > 0)
         // below the rounding's floor the activation keeps its fp32
         #expect(try solve(m, key(64, 64, 128, .bf16)).assignment.roundsActivation == false)
-        // **never the Standard's**: a process or a request without half precision computes its bf16 weights on fp32 activations,
-        // however much faster another Mac's bf16 kernel is — and its plan brings no rounding up
+        // **the Standard's too, where the map says it is faster** (P20, decided 2/11/2026): the ANE's absence is not a precision; its
+        // plan brings the rounding up when the map has its line
         let standard = try solve(m, key(4096, 4096, 4096, .bf16), ane: false)
-        #expect(!standard.assignment.roundsActivation && standard.route != "gpu/bf16act")
-        #expect(!CapacityPlan(model: m, allowsANE: false).resources.roundedActivations)
+        #expect(standard.assignment.roundsActivation && standard.route == "gpu/bf16act")
+        #expect(CapacityPlan(model: m, allowsANE: false).resources.roundedActivations)
         #expect(CapacityPlan(model: m).resources.roundedActivations)
+        // ... and only there: on a GPU whose rounded kernel is slower than its fp32 product (an M1 Pro's), the operand stays fp32
+        var slow = m
+        slow.lines[M.Kernel(.gpu, .bf16act)] = .init(t0: 0, rate: 1e12)
+        #expect(try solve(slow, key(4096, 4096, 4096, .bf16), ane: false).assignment.roundsActivation == false)
+        // a constraint that refuses the rounding is obeyed
+        let refused = try #require(CS.product(key(4096, 4096, 4096, .bf16), model: m,
+                                              constraints: CS.Constraints(allowsANE: false, allowsRounding: false)))
+        #expect(!refused.assignment.roundsActivation)
+    }
+
+    /// **The ANE beside the GPU's rounded rows on a bf16 weight read as published** (`gpu+ane/bf16act`): offered only where the model
+    /// has that pair's own sharing — the engines' `gpu+ane` was measured on `gpu/fp32` and is not its κ —, chosen when faster, with the
+    /// integers the engines run; never on an encoder, a process without the ANE, under the ANE's floor, or with the rounding refused.
+    @Test func theANESharesTheRoundedBF16WeightOnlyByItsOwnSharing() throws {
+        let rounded = M.Kernel(.gpu, .bf16act)
+        var m = machine(aneRate: 6e12)
+        m.lines[rounded] = .init(t0: 0, rate: 12e12)
+        m.preparation[.bf16] = [.widened: 1e-10, .bf16: 1e-11]
+        let bf16 = key(4096, 4096, 4096, .bf16)
+        #expect(try solve(m, bf16).route == "gpu/bf16act", "no sharing of its own: the GPU's rounded kernel alone")
+        // 6 / (12 + 6) of 4 096 rows = 1 365 → the units around it, 1 280 (5 units) and 1 536 (6): 1 280 ends both sides nearest
+        m.sharing["gpu/bf16act+ane/fp16"] = .init(overhead: 0, keep: [.gpu: 1, .ane: 1])
+        var s = try solve(m, bf16)
+        #expect(s.route == "gpu+ane/bf16act" && s.assignment.path == .bf16 && s.assignment.roundsActivation, "\(s.route)")
+        #expect(s.assignment.ane % NeuralEngine.rowUnit == 0 && s.assignment.ane > 0 && s.assignment.gpu + s.assignment.ane == 4096)
+        #expect(s.rows == [rounded: s.assignment.gpu, ane: s.assignment.ane])
+        #expect(abs(s.preparation - 4096 * 4096 * 1e-11) < 1e-9, "the bf16 copy, not a widening")
+        // the pair's answer is the plan's, and the assigned product is timed the same
+        #expect(CapacityPlan(model: m).assign(bf16) == s.assignment)
+        let timed = try #require(CS.product(assigned: s.assignment, key: bf16, model: m, constraints: constraints()))
+        #expect(timed.route == s.route && abs(timed.compute - s.compute) < 1e-12)
+        // a keep that ruins it: the GPU's rounded kernel alone again
+        m.sharing["gpu/bf16act+ane/fp16"] = .init(overhead: 0, keep: [.gpu: 0.3, .ane: 0.3])
+        #expect(try solve(m, bf16).route == "gpu/bf16act")
+        m.sharing["gpu/bf16act+ane/fp16"] = .init(overhead: 0, keep: [.gpu: 1, .ane: 1])
+        // never an encoder, never without the ANE, never under its floor, never with the rounding refused
+        #expect(try solve(m, key(4096, 4096, 4096, .bf16, phase: .encoding)).route == "gpu")
+        #expect(try solve(m, bf16, ane: false).route == "gpu/bf16act")
+        #expect(try solve(m, key(4096, 4096, 512, .bf16)).route == "gpu/bf16act")
+        s = try #require(CS.product(bf16, model: m, constraints: CS.Constraints(sustained: false, allowsRounding: false)))
+        #expect(!s.assignment.roundsActivation && s.route != "gpu+ane/bf16act")
+        // an ANE the judge refused is no candidate
+        let refused = try #require(CS.product(bf16, model: m, constraints: .init(sustained: false, excluded: [ane], allowsANE: true)))
+        #expect(refused.route == "gpu/bf16act")
     }
 
     // MARK: attention
@@ -422,8 +535,8 @@ import Testing
                     let a = try #require(b.product, "\(key)")
                     #expect(a.isRunnable(for: key), "\(family) \(variant) \(key): \(a)")
                     #expect(b.route == a.route(weight: format))
-                    // the encoders and the Standard take no ANE
-                    if c.phase == .encoding || variant == .standard { #expect(!a.usesANE, "\(family) \(variant) \(key)") }
+                    // the encoders take no ANE (the Standard does, as a render: 2/11/2026)
+                    if c.phase == .encoding { #expect(!a.usesANE, "\(family) \(variant) \(key)") }
                     // the same answer alone, as the plan of a process gives it
                     #expect(CS.product(key, model: m, constraints: .init(request: request, sustained: false))?.assignment == a)
                 case let .attention(s, keys, heads, kv, dim, cross):
@@ -433,6 +546,7 @@ import Testing
                     if !CS.triesFlash(family: family, cross: cross) { #expect(!a.usesFlash, "\(family) \(key)") }
                 }
             }
+            if variant == .standard { #expect(plan.blocks.contains { $0.product?.usesANE == true }, "the Standard's request allows the ANE") }
             #expect(plan.seconds == plan.blocks.reduce(0) { $0 + $1.seconds })
             let data = try JSONEncoder().encode(plan.blocks.compactMap(\.product))
             #expect(try JSONDecoder().decode([ProductAssignment].self, from: data) == plan.blocks.compactMap(\.product))

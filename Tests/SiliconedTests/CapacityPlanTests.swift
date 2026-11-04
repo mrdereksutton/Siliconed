@@ -171,7 +171,10 @@ import Testing
         #expect(rounded.resources.roundedActivations && rounded.resources.bf16Weights && !rounded.usesANE)
         #expect(rounded.assign(key(3840, 3840, 4096)) == ProductAssignment(path: .bf16, roundsActivation: true, gpu: 4096))
         #expect(rounded.assign(key(3840, 3840, 255)) == .gpuAlone(255))
-        #expect(rounded.assign(key(3840, 3840, 4096, .int8)) == .gpuAlone(4096), "the 8-bit weights keep the widened path")
+        #expect(rounded.resources.int8Weights && rounded.resources.q8Weights, "the 8-bit weights are read as published on the rounded operand")
+        #expect(rounded.assign(key(3840, 3840, 4096, .int8)) == ProductAssignment(path: .native, roundsActivation: true, gpu: 4096))
+        #expect(rounded.assign(key(3840, 3840, 4096, .q8)) == ProductAssignment(path: .native, roundsActivation: true, gpu: 4096))
+        #expect(rounded.assign(key(3840, 3840, 4096, .int8, phase: .encoding)) == .gpuAlone(4096), "an encoder's activation is never rounded")
         #expect(rounded.assign(key(3840, 3840, 4096, phase: .encoding)) == .gpuAlone(4096))
     }
 
@@ -199,11 +202,19 @@ import Testing
         #expect(both?.assign(AttentionKey(sequence: 4128, heads: 30, headDim: 128), flash: false).kernel == .split,
                 "a caller that does not try the flash kernel never gets it")
         let all = CapacityPlan.forcing(named: "amx,ane,bf16act")
-        #expect(all?.resources == .init(amx: true, ane: true, bf16Weights: true, roundedActivations: true))
-        // the ANE's rule is ahead of the AMX's on the products it takes; the AMX serves the rest
-        #expect(all?.assign(key(3840, 3840, 4096)) == ProductAssignment(path: .bf16, roundsActivation: true, gpu: 4096))
-        #expect(all?.assign(key(3840, 3840, 4096, .int8)) == ProductAssignment(gpu: 2048, ane: 2048))
-        #expect(all?.assign(key(3840, 3840, 300, .int8)) == .gpuAlone(300))
+        #expect(all?.resources == .init(amx: true, ane: true, bf16Weights: true, int8Weights: true, q8Weights: true, roundedActivations: true))
+        // the rounding's rule is ahead of the widened ANE's on the products it takes (a rounded activation has no widened route): on a bf16
+        // weight the ANE's half beside the GPU's rounded rows, the pair a Standard's map may choose; the AMX serves the rest
+        #expect(all?.assign(key(3840, 3840, 4096)) == ProductAssignment(path: .bf16, roundsActivation: true, gpu: 2048, ane: 2048))
+        #expect(all?.assign(key(3840, 3840, 300)) == ProductAssignment(path: .bf16, roundsActivation: true, gpu: 300), "under the ANE's rows: the GPU alone")
+        #expect(CapacityPlan.forcing(named: "bf16act")?.assign(key(3840, 3840, 4096)) == ProductAssignment(path: .bf16, roundsActivation: true, gpu: 4096))
+        #expect(all?.assign(key(3840, 3840, 4096, .int8)) == ProductAssignment(path: .native, roundsActivation: true, gpu: 4096))
+        #expect(all?.assign(key(3840, 3840, 300, .int8)) == ProductAssignment(path: .native, roundsActivation: true, gpu: 300))
+        #expect(all?.assign(key(3840, 3840, 200, .int8)) == .gpuAlone(200), "under the rounding's rows: the widened weight")
+        // `aneint8` with `bf16act`: the ANE reads the integers beside the GPU's rounded int8 kernel
+        let pair = CapacityPlan.forcing(named: "aneint8,bf16act")
+        #expect(pair?.assign(key(4096, 4096, 4096, .int8)) == ProductAssignment(path: .native, roundsActivation: true, gpu: 2048, ane: 2048))
+        #expect(pair?.assign(key(4096, 4096, 4096, .q8)) == ProductAssignment(path: .native, roundsActivation: true, gpu: 4096), "never Q8_0 on the ANE")
         #expect(all?.assign(key(3840, 3840, 1024, .int8, phase: .encoding)).amx ?? 0 > 0)
     }
 
@@ -252,6 +263,14 @@ import Testing
         #expect(ProductAssignment(path: .bf16, roundsActivation: true, gpu: 4096).isRunnable(for: k))
         #expect(!ProductAssignment(path: .bf16, roundsActivation: true, gpu: 4096).isRunnable(for: key(3840, 3840, 4096, phase: .encoding)))
         #expect(!ProductAssignment(path: .bf16, gpu: 2048, amx: 2048).isRunnable(for: k), "TensorGEMM takes the product whole")
+        // the ANE's last rows beside the GPU's rounded ones, its fp16 program on the bf16 copy
+        #expect(ProductAssignment(path: .bf16, roundsActivation: true, gpu: 2048, ane: 2048).isRunnable(for: k))
+        #expect(!ProductAssignment(path: .bf16, gpu: 2048, ane: 2048).isRunnable(for: k), "beside the GPU's rounded rows only")
+        #expect(!ProductAssignment(path: .bf16, roundsActivation: true, gpu: 0, ane: 4096).isRunnable(for: k), "the ANE alone is the widened route's")
+        #expect(!ProductAssignment(path: .bf16, roundsActivation: true, gpu: 2000, ane: 2096).isRunnable(for: k), "the ANE's unit")
+        #expect(!ProductAssignment(path: .bf16, roundsActivation: true, gpu: 1024, amx: 1024, ane: 2048).isRunnable(for: k), "no AMX beside it")
+        #expect(!ProductAssignment(path: .bf16, roundsActivation: true, gpu: 2048, ane: 2048).isRunnable(for: key(3840, 3840, 4096, phase: .encoding)))
+        #expect(!ProductAssignment(path: .bf16, roundsActivation: true, gpu: 2048, ane: 2048).isRunnable(for: key(3840, 3840, 4096, .int8)))
         #expect(!ProductAssignment(path: .bf16, gpu: 4096).isRunnable(for: key(3840, 3840, 4096, .int8)))
         #expect(!ProductAssignment(roundsActivation: true, gpu: 4096).isRunnable(for: k), "a widened weight is not rounded")
         let int8 = key(3840, 3840, 4096, .int8)
@@ -276,7 +295,12 @@ import Testing
         #expect(!ProductAssignment(path: .native, gpu: 2048, ane: 2048).isRunnable(for: key(4096, 4096, 4096, .int8, phase: .encoding)),
                 "no ANE on an encoder: P20")
         #expect(!ProductAssignment(path: .native, gpu: 2048, ane: 2048).isRunnable(for: key(4096, 4096, 4096, .q8)), "never Q8_0's blocks")
-        #expect(!ProductAssignment(path: .native, roundsActivation: true, gpu: 2048, ane: 2048).isRunnable(for: int8), "no rounded activation beside it")
+        #expect(ProductAssignment(path: .native, roundsActivation: true, gpu: 2048, ane: 2048).isRunnable(for: int8),
+                "beside the GPU's kernel on the rounded activation: the ANE rounds its own operand to fp16")
+        #expect(!ProductAssignment(path: .native, roundsActivation: true, gpu: 0, ane: 4096).isRunnable(for: int8),
+                "a rounded activation is the GPU's kernel's: the ANE alone does not take it")
+        #expect(!ProductAssignment(path: .native, roundsActivation: true, gpu: 4096, amxColumns: 1024).isRunnable(for: int8),
+                "no AMX columns beside a rounded activation")
         #expect(!ProductAssignment(path: .native, gpu: 1024, amx: 1024, ane: 2048).isRunnable(for: int8), "no AMX rows beside a native weight")
         #expect(ProductAssignment(path: .native, gpu: 4096, amxColumns: 1024).isRunnable(for: int8), "the AMX's columns alone still run")
         #expect(!ProductAssignment(path: .native, gpu: 2048, ane: 2048, amxColumns: 1024).isRunnable(for: int8), "ANE rows and AMX columns")
@@ -384,6 +408,7 @@ import Testing
         #expect(ProductAssignment(gpu: 0, ane: 10).engines == "ane")
         #expect(ProductAssignment(path: .bf16, gpu: 10).route(weight: .bf16) == "gpu/bf16")
         #expect(ProductAssignment(path: .bf16, roundsActivation: true, gpu: 10).route(weight: .bf16) == "gpu/bf16act")
+        #expect(ProductAssignment(path: .bf16, roundsActivation: true, gpu: 10, ane: 256).route(weight: .bf16) == "gpu+ane/bf16act")
         #expect(ProductAssignment(path: .native, gpu: 10).route(weight: .int8) == "gpu/int8")
         #expect(ProductAssignment(path: .native, gpu: 10, amxColumns: 64).route(weight: .q8) == "gpu+amx/q8")
     }
@@ -402,9 +427,10 @@ import Testing
     // MARK: the memory need asks the same questions
 
     @Test func theNeedAsksThePlanWhatTheEngineAsksIt() {
-        // An AMX worth the GPU's third: the three engines share the products (the AMX beside the ANE alone is not a candidate here).
+        // An AMX strong enough that the three engines beat gpu+ane by more than `aneOverAMX` (8.7 against 6.6 TFLOP/s once shared):
+        // the three share the products (the AMX beside the ANE alone is not a candidate here).
         var model = machine()
-        model.lines[amx] = .init(t0: 0, rate: 2.5e12)
+        model.lines[amx] = .init(t0: 0, rate: 5e12)
         let plan = CapacityPlan(model: model)
         let products = [(m: 4128, k: 3840, n: 3840), (m: 4128, k: 3840, n: 10240), (m: 1056, k: 3840, n: 3840)]
         let terms = MemoryNeed.gemm("t", products: products, plan: plan)

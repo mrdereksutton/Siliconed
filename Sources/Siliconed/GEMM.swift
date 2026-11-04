@@ -142,6 +142,10 @@ package final class GEMM {
     /// every product widens as before. A caller asks `Artifact.stage` for the bf16 weight and, given an assignment of the path,
     /// calls `linear(a:bf16:…)`.
     package private(set) var tensor: TensorGEMM?
+    /// A render's denoiser under its resolved switch (`Accelerators`): the ANE where it is on and brought up, fp32 where it is off.
+    package convenience init(plan: CapacityPlan = EngineSettings.effective.plan, accelerators: Accelerators) throws {
+        try self.init(plan: plan, neuralEngine: accelerators.neuralEngine, accelerators: accelerators.isOn)
+    }
     /// The Neural Engine on the last rows of a widened product; `nil` when the plan does not bring it up (or this process does not).
     package private(set) var neuralEngine: NeuralEngine?
     /// **The plan this GEMM runs under** (`CapacityPlan`): the process's (`EngineSettings.plan`), without the ANE for an encoder or
@@ -167,24 +171,35 @@ package final class GEMM {
     package let bf16Activations: Bool
     /// Products that went through the bf16 activation path in this process: a check says what ran.
     package static let roundedProducts = Mutex<Int>(0)
+    /// Products that read a published int8 weight as it is (`gemm_int8`, `WeightProducts.linear`) in this process: a check
+    /// says the route it judged was the one taken.
+    package static let int8Products = Mutex<Int>(0)
+    /// Products that read a K-quant's blocks as published (`gpu/q4kact`) in this process.
+    package static let kquantProducts = Mutex<Int>(0)
 
     /// - Parameter plan: the engines it brings up are built (`CapacityPlan.Resources`: the conductor, `TensorGEMM`, the Neural
     ///   Engine), and it answers each product. The process's by default; a probe or a check passes its own.
     /// - Parameter phase: the encoders' products (`.encoding`) never take the ANE or a rounded activation.
-    /// - Parameter neuralEngine: this process may bring the ANE up (the Standard's and a refusing request's may not).
+    /// - Parameter neuralEngine: this process may bring the ANE up (a render whose map gives it nothing, or with the accelerators off,
+    ///   does not).
+    /// - Parameter accelerators: false, the plan computed in fp32 (`CapacityPlan.restricted(accelerators:)`): no ANE, no operand
+    ///   rounded on the GPU — the app's « Accelerators » switch off.
     package init(plan base: CapacityPlan = EngineSettings.effective.plan,
                  phase: CapacityClasses.Phase = .denoising,
-                 neuralEngine allowed: Bool = true) throws {
+                 neuralEngine allowed: Bool = true, accelerators: Bool = true) throws {
         let (device, queue) = try SystemGPU.open()
         self.device = device
         self.queue = queue
-        let plan = base.restricted(allowingANE: allowed && phase == .denoising)
+        let plan = base.restricted(accelerators: accelerators).restricted(allowingANE: allowed && phase == .denoising)
         self.plan = plan
         self.phase = phase
         let r = plan.resources
         if r.amx { conductor = Conductor(queue: queue) }
         if r.usesTensor {
             tensor = TensorGEMM(device: device, queue: queue, roundingActivations: r.roundedActivations)
+            // The tile each matmul2d kernel runs is the map's (`MatmulTile`); none measured: the standard ones.
+            for (kernel, tile) in plan.model?.tiles ?? [:] { tensor?.tiles.use(tile, for: kernel) }
+            for (kernel, tile) in plan.model?.thinTiles ?? [:] { tensor?.tiles.use(tile, for: kernel, thin: true) }
         }
         self.bf16Activations = tensor?.roundsActivations == true
         tensorBF16 = tensor != nil && r.bf16Weights

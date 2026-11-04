@@ -61,10 +61,15 @@ package struct MemoryNeed: Sendable, Equatable {
         /// puts at each product — the rows each engine takes, hence the AMX's workspace and the ANE's surfaces, are the plan's answers,
         /// computed here before the first computation. The process's by default (`EngineSettings.plan`); a test hands its own.
         package var plan = EngineSettings.effective.plan
-        /// **The denoiser may take the Neural Engine** (`Request.neuralEngine` against the plan's): its surfaces are charged to the
-        /// phases whose products it takes — the DiT's, Krea 2's fusion —, never to an encoder's, which never takes it. The plan's by
-        /// default: what a render not yet chosen may do.
-        package var neuralEngine = EngineSettings.effective.plan.usesANE
+        /// **What the denoiser may compute on** (`Request.accelerators` against the plan's): the Neural Engine's surfaces are charged
+        /// to the phases whose products it takes — the DiT's, Krea 2's fusion —, never to an encoder's, which never takes it; off, the
+        /// plan computed in fp32. The plan's by default: what a render not yet chosen may do.
+        package var accelerators = Accelerators.process
+        /// The denoiser may take the Neural Engine (`accelerators`).
+        package var neuralEngine: Bool {
+            get { accelerators.neuralEngine }
+            set { accelerators = newValue ? .on(neuralEngine: true) : .on(neuralEngine: false) }
+        }
         /// The images of the batch (`Engine.renderBatch`): every latent waits for the decodings, every
         /// image decoded waits for the batch's end.
         package var batch = 1
@@ -132,8 +137,9 @@ package struct MemoryNeed: Sendable, Equatable {
             }
         }
 
-        /// The plan of the denoiser's products: the process's, without the ANE when the request refuses it.
-        package var ditPlan: CapacityPlan { plan.restricted(allowingANE: neuralEngine) }
+        /// The plan of the denoiser's products: the process's, without the ANE when the render does not bring it up, in fp32 when
+        /// the accelerators are off.
+        package var ditPlan: CapacityPlan { plan.forDenoiser(accelerators) }
         /// The plan of an encoder's products: never the ANE.
         package var encoderPlan: CapacityPlan { plan.restricted(allowingANE: false) }
 
@@ -228,14 +234,15 @@ package struct MemoryNeed: Sendable, Equatable {
     /// it: cut by heads (`HeadSplitAttention`: its host arena, ours, and MPSGraph's copy of the GPU
     /// heads' queries) or in one MPSGraph SDPA (its queries' copy, and its causal mask in our pages). `assignment`: the plan's
     /// answer for the attention's class (its CPU heads exactly), `.graph` for one the plan does not speak of (an encoder's).
-    /// The flash kernel holds no more than the graph's terms. The tiled kernels (`tiles`, `tiles16`) hold their own buffers instead.
+    /// The flash kernel holds no more than the graph's terms. The tiled kernels (`tiles`, `tiles16`, `tilesbf16`) hold their own buffers
+    /// instead (the fused form, its operands' copies alone).
     package static func attention(_ name: String, heads: Int, rows: Int, keys: Int, headDim: Int, causal: Bool,
                                   assignment: AttentionAssignment = .graph, threads: Int, group: Int = 1) -> [Term] {
         // The three stages by tiles (`TiledAttention`): no graph is built — the scores of a pass, and for fp16 the probabilities and the
         // half copies of q, k and v, private buffers of ours, each a term of its own (`TiledAttention.bytes`, the function the kernel sizes by).
         if assignment.usesTiles {
             let b = TiledAttention.bytes(heads: heads, kvHeads: max(1, heads / max(1, group)), sequence: rows, keys: keys, headDim: headDim,
-                                         precision: assignment.tilePrecision)
+                                         precision: assignment.tilePrecision, tile: assignment.tile)
             return [Term("\(name) tiles scores", b.scores), Term("\(name) tiles probabilities", b.probabilities),
                     Term("\(name) tiles half operands", b.operands)]
         }
@@ -258,7 +265,7 @@ package struct MemoryNeed: Sendable, Equatable {
             if assignment.gpuUsesFlash { return [host] }
             if assignment.gpuUsesTiles {
                 let b = TiledAttention.bytes(heads: heads, kvHeads: max(1, heads / max(1, group)), sequence: rows, keys: keys, headDim: headDim,
-                                             precision: assignment.gpuTilePrecision, computed: gpu)
+                                             precision: assignment.gpuTilePrecision, computed: gpu, tile: assignment.tile)
                 return [host, Term("\(name) tiles scores", b.scores), Term("\(name) tiles probabilities", b.probabilities),
                         Term("\(name) tiles half operands", b.operands)]
             }

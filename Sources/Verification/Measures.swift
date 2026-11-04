@@ -123,15 +123,86 @@ extension Judge {
 ///     run in bf16 (`HalfPrecisionReference`); the tally then says what the ANE computed.
 ///   - **`--bf16-activations`**: the DiT's products on an activation rounded to bf16, the weights as published, the sums and the
 ///     output fp32, every product of 256 rows or more. Judged like the ANE's, against the reference run in bf16: invariant 3, no
-///     further from the fp64 witness than diffusers in bf16, + 25 %.
+///     further from the fp64 witness than diffusers in bf16, + 25 %. **With `--neural-engine`**, the pair a Standard's map may choose:
+///     half the rows of every bf16 product of 512 rows or more to the ANE's fp16 program on the same bf16 copy, beside the GPU's
+///     rounded rows (`gpu+ane/bf16act`).
+///   - **`--bf16-attention`**: the DiT's attention on bf16 operands (Q, K, V and the probabilities rounded once, the softmax and the
+///     sums fp32), in the fused form at the first candidate tile — every attention the plan speaks of. Judged the same way.
+///   - **`--fp16-attention`**: the same on fp16 operands (`tiles16`) — what a render takes at every version where its map chooses
+///     it, the Standard's included (`CapacitySolver.Constraints.allowsHalf`, decided 3/11/2026). Judged the same way: against the
+///     reference run in bf16, + 25 %, as the ANE's fp16 products.
 package enum HalfPrecisionRun {
-    package static func enable(neuralEngine: Bool, bf16Activations: Bool) throws {
+    package static func enable(neuralEngine: Bool, bf16Activations: Bool, bf16Attention: Bool = false, fp16Attention: Bool = false) throws {
         do {
-            try EngineSettings.designate(plan: .forcing(neuralEngine: neuralEngine, bf16Activations: bf16Activations))
+            try EngineSettings.designate(plan: .forcing(neuralEngine: neuralEngine, bf16Activations: bf16Activations,
+                                                        tiles16: fp16Attention, tilesbf16: bf16Attention,
+                                                        fused: bf16Attention || fp16Attention))
         } catch {
-            let flags = [neuralEngine ? "--neural-engine" : nil, bf16Activations ? "--bf16-activations" : nil].compactMap { $0 }
+            let flags = [neuralEngine ? "--neural-engine" : nil, bf16Activations ? "--bf16-activations" : nil,
+                         bf16Attention ? "--bf16-attention" : nil, fp16Attention ? "--fp16-attention" : nil].compactMap { $0 }
             throw UsageError("\(flags.joined(separator: " ")): the engine's settings were read before it")
         }
+    }
+}
+
+/// **`--no-accelerators`: a render's plan with the « Accelerators » switch off.** The check runs under this Mac's map (`SILICONED_MAP`,
+/// a report of this Mac and this build) restricted to fp32 (`CapacityPlan.restricted(accelerators: false)`): the routes the map
+/// chooses — the AMX's rows, a weight read as published, the tiled attention — but no ANE and no operand rounded below fp32, judged by
+/// the fp32 rule. Without such a map the defaults run, which are fp32 already: the flag changes nothing, and says so.
+package enum FP32Run {
+    package static func enable() throws {
+        guard let named = ProcessInfo.processInfo.environment["SILICONED_MAP"], !named.isEmpty, named != "1",
+              let data = FileManager.default.contents(atPath: named), let report = Diagnostic.Report.read(data), report.isCurrent
+        else {
+            print("--no-accelerators: no map of this Mac and this build in SILICONED_MAP — the defaults run, fp32 already")
+            return
+        }
+        let plan = report.plan().restricted(accelerators: false)
+        do { try EngineSettings.designate(plan: plan) }
+        catch { throw UsageError("--no-accelerators: the engine's settings were read before it") }
+        print("--no-accelerators: this Mac's map, fp32 throughout (\(plan.identity))")
+    }
+}
+
+/// **The int8 route of a published int8 weight** (`gemm_int8`). A render of a map holding weights published as int8 with a scale
+/// per column or per tensor (a Compact from Comfy-Org's int8 convrot) reads them as published wherever its map says the int8
+/// kernel wins, else widened; `siliconed check` runs the defaults, which widen. A DiT stage on such a map therefore evaluates along
+/// the int8 route (`plan`), says how many products read the integers (`account`), and judges its output once more widened,
+/// by the same rule: both routes a render can take. Under `--bf16-activations` the process's plan reads them already, on the rounded
+/// activation (`gpu/int8act`), as it reads a GGUF Q8_0's blocks (`gpu/q8act`): this route then stands aside.
+package struct Int8Route {
+    /// The plan the DiT under test runs under: `nil` when the process's plan already reads the integers (`SILICONED_PLAN=int8`).
+    package let plan: CapacityPlan?
+    /// The process's plan does not read the integers: the stage judges the widened route too.
+    package var judgesWidened: Bool { plan != nil }
+    /// The engine's neural-engine flag for the DiT built on `plan`.
+    package var neuralEngine: Bool { (plan ?? EngineSettings.effective.plan).usesANE }
+    private let before: Int
+
+    /// `nil` when `artifact` publishes no int8 weight `gemm_int8` reads.
+    package init?(_ artifact: Artifact, _ invocation: Invocation) {
+        guard artifact.tensors.values.contains(where: { $0.dtype == .int8 && $0.scale != nil && $0.scale?.block == nil }) else {
+            return nil
+        }
+        plan = Self.plan(invocation)
+        before = GEMM.int8Products.withLock { $0 }
+    }
+
+    /// The process's plan with `int8`: the invocation's half-precision flags, or the developer's `SILICONED_PLAN` (which has the
+    /// last word), plus the published integers read as they are, whatever this Mac's map says.
+    private static func plan(_ invocation: Invocation) -> CapacityPlan? {
+        if EngineSettings.effective.plan.resources.int8Weights { return nil }
+        if let named = ProcessInfo.processInfo.environment["SILICONED_PLAN"], !named.isEmpty,
+           let forced = CapacityPlan.forcing(named: named + ",int8") { return forced }
+        return .forcing(neuralEngine: invocation.neuralEngine, bf16Activations: invocation.bf16Activations,
+                        tiles16: invocation.fp16Attention, tilesbf16: invocation.bf16Attention,
+                        fused: invocation.bf16Attention || invocation.fp16Attention, int8: true)
+    }
+
+    /// The products that read the published integers since the route was taken: none fails, the route was not crossed.
+    package func account(_ report: Report) {
+        let read = GEMM.int8Products.withLock { $0 } - before
+        report.add(Judge.holds("gemm_int8", read > 0, note: "\(read) products on the published integers"))
     }
 }
 
@@ -146,23 +217,53 @@ package enum NeuralEngineRun {
         }
         // Under `SILICONED_PLAN=aneint8` the integers of a published int8 weight are the program's input: the verdict says how many
         // of the products read them so.
-        let integers = NeuralEngine.int8Tally.withLock { $0 }
+        // With `--bf16-activations` the ANE reads a bf16 weight's copy beside the GPU's rounded rows (`gpu+ane/bf16act`): said too.
+        let integers = NeuralEngine.int8Tally.withLock { $0 }, copies = NeuralEngine.bf16Tally.withLock { $0 }
         report.add(Judge.holds("Neural Engine", true,
                                note: "half the rows of \(handed - givenBack) products"
                                    + (integers > 0 ? ", \(integers) of them on the weight's integers" : "")
+                                   + (copies > 0 ? ", \(copies) of them on the bf16 weight beside the GPU's rounded rows" : "")
                                    + (givenBack > 0 ? ", \(givenBack) given back to the GPU" : "")))
     }
 }
 
+package enum BF16AttentionRun {
+    /// How many attentions ran on bf16 operands. None (no Metal 4, a refused compiler, a shape the kernel does not take): skipped.
+    package static func account(_ report: Report) throws {
+        let runs = TiledAttention.bf16Runs.withLock { $0 }
+        guard runs > 0 else {
+            throw Skip("--bf16-attention: no attention ran on bf16 operands on this Mac (Metal 4 missing, or the kernel refused)")
+        }
+        report.add(Judge.holds("bf16 attention", true, note: "\(runs) attentions on bf16 operands"))
+    }
+}
+
+package enum FP16AttentionRun {
+    /// How many attentions ran on fp16 operands. None (no Metal 4, a refused compiler, a shape the kernel does not take): skipped.
+    package static func account(_ report: Report) throws {
+        let runs = TiledAttention.fp16Runs.withLock { $0 }
+        guard runs > 0 else {
+            throw Skip("--fp16-attention: no attention ran on fp16 operands on this Mac (Metal 4 missing, or the kernel refused)")
+        }
+        report.add(Judge.holds("fp16 attention", true, note: "\(runs) attentions on fp16 operands"))
+    }
+}
+
 package enum BF16ActivationRun {
-    /// How many products rounded their activation. None (no Metal 4, a refused compiler): skipped, since what
-    /// would be judged is the fp32 path against a looser bar.
+    /// How many products rounded their activation, and how many read a published 8-bit weight (a Compact's or a Light's: under
+    /// `--bf16-activations` they are read as published on the rounded activation, `gpu/int8act` or `gpu/q8act`, and a Light's Q4_K and
+    /// Q5_K blocks `gpu/q4kact` (its Q6_K widened) — a rounded activation
+    /// has no widened route). None rounded (no Metal 4, a refused compiler): skipped, since what would be judged is the fp32 path against
+    /// a looser bar.
     package static func account(_ report: Report) throws {
         let rounded = GEMM.roundedProducts.withLock { $0 }
         guard rounded > 0 else {
             throw Skip("--bf16-activations: no product rounded its activation on this Mac (Metal 4 missing, or the kernel refused)")
         }
-        report.add(Judge.holds("bf16 activations", true, note: "\(rounded) products on a rounded operand"))
+        let integers = GEMM.int8Products.withLock { $0 }, kquants = GEMM.kquantProducts.withLock { $0 }
+        report.add(Judge.holds("bf16 activations", true, note: "\(rounded) products on a rounded operand"
+                                   + (integers > 0 ? ", \(integers) products on published 8-bit weights" : "")
+                                   + (kquants > 0 ? ", \(kquants) on published K-quant blocks" : "")))
     }
 }
 

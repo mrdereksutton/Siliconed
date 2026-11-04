@@ -12,7 +12,15 @@
     krea2.py witness-step --size 512 --step 1  a WHOLE evaluation in float64, at step i      -> witness-krea2-f64-<size>-step<i>
     krea2.py draw --size 512 --step 1 --jitter N   another fp32 draw of step i               -> draw-krea2-<size>-step<i>-jitterN
                                                (--variant compact|light: step 0 only        -> draw-krea2-<variant>-<size>-step0-jitterN)
+    krea2.py draw --size 512 --step 0 --permute N [N...] [--permute-kind group|full]   fp32 draws whose summation
+                                               order is drawn (the residual stream permuted) -> draw-krea2-<size>-step<i>-perm<kind>N
     krea2.py vae-witness --size 512            the decoder in float64                        -> witness-krea2-vae-f64-<size>
+    krea2.py img2img --size 512 [--variant compact]   img2img at strength 0.6: the picture encoded, the start, the
+                                               truncated loop (steps 3-7)                    -> goldens-krea2-img2img[-<variant>]-<size>
+    krea2.py img2img-witness --size 512 --step 3 4 5 6 7 [--variant compact]   an img2img step in float64
+                                               -> witness-krea2-f64-img2img[-<variant>]-<size>-step<i>
+    krea2.py img2img-draw --size 512 --step 3 --permute N [N...] [--variant compact]   the same step's summation
+                                               orders drawn, like draw --permute -> draw-krea2-img2img[-<variant>]-<size>-step<i>-permgroupN
     krea2.py all [--size 512 1024 768x512] [--draws N]   all of the above (see below), dependencies in order
 
 Goldens go in `<goldens>/krea2/`; `--goldens DIR`, else `SILICONED_GOLDENS`, else `./goldens`. Each stage
@@ -210,9 +218,10 @@ def stage_text(prompt: str = PROMPT, length: int = MAX_SEQUENCE_LENGTH, stem: st
 
 # ------------------------------------------------------------------ the DiT
 
-def load_transformer(dtype: torch.dtype = torch.float32, variant: str | None = None):
+def load_transformer(dtype: torch.dtype = torch.float32, variant: str | None = None, streamed: bool = True):
     """The DiT, its blocks streamed. With a `variant`, from the Compact's or the Light's published file,
-    dequantized by its publisher's code (`quantized.Variant`, the two tensors Krea hid in its GGUF left out)."""
+    dequantized by its publisher's code (`quantized.Variant`, the two tensors Krea hid in its GGUF left out).
+    `streamed=False`: the blocks stay on `meta`, for a caller that loads them itself (`model.published`)."""
     from diffusers import Krea2Transformer2DModel
     config = Krea2Transformer2DModel.load_config(snap() / "transformer")
     with torch.device("meta"):
@@ -227,7 +236,8 @@ def load_transformer(dtype: torch.dtype = torch.float32, variant: str | None = N
     resident = {k: checkpoint.tensor(k, dtype) for k in checkpoint.keys if not k.startswith("transformer_blocks.")}
     model.load_state_dict(resident, strict=False, assign=True)
     for i, block in enumerate(model.transformer_blocks):
-        Streamed(block, f"transformer_blocks.{i}.", checkpoint, dtype)
+        if streamed:
+            Streamed(block, f"transformer_blocks.{i}.", checkpoint, dtype)
     return model
 
 
@@ -387,6 +397,97 @@ def stage_vae(size: str):
     common.save_preview(image[0], OUT / f"reference-krea2-{name}.png")
 
 
+# ------------------------------------------------------------------ img2img
+
+def stage_img2img(size: str):
+    """**img2img.** diffusers 0.41 has no img2img pipeline for Krea 2: the recipe is diffusers' own img2img
+    construction (`QwenImageImg2ImgPipeline`: the same VAE, the same scheduler class) on `Krea2Pipeline`'s noise,
+    schedule and loop, each piece the reference's code:
+
+        z0        = encode_vae_image(picture, sample_mode="argmax")   the posterior mean, (z - mean) / std
+                    (Anima's modular block: Krea's VAE is Qwen-Image's, the same weights; the engine takes the mean too)
+        timesteps = get_timesteps(N, strength)                           the full schedule, then truncated
+        x_s       = scheduler.scale_noise(z0, timesteps[:1], eps)        eps: Krea2Pipeline's own noise for the seed
+        then the trajectory's loop from x_s, steps t_start ... N - 1
+
+    The noise is the txt2img one (`prepare_latents`), so that strength 1 is txt2img bit for bit, as in the engine.
+    With `--variant`, the Standard's start (the same picture, z0, noise and x_s) through the variant's DiT."""
+    import types
+    from diffusers.modular_pipelines.anima.encoders import encode_vae_image
+    from diffusers.pipelines.qwenimage.pipeline_qwenimage_img2img import QwenImageImg2ImgPipeline
+    resolution = int(size)
+    grid = resolution // 16
+    embeds, mask = text_inputs()
+    standard = f"goldens-krea2-img2img-{resolution}"
+    if VARIANT:
+        start = read(standard, f"krea2.py img2img --size {resolution}")
+        picture, z0, eps = start["image"], start["z0"], start["eps"]
+    else:
+        from diffusers import AutoencoderKLQwenImage
+        picture = common.start_picture(resolution, resolution)
+        vae = AutoencoderKLQwenImage.from_pretrained(snap() / "vae", torch_dtype=torch.float32).eval()
+        z0 = encode_vae_image(picture[None], vae, None, torch.device("cpu"), torch.float32, sample_mode="argmax")[0, :, 0]
+        del vae
+    model = load_transformer(variant=VARIANT)
+    pipe = make_pipeline(transformer=model)
+    scheduler = scheduler_for(pipe)
+    timesteps, t_start, sigma_s = common.img2img_truncation(
+        lambda s, n, strength: QwenImageImg2ImgPipeline.get_timesteps(types.SimpleNamespace(scheduler=s), n, strength, "cpu"),
+        scheduler, STEPS, common.IMG2IMG_STRENGTH)
+    if not VARIANT:
+        _, eps = initial(pipe, resolution, resolution)
+    packed_noise = pipe._pack_latents(eps[None], 1, 16, resolution // 8, resolution // 8)
+    packed = scheduler.scale_noise(pipe._pack_latents(z0[None], 1, 16, resolution // 8, resolution // 8), timesteps[:1], packed_noise)
+    if VARIANT:
+        assert torch.equal(unpack(pipe, packed, resolution), start["x_s"]), "the Standard's x_s is not recomputed bit for bit"
+    positions = pipe.prepare_position_ids(embeds.shape[1], grid, grid, torch.device("cpu"))
+    payload = {"image": picture, "z0": z0.clone(), "eps": eps.clone(), "x_s": unpack(pipe, packed, resolution).clone(),
+               "sigmas": scheduler.sigmas.float(), "t_start": torch.tensor([float(t_start)]), "sigma_s": torch.tensor([sigma_s])}
+    print(f"  strength {common.IMG2IMG_STRENGTH}: t_start {t_start}, sigma_s {sigma_s:.6f}, {len(timesteps)} evaluations")
+    for k, t in enumerate(timesteps):
+        i = t_start + k
+        timestep = (t / scheduler.config.num_train_timesteps).expand(1).float()
+        velocity = model(hidden_states=packed, encoder_hidden_states=embeds, timestep=timestep,
+                         position_ids=positions, encoder_attention_mask=mask, return_dict=False)[0]
+        packed = scheduler.step(velocity, t, packed, return_dict=False)[0]
+        payload[f"velocity_{i}"] = unpack(pipe, velocity, resolution).clone()
+        payload[f"latent_{i + 1}"] = unpack(pipe, packed, resolution).clone()
+        print(f"  step {i}: sigma = {float(scheduler.sigmas[i]):.4f}", flush=True)
+    payload["latent_final"] = unpack(pipe, packed, resolution).clone()
+    write(quantized.stem(standard, VARIANT), payload, {
+        "strength": common.IMG2IMG_STRENGTH, "t_start": t_start, "sigma_s": sigma_s, "evaluations": len(timesteps),
+        "picture": f"inputs/{common.START_PICTURE}, covered and center-cropped, LANCZOS",
+        "recipe": "QwenImageImg2ImgPipeline.get_timesteps, scale_noise; Anima's encode_vae_image (argmax)",
+        **({"inputs": standard, "weights": model.published.describe()} if VARIANT else {})})
+
+
+def img2img_step_inputs(resolution: int, step: int):
+    """The inputs of step `step` of the img2img (`step_inputs`' for the img2img golden): its latent at that step (`x_s`
+    at `t_start`), the timestep as the reference receives it, the version's fused text — `txt_in` is a DiT layer, the
+    variant's own."""
+    golden = read(quantized.stem(f"goldens-krea2-img2img-{resolution}", VARIANT),
+                  f"krea2.py img2img --size {resolution}{' --variant ' + VARIANT if VARIANT else ''}")
+    t_start = int(golden["t_start"][0])
+    if not t_start <= step < STEPS:
+        raise SystemExit(f"img2img --step {step}: the img2img runs steps {t_start} to {STEPS - 1}")
+    latent = golden["x_s" if step == t_start else f"latent_{step}"]
+    timestep = ((golden["sigmas"][step] * 1000).float() / 1000).reshape(1)
+    text = read(quantized.stem(f"goldens-krea2-dit-{resolution}", VARIANT), f"krea2.py dit --size {resolution}")["txt_in_out"]
+    return latent, timestep, text
+
+
+def stage_img2img_witness(size: str, step: int):
+    """**The float64 reference of an img2img step**: the whole evaluation in double (`evaluate64`) on the img2img
+    golden's latent at step `step` (its `x_s` at `t_start`), the timestep as the reference receives it, the fp32
+    `txt_in` output. With `--variant`, the variant's weights on the variant's golden latents."""
+    resolution = int(size)
+    latent, timestep, text = img2img_step_inputs(resolution, step)
+    velocity, _ = evaluate64(latent, timestep, text, resolution, resolution)
+    path = OUT / f"{quantized.stem(f'witness-krea2-f64-img2img-{resolution}', VARIANT)}-step{step}.safetensors"
+    save_file({"velocity": velocity}, str(path))
+    print(f"-> {path}")
+
+
 # ------------------------------------------------------------------ the float64 witnesses
 
 def patch64():
@@ -535,6 +636,152 @@ def stage_draw(size: str, step: int, jitter: int):
     print(f"-> {path}")
 
 
+# ------------------------------------------------------------------ the summation-order draws
+#
+# A one-ulp jitter of the latent moves the inputs, not the arithmetic: every product still sums its terms in
+# the order torch's BLAS chose once. Here the arithmetic itself is drawn. The residual stream's channels are
+# reordered everywhere at once - the rows of every linear that writes it, the columns of every linear that
+# reads it, every per-channel vector (norm weights, modulation tables, the time embedding the final layer adds)
+# - so that the model computes the SAME function, its sums over the hidden dimension (q, k, v, gate, ff.gate,
+# ff.up, time_mod_proj, final_layer.linear, the RMS norms) taken in another order. Untouched: the head space
+# (to_q/k/v outputs, norm_q/k, RoPE, the gate's product, to_out's input), the SwiGLU's hidden space, text_fusion
+# and txt_in's first linear. The boundaries are put back in the reference's order before they are written.
+#
+# Two families, both defined here to the bit so that the engine can draw the same ones:
+#   group  whole groups of 256 contiguous channels permuted: the engine's int8 route rotates each group of 256
+#          (convrot), and a group permutation commutes with that rotation, so the engine can reproduce it;
+#   full   any permutation of the channels.
+# A permutation is Fisher-Yates driven by SplitMix64 (`fisher_yates`); `perm[c]` is the reference channel that
+# permuted channel `c` carries: x_permuted = x[..., perm].
+
+MASK64 = (1 << 64) - 1
+PERMUTATION_GROUP = 256
+
+
+def splitmix64(state: int) -> tuple[int, int]:
+    """SplitMix64 (Steele, Lea & Flood, 2014): the next state and its output, everything modulo 2^64."""
+    state = (state + 0x9E3779B97F4A7C15) & MASK64
+    z = state
+    z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & MASK64
+    z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & MASK64
+    return state, z ^ (z >> 31)
+
+
+def fisher_yates(n: int, seed: int) -> torch.Tensor:
+    """[0, n) shuffled: the generator's state starts at `seed`; for i = n-1 down to 1, j = (next output) mod (i + 1),
+    a[i] and a[j] swapped. (The modulo's bias, below 2^-50 here, is part of the definition.)"""
+    a, state = list(range(n)), seed & MASK64
+    for i in range(n - 1, 0, -1):
+        state, r = splitmix64(state)
+        j = r % (i + 1)
+        a[i], a[j] = a[j], a[i]
+    return torch.tensor(a, dtype=torch.long)
+
+
+def residual_permutation(dim: int, kind: str, seed: int, group: int = PERMUTATION_GROUP) -> torch.Tensor:
+    """The permutation of `seed` in its family: `full` shuffles the `dim` channels, `group` the `dim / group` groups
+    (each group keeps its inner order). Seed 0 is the identity in both: the draw loop with nothing moved."""
+    if seed == 0:
+        return torch.arange(dim)
+    if kind == "full":
+        return fisher_yates(dim, seed)
+    assert dim % group == 0, f"{dim} channels are not whole groups of {group}"
+    return (fisher_yates(dim // group, seed)[:, None] * group + torch.arange(group)).flatten()
+
+
+# What each tensor of the model does with the residual stream, by name (a block's below `transformer_blocks.<i>.`).
+# Anything not listed raises: a tensor forgotten would make the draw a different model, not another rounding.
+_ROWS = {"img_in.weight", "img_in.bias", "time_embed.linear_2.weight", "time_embed.linear_2.bias",
+         "txt_in.linear_2.weight", "txt_in.linear_2.bias", "final_layer.norm.weight",
+         "block:norm1.weight", "block:norm2.weight", "block:attn.to_out.0.weight", "block:ff.down.weight"}
+_COLUMNS = {"final_layer.linear.weight", "block:attn.to_q.weight", "block:attn.to_k.weight", "block:attn.to_v.weight",
+            "block:attn.to_gate.weight", "block:ff.gate.weight", "block:ff.up.weight"}
+_TABLES = {"final_layer.scale_shift_table", "block:scale_shift_table"}      # [n, d]: n per-channel vectors
+_UNTOUCHED = {"time_embed.linear_1.weight", "time_embed.linear_1.bias", "txt_in.norm.weight", "txt_in.linear_1.weight",
+              "txt_in.linear_1.bias", "final_layer.linear.bias", "block:attn.norm_q.weight", "block:attn.norm_k.weight"}
+
+
+def permuted(key: str, t: torch.Tensor, perm: torch.Tensor) -> torch.Tensor:
+    """`t`, the model's tensor `key`, as the permuted model holds it (a fresh tensor, or `t` itself when untouched)."""
+    name = "block:" + key.split(".", 2)[2] if key.startswith("transformer_blocks.") else key
+    d = perm.numel()
+    if name in _ROWS:
+        return t[perm].contiguous()
+    if name in _COLUMNS:
+        return t[:, perm].contiguous()
+    if name in _TABLES:
+        return t[:, perm].contiguous()
+    if name == "time_mod_proj.weight":     # [6d, d]: reads temb (permuted), writes six per-channel vectors
+        return t.view(6, d, d)[:, perm][:, :, perm].reshape(6 * d, d).contiguous()
+    if name == "time_mod_proj.bias":
+        return t.view(6, d)[:, perm].reshape(6 * d).contiguous()
+    if name in _UNTOUCHED or name.startswith("text_fusion."):
+        return t
+    raise KeyError(f"{key}: no rule for the residual permutation")
+
+
+def permuted_state(state: dict, perm: torch.Tensor, prefix: str = "") -> dict:
+    return {k: permuted(prefix + k, v, perm) for k, v in state.items()}
+
+
+def stage_permuted_draws(size: str, step: int, seeds: list[int], kind: str, img2img: bool = False):
+    """**fp32 draws of step `step` with the summation order drawn** (the residual permutation of each seed, see
+    above), on `step_inputs` like `stage_draw`, which they otherwise follow call for call. The model is read once:
+    each block is loaded, then run under every seed's permutation, so N draws cost one load. Writes, per seed,
+    `draw-krea2[-<variant>]-<size>-step<i>-perm<kind><seed>` with `stage_draw`'s boundaries and those of `dit`'s
+    head (temb, temb_mod, img_in_out, block 0's attention and feed-forward), in the reference's channel order."""
+    resolution = int(size)
+    if VARIANT and step != 0 and not img2img:
+        raise SystemExit("draw --variant: step 0 only (the later latents belong to the Standard's trajectory)")
+    # `img2img-draw`: the img2img golden's step, whose latents are the version's own.
+    latent, timestep, text = (img2img_step_inputs if img2img else step_inputs)(resolution, step)
+    model = load_transformer(variant=VARIANT, streamed=False)
+    pipe = make_pipeline(transformer=model)
+    d = model.hidden_size
+    perms = {s: residual_permutation(d, kind, s) for s in seeds}
+    inverse = {s: torch.argsort(p) for s, p in perms.items()}
+    top = {k: v for k, v in model.state_dict().items()
+           if k.startswith(("time_embed.", "time_mod_proj.", "img_in.", "final_layer."))}
+    packed = pipe._pack_latents(latent[None], 1, 16, resolution // 8, resolution // 8)
+    t = text.shape[0]
+    rope = model.rotary_emb(pipe.prepare_position_ids(t, resolution // 16, resolution // 16, torch.device("cpu")))
+    x, temb, temb_mod, payload = {}, {}, {}, {s: {} for s in seeds}
+    for s in seeds:
+        p, q = perms[s], inverse[s]
+        model.load_state_dict(permuted_state(top, p), strict=False, assign=True)
+        temb[s] = model.time_embed(timestep, dtype=torch.float32)
+        temb_mod[s] = model.time_mod_proj(torch.nn.functional.gelu(temb[s], approximate="tanh"))
+        img = model.img_in(packed)
+        x[s] = torch.cat([text[:, p][None], img], dim=1)
+        payload[s].update(temb=temb[s][0, 0][q], temb_mod=temb_mod[s][0, 0].view(6, d)[:, q].flatten(),
+                          img_in_out=img[0][:, q])
+    taps = {}
+    b0 = model.transformer_blocks[0]
+    b0.attn.register_forward_hook(common.tap(taps, "block0_attn_out"))
+    b0.ff.register_forward_hook(common.tap(taps, "block0_ff_out"))
+    empty = {k: torch.empty(v.shape, dtype=v.dtype, device="meta") for k, v in b0.state_dict().items()}
+    for i, block in enumerate(model.transformer_blocks):
+        weights = model.published.under(f"transformer_blocks.{i}.", torch.float32)
+        for s in seeds:
+            p, q = perms[s], inverse[s]
+            block.load_state_dict(permuted_state(weights, p, f"transformer_blocks.{i}."), assign=True)
+            x[s] = block(x[s], temb_mod[s], rope, None)
+            block.load_state_dict(empty, assign=True)
+            if i == 0:
+                payload[s].update({name: taps.pop(name)[:, q] for name in ("block0_attn_out", "block0_ff_out")})
+            if i in (0, 1, 13, 27):
+                payload[s][f"block{i}_out"] = x[s][0][:, q]
+        del weights
+        print(f"  block {i}", end="\r", flush=True)
+    for s in seeds:
+        model.load_state_dict(permuted_state(top, perms[s]), strict=False, assign=True)
+        payload[s]["model_out"] = unpack(pipe, model.final_layer(x[s][:, t:], temb[s]), resolution)
+        name = f"draw-krea2-{'img2img-' if img2img else ''}{resolution}"
+        path = OUT / f"{quantized.stem(name, VARIANT)}-step{step}-perm{kind}{s}.safetensors"
+        save_file({k: v.contiguous() for k, v in payload[s].items()}, str(path))
+        print(f"-> {path}")
+
+
 def stage_witness(size: str):
     """**The float64 reference of the head**: the engine's inputs (the oracle's latent and ITS `txt_in`
     output: fp32, valid rows, no padding), then time, `img_in` and the first two blocks in double."""
@@ -627,6 +874,8 @@ def everything(goldens: Path, sizes: list[str], witness_steps: list[int], draws:
                for s in squares for i in range(8) for j in range(1, draws + 1)]
     stages += [["vae", "--size", s] for s in sizes]
     stages += [["vae-witness", "--size", s] for s in sizes]
+    if "512" in squares:
+        stages += [["img2img", "--size", "512"]] + [["img2img-witness", "--size", "512", "--step", str(i)] for i in range(3, STEPS)]
     common.run_stages(__file__, goldens, stages)
 
 
@@ -635,13 +884,17 @@ def main() -> None:
     common.unbuffered()
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("stage", choices=["text", "dit", "bf16", "trajectory", "vae", "witness", "witness-step", "draw",
-                                     "vae-witness", "all"])
+                                     "vae-witness", "img2img", "img2img-witness", "img2img-draw", "all"])
     p.add_argument("--size", nargs="+", default=None,
                    help="512, 1024 or WIDTHxHEIGHT (dit, witness, vae: a rectangle too; default 512, all: every size)")
     p.add_argument("--step", type=int, nargs="+", default=[0],
-                   help="witness-step and draw: the step(s) of the trajectory, each in its own process")
+                   help="witness-step, img2img-witness and draw: the step(s) of the trajectory, each in its own process")
     p.add_argument("--jitter", type=int, nargs="+", default=[0],
                    help="draw only: seed(s) of the one-ulp move of the latent (0 = the unmoved inputs)")
+    p.add_argument("--permute", type=int, nargs="+", default=None,
+                   help="draw and img2img-draw: seed(s) of the residual permutation (the summation order drawn), all in one process")
+    p.add_argument("--permute-kind", choices=["group", "full"], default="group",
+                   help="draw --permute: groups of 256 channels (what the int8 engine can draw too) or any permutation")
     p.add_argument("--witness-steps", type=int, nargs="+", default=list(range(8)),
                    help="all only: the steps whose whole evaluation is taken in float64 (default: all eight)")
     p.add_argument("--draws", type=int, default=0, help="all only: jitters 1..N of every step's draw (default 0: none)")
@@ -650,8 +903,9 @@ def main() -> None:
                    help="dit and bf16: the Compact's or the Light's published DiT instead of the Standard's")
     p.add_argument("--goldens", help="output folder (default: $SILICONED_GOLDENS, else ./goldens)")
     args = p.parse_args()
-    if args.variant and args.stage not in ("dit", "bf16", "witness", "witness-step", "draw"):
-        p.error("--variant goes with dit, bf16, witness, witness-step or draw")
+    if args.variant and args.stage not in ("dit", "bf16", "witness", "witness-step", "draw", "img2img", "img2img-witness",
+                                           "img2img-draw"):
+        p.error("--variant goes with dit, bf16, witness, witness-step, draw, img2img, img2img-witness or img2img-draw")
     global CONFIG_ONLY, VARIANT
     CONFIG_ONLY, VARIANT = bool(args.variant), args.variant
     OUT = common.goldens_directory(args.goldens) / "krea2"
@@ -662,8 +916,16 @@ def main() -> None:
         stage_text(common.LONG_PROMPT, common.LONG_SEQUENCE_LENGTH, "goldens-krea2-text-long") if args.long else stage_text()
         return
     sizes = args.size or ["512"]
+    if args.stage == "img2img-draw" and args.permute is None:
+        p.error("img2img-draw takes --permute")
+    if args.permute is not None:
+        if args.stage not in ("draw", "img2img-draw") or len(args.step) > 1 or args.jitter != [0]:
+            p.error("--permute goes with draw or img2img-draw, one --step, no --jitter")
+        for size in sizes:
+            stage_permuted_draws(size, args.step[0], args.permute, args.permute_kind, img2img=args.stage == "img2img-draw")
+        return
     jitters = args.jitter if args.stage == "draw" else [0]
-    if args.stage in ("witness-step", "draw") and len(args.step) * len(jitters) > 1:
+    if args.stage in ("witness-step", "img2img-witness", "draw") and len(args.step) * len(jitters) > 1:
         common.run_stages(__file__, common.goldens_directory(args.goldens),
                           [[args.stage, "--size", s, "--step", str(i)] + (["--jitter", str(j)] if args.stage == "draw" else [])
                           + (["--variant", args.variant] if args.variant else [])
@@ -672,13 +934,15 @@ def main() -> None:
     for size in sizes:
         if args.stage == "witness-step":
             stage_witness_step(size, args.step[0])
+        elif args.stage == "img2img-witness":
+            stage_img2img_witness(size, args.step[0])
         elif args.stage == "draw":
             stage_draw(size, args.step[0], args.jitter[0])
         elif args.variant and args.stage in ("dit", "bf16"):
             {"dit": stage_dit_variant, "bf16": stage_bf16}[args.stage](size, args.variant)
         else:
             {"dit": stage_dit, "bf16": stage_bf16, "trajectory": stage_trajectory, "vae": stage_vae, "witness": stage_witness,
-             "vae-witness": stage_vae_witness}[args.stage](size)
+             "vae-witness": stage_vae_witness, "img2img": stage_img2img}[args.stage](size)
 
 
 if __name__ == "__main__":

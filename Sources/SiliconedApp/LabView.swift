@@ -33,7 +33,7 @@ struct LabView: View {
             }
         }
         .sheet(item: $model.draft, onDismiss: { model.sheetClosed() }) { draft in SubjectSheet(lab: model, draft: draft) }
-        .onChange(of: model.capacity) { model.conformRoles() }
+        .onChange(of: model.rolesKey) { model.conformRoles() }
     }
 
     // MARK: Pieces
@@ -68,6 +68,10 @@ struct LabView: View {
             HStack {
                 Text("Text").font(.callout.weight(.semibold))
                 Spacer()
+                Button("Clear") { model.text = "" }
+                    .buttonStyle(.link).font(.callout)
+                    .disabled(model.text.isEmpty || model.isWriting)
+                    .help("Empties the text. ⌘Z in the text brings it back.")
                 Button("Use the Rack’s Prompt") { model.useRackPrompt() }
                     .buttonStyle(.link).font(.callout)
                     .disabled(model.rack.prompt.isEmpty || model.isWriting)
@@ -87,8 +91,12 @@ struct LabView: View {
                         Text(Self.shown(PromptDiff.pieces(from: changes.before, to: changes.after)))
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    // While it comes, the last words stay in sight.
-                    .defaultScrollAnchor(model.isWriting ? .bottom : .top)
+                    // The text starts at the top and grows down, as typed text does; once it fills the field, the last words
+                    // stay in sight while it comes. A single anchor at the bottom drew a short text at the foot of the field,
+                    // and threw it back to the top when the writer ended.
+                    .defaultScrollAnchor(.top, for: .alignment)
+                    .defaultScrollAnchor(.top, for: .initialOffset)
+                    .defaultScrollAnchor(model.isWriting ? .bottom : nil, for: .sizeChanges)
                     .background(Palette.surface)
                     .allowsHitTesting(false)
                 }
@@ -201,7 +209,7 @@ struct LabView: View {
                         .help(carry.prompt).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if !carry.images.isEmpty { imagesLine(carry) }
-                if let replaces = Self.replaces(receipt) {
+                if let replaces = Self.replaces(receipt, start: model.startIsImg2Img) {
                     Text(replaces).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 if receipt.changesModel, let target = model.target {
@@ -229,10 +237,14 @@ struct LabView: View {
                 }
                 .help(Text(verbatim: description(of: image, number: i + 1)))
             }
+            if model.startIsImg2Img {
+                Text("Strength \(StartWords.percent(model.startStrength))").monospacedDigit().foregroundStyle(.secondary)
+            }
             Spacer(minLength: 4)
             if let f = model.outputFormat {
                 Text(verbatim: "\(f.width) × \(f.height)").monospacedDigit().foregroundStyle(.secondary)
-                    .help("Image 1 gives the format.")
+                    .help(model.startIsImg2Img ? "The size follows the starting image’s proportions; it stays free in the rack, which keeps the centre."
+                                               : "Image 1 gives the format.")
             } else {
                 Text("Image 1 gives the format.").foregroundStyle(.secondary)
             }
@@ -261,10 +273,19 @@ struct LabView: View {
         }
     }
 
-    /// What « Carry to the Rack » replaces, in one sentence; the images of the rack have no undo, and the sentence says so.
-    static func replaces(_ r: LabInputs.Receipt<LabModel.Picture.ID>) -> String? {
+    /// What « Carry to the Rack » replaces, in one sentence; the images of the rack have no undo, and the sentence says so. `start`:
+    /// the image sent is an img2img's starting image.
+    static func replaces(_ r: LabInputs.Receipt<LabModel.Picture.ID>, start: Bool = false) -> String? {
         guard case .carries(let carry) = r.outcome else { return nil }
         let sendsImages = !carry.images.isEmpty
+        if start, sendsImages {
+            switch (r.replacesPrompt, r.replacedImages > 0) {
+            case (true, true): return String(localized: "Replaces the rack’s prompt (⌘Z brings it back) and its starting image (it can’t be brought back).")
+            case (true, false): return String(localized: "Replaces the rack’s prompt (⌘Z brings it back) and gives it a starting image.")
+            case (false, true): return String(localized: "Replaces the rack’s starting image. It can’t be brought back.")
+            case (false, false): return String(localized: "Gives the rack a starting image.")
+            }
+        }
         switch (r.replacesPrompt, sendsImages, r.replacedImages > 0) {
         case (true, false, _): return String(localized: "Replaces the rack’s prompt. ⌘Z in its field brings it back.")
         case (false, true, true): return String(localized: "Replaces the rack’s images. They can’t be brought back.")

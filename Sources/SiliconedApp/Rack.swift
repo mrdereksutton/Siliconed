@@ -2,8 +2,9 @@
 //
 //     ┌ Images ─────────────────┐   only if the model edits: the images the prompt works on, 1 to 3,
 //   ┌─┤ ▣ ▣ +                   ├─┐ numbered (the Prompt Lab can carry them here, with the prompt
-//   │ │                         │ │ that names them: `Lab.swift`)
-//   │ └─────────────────────────┘ │
+//   │ │                         │ │ that names them: `Lab.swift`) — or, on a model that starts from an
+//   │ └─────────────────────────┘ │ image (img2img), only once the Lab has carried one: its thumbnail and
+//   │                             │ its strength (`StartImageNode`), wired to the image encoder alone
 //   │ ┌ Prompt ─────────────────┐ │ the text field itself, under what it names
 //   │ └──────────┬──────────────┘ │
 //   │ ┌Text encoder┐ ┌Image encoder┐
@@ -193,29 +194,20 @@ private struct Wires: View {
 struct RackView: View {
     @Bindable var app: AppState
     @State private var hoversTitle = false
-    /// Fork: the fixed stages (text encoder, image encoder, VAE) and the wire legend are not drawn:
-    /// nothing in them can be set, and each image's details keep their times. `true` brings them back.
-    static let showsStages = false
-    /// Fork: the « Chain » header is not drawn: Measure This Mac stays in Settings › Advanced and the
-    /// Help menu, « Models… » moved beside the model menu (`DiTBox`), Compute On stays in the Render menu.
-    static let showsHeader = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            if Self.showsHeader { header }
+            header
             if app.editingPossible { ImagesNode(app: app).node(.images) }
+            else if showsStart { StartImageNode(app: app).node(.images) }
             PromptNode(app: app).node(.prompt)
-            if Self.showsStages {
-                HStack(alignment: .top, spacing: 10) {
-                    textEncoder.node(.textEncoder)
-                    if encodesImages { imageEncoder.node(.imageEncoder) }
-                }
+            HStack(alignment: .top, spacing: 10) {
+                textEncoder.node(.textEncoder)
+                if encodesImages { imageEncoder.node(.imageEncoder) }
             }
             DiTBox(app: app).node(.dit)
-            if Self.showsStages {
-                vae.node(.vae)
-                legend
-            }
+            vae.node(.vae)
+            legend
         }
         .padding(.leading, 12 + railInset)
         .padding(.trailing, 12 + railInset)
@@ -226,12 +218,20 @@ struct RackView: View {
         .overlay { LinkEdge(app: app) }
     }
 
-    /// The chosen model edits by reference and has an image encoder: its box is drawn.
-    private var encodesImages: Bool { app.editingPossible && app.chain?.encoding != nil }
+    /// The chosen model edits by reference and has an image encoder — or starts from the image the rack holds: its box is drawn.
+    private var encodesImages: Bool { (app.editingPossible && app.chain?.encoding != nil) || showsStart }
+
+    /// A starting image is carried, and the model starts from it (img2img): the Images box shows it, wired to the encoder alone.
+    private var showsStart: Bool { !app.editingPossible && app.usedStart != nil }
 
     private var edges: [Edge] {
         let live = !app.references.isEmpty
         var e = [Edge(from: .prompt, to: .textEncoder, kind: .text, stage: .text)]
+        if showsStart {
+            // The text encoder does not see a starting image: only the image encoder reads it, and the DiT starts from its latent.
+            e.append(Edge(from: .images, to: .imageEncoder, kind: .image, stage: .image, rail: .right))
+            e.append(Edge(from: .imageEncoder, to: .dit, kind: .latent, stage: .denoising))
+        }
         if app.editingPossible {
             // Qwen-Image-2.1's encoder sees the images (`TextFormat.readsImages`): one more wire.
             if app.promptNamesImages { e.append(Edge(from: .images, to: .textEncoder, kind: .image, stage: .text, live: live, rail: .left)) }
@@ -280,18 +280,18 @@ struct RackView: View {
         }
     }
 
-    /// **What the chain computes in, for the version installed and the Neural Engine's switch**: the Standard is the publisher's weights in
-    /// fp32, each stage verified against the reference; a Compact or a Light computes in fp32 too, on 8- or 4-bit weights as a third party
-    /// published them, and turns the Neural Engine on by default — « verified against the reference » is not said of them.
-    private var precision: LocalizedStringKey {
-        let ane = app.neuralEngineOffered && app.neuralEngine(for: app.identifier)
+    /// **What the chain computes in, for the version installed and the « Accelerators » switch, on this Mac**: the Standard is the
+    /// publisher's weights in fp32, each stage verified against the reference; a Compact or a Light computes in fp32 too, on 8- or 4-bit
+    /// weights as a third party published them — « verified against the reference » is not said of them. Part of the DiT goes where this
+    /// Mac's map puts the accelerators (`AcceleratorWords.place`): the Neural Engine, the GPU's tensor units, both, or neither.
+    private var precision: String {
         let quantized = app.card.flatMap { app.installedVariant(of: $0.family) }.map { $0 != .standard } ?? false
-        switch (quantized, ane) {
-        case (false, false): return "fp32 end to end, every stage verified against the reference"
-        case (false, true): return "fp32, except part of the DiT in fp16 on the Neural Engine"
-        case (true, true): return "The weights as published, in fp32 except part of the DiT on the Neural Engine"
-        case (true, false): return "The weights as published, computed in fp32"
+        if let place = AcceleratorWords.place(app.acceleratorsInEffect) {
+            return quantized ? String(localized: "The weights as published, in fp32 except part of the DiT \(place)")
+                             : String(localized: "fp32, except part of the DiT \(place)")
         }
+        return quantized ? String(localized: "The weights as published, computed in fp32")
+                         : String(localized: "fp32 end to end, every stage verified against the reference")
     }
 
     private var legend: some View {
@@ -329,10 +329,11 @@ struct RackView: View {
 
     private var imageEncoder: some View {
         StageBox(title: "Image encoder", symbol: "photo", state: app.state(of: .image),
-                 explanation: "Turns the images to edit into the compact form the DiT works in, the latent") {
+                 explanation: showsStart ? "Turns the starting image into the latent the DiT starts from, noised to the strength"
+                                         : "Turns the images to edit into the compact form the DiT works in, the latent") {
             ModuleSlot(name: app.moduleNames.encoding)
             WeightsTag(format: app.weightFormats?.vae)
-            Cost(app.references.isEmpty ? (nil, false) : app.stageCost(.image))
+            Cost(app.sentImages == 0 ? (nil, false) : app.stageCost(.image))
         }
     }
 

@@ -81,11 +81,16 @@ final class RemoteControl {
         let command = argv.first ?? ""
         let arguments = Array(argv.dropFirst())
         do {
-            try refuseOnMirror(command)
+            try refuseOnMirror(command, arguments)
             switch command {
             case "status": finish(c, state())
             case "models": finish(c, app.mirror == nil ? models() : mirroredModels())
-            case "install": finish(c, try install(arguments))
+            case "install":
+                if arguments == ["stop"] { finish(c, stopInstallation()) } else {
+                    finish(c, try arguments.contains("writer") ? installWriter(arguments.filter { $0 != "writer" }) : install(arguments))
+                }
+            case "rewrite": try writing(.rewrite, arguments, cwd: cwd, c)
+            case "describe": try writing(.describe, arguments, cwd: cwd, c)
             case "diagnose": try diagnose(arguments, c)
             case "add":
                 if let mirror = app.mirror { try addOnMirror(mirror, arguments, cwd: cwd, c) } else { try add(arguments, cwd: cwd, c) }
@@ -96,7 +101,7 @@ final class RemoteControl {
             case "cancel": finish(c, try cancel(arguments))
             case "clear": finish(c, clear())
             case "set":
-                finish(c, try set(arguments))
+                finish(c, try set(arguments, cwd: cwd))
             case "history": finish(c, try history(arguments))
             case "save": finish(c, try save(arguments, cwd: cwd))
             case "vary":
@@ -104,6 +109,8 @@ final class RemoteControl {
             case "enlarge":
                 if let mirror = app.mirror { try enlargeOnMirror(mirror, arguments, c) } else { try enlarge(arguments, c) }
             case "subjects": finish(c, try subjects(arguments, cwd: cwd))
+            case let verb where GestureOrder.verbs.contains(verb):
+                try gesture(try order(verb, arguments), cwd: cwd, c)
             default:
                 throw Refusal("usage", String(localized: "unknown command: \"\(command)\""),
                             help: "silicontrol help")
@@ -133,8 +140,10 @@ final class RemoteControl {
             .merging(r.isVariation ? ["variation": Self.json(r.variations)] : [:]) { a, _ in a }
             .merging(r.detail == .normal ? [:] : ["detail": r.detail.rawValue]) { a, _ in a }
             .merging(r.solver == .euler ? [:] : ["solver": r.solver.rawValue]) { a, _ in a }
-            // What the job will ask, on a Mac whose map offers the Neural Engine: elsewhere, the answer is unchanged.
-            .merging(app.neuralEngineOffered ? ["neural_engine": t.neuralEngine ?? app.neuralEngine(for: r.identifier)] : [:]) { a, _ in a }
+            // An img2img: the image it starts from, and the strength.
+            .merging(r.strength.map { ["strength": Response.number($0), "start_image": t.start?.name ?? ""] } ?? [:]) { a, _ in a }
+            // What the job will ask, on a Mac whose map offers an accelerator: elsewhere, the answer is unchanged.
+            .merging(app.acceleratorsOffered ? ["accelerators": t.accelerators ?? app.accelerators(for: r.identifier)] : [:]) { a, _ in a }
     }
 
     /// The variation seeds in order, each with its strength — the seed stays the origin's.
@@ -145,7 +154,8 @@ final class RemoteControl {
     /// A grid's cell: its grid, its column and its row (from 0) — empty for any other job.
     private func gridPlace(_ t: Job) -> [String: Any] {
         guard let at = app.gridPlace(of: t.ordinal), let run = app.gridRuns[at.grid] else { return [:] }
-        return ["grid": run.name, "column": at.cell % run.grid.columns, "row": at.cell / run.grid.columns]
+        return ["grid": run.name, "cell": CellName.name(grid: at.grid, cell: at.cell),
+                "column": at.cell % run.grid.columns, "row": at.cell / run.grid.columns]
     }
 
     func json(_ e: Entry, path: String? = nil) -> [String: Any] {
@@ -157,9 +167,12 @@ final class RemoteControl {
             "references": r.references,
             "loras": r.loras.map { ["lora": Self.shortName($0.path), "strength": Response.number($0.strength)] }]
         if r.isVariation { o["variation"] = Self.json(r.variations) }
+        if let s = r.strength { o["strength"] = Response.number(s); o["start_image"] = e.start?.name ?? "" }
         if r.detail != .normal { o["detail"] = r.detail.rawValue }
         if r.solver != .euler { o["solver"] = r.solver.rawValue }
-        if r.neuralEngine { o["neural_engine"] = true }
+        // What the accelerators could do for it on the Mac that computed it: absent, fp32 throughout.
+        if r.offer.neuralEngine { o["neural_engine"] = true }
+        if !r.offer.tensorUnits.isEmpty { o["tensor_units"] = r.offer.tensorUnitsText }
         if let g = e.grid {
             // A grid's sheet: no job made it; its seconds and evaluations are its cells' sum.
             o["job"] = nil
@@ -204,7 +217,11 @@ final class RemoteControl {
     private func state() -> [String: Any] {
         var o: [String: Any] = ["ok": true, "library": app.library.root.path,
                                 "history_images": app.history.count,
-                                "faster_rendering": app.fasterRendering(for: app.identifier)]
+                                "faster_rendering": app.fasterRendering(for: app.identifier),
+                                "beta": betaState(), "writer": writerState(),
+                                "start_image": startJSON() ?? NSNull()]
+        // The rack's « Accelerators » choice, on a Mac whose map offers one (elsewhere nothing is chosen).
+        if app.acceleratorsOffered { o["accelerators"] = app.accelerators(for: app.identifier) }
         // The settings renders run on: a series compared across launches compares maps too.
         o["settings"] = ["read": app.settingsRead, "map": app.mapFacts.inUse?.date ?? NSNull(),
                          "warnings": app.settingsWarnings] as [String: Any]
@@ -292,12 +309,15 @@ final class RemoteControl {
             } else {
                 o["ready"] = true
                 o["variant"] = f.isImported ? NSNull() : b.variant(of: f.family).rawValue as Any
-                let max = (try? Model.named(f.id, in: b))?.chain.denoising.maxReferences ?? 0
+                let chain = (try? Model.named(f.id, in: b))?.chain
+                let max = chain?.denoising.maxReferences ?? 0
                 o["edit"] = max > 0
                 o["max_references"] = max
+                // img2img: the rack's starting image (`start-image`, `add --image`).
+                o["start_image"] = chain?.entries.contains { $0.kind == .image } ?? false
                 o["loras"] = b.loras(for: f.id).map { ["lora": Self.shortName($0.path), "name": $0.name] }
-                // The rack's fp32 tag, per installed version: only on a Mac whose map offers the Neural Engine.
-                if app.neuralEngineOffered { o["neural_engine"] = app.neuralEngine(for: f.id) }
+                // The DiT box's « Accelerators », per installed version: only on a Mac whose map offers one.
+                if app.acceleratorsOffered { o["accelerators"] = app.accelerators(for: f.id) }
                 // Faster Rendering is chosen per installed version too: what « measure » reads and gives back.
                 o["faster_rendering"] = app.fasterRendering(for: f.id)
             }

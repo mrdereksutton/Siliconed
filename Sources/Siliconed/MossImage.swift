@@ -82,6 +82,22 @@ package final class MossImageDiT: BoundaryRecording, PhaseTiming {
     package var recordBoundaries = false
     /// The blocks whose output `boundaries` keeps (`block<N>_out`).
     package var recordedBlocks: Set<Int> = [0, 1, 21, 41]
+
+    /// The blocks a check against the reference records: the first two, then three down the depth.
+    package static let checkedBlocks: Set<Int> = [0, 1, 13, 27, 41]
+
+    /// **The boundaries a check judges**, in the reference's tensor names, with the width of their channels —
+    /// one list for the catalogue's check (`siliconed check moss-image dit`, `dit-lora`) and a user LoRA's
+    /// (private). Recorded once `recordBoundaries` is set and `recordedBlocks` is `checkedBlocks`.
+    package var checkedBoundaries: [(name: String, columns: Int)] {
+        let (d, ffn) = (config.dim, config.hidden)
+        return [("time_embedding_out", d), ("shared_modulation", d), ("head_modulation", d), ("video_embed", d),
+                ("rope", config.headDim), ("text_proj_out", d), ("text_block0_out", d), ("text_block1_out", d),
+                ("block0_q_out", d), ("block0_k_out", d), ("block0_v_out", d), ("block0_q_norm_out", d),
+                ("block0_o_out", d), ("block0_ffn_up_gate_out", 2 * ffn), ("block0_ffn_down_out", d)]
+            + Self.checkedBlocks.sorted().map { ("block\($0)_out", d) }
+            + [("final_norm_out", d)]
+    }
     /// The token of the render in progress, consulted between two layers (see `Cancellation`).
     package var cancellation: Cancellation?
     package var timings: [String: Double] { ownTimings.merging(products.timings, uniquingKeysWith: +) }
@@ -123,9 +139,10 @@ package final class MossImageDiT: BoundaryRecording, PhaseTiming {
     ///   - maxText: the most text rows an evaluation passes.
     ///   - expanded: the stack's expanded weights from a DiT given back, taken over rather than filled again (the
     ///     half-size start's, handed to the full one: the turbo LoRA's 1.19 GB of fp32 read once).
+    ///   - plan: the plan its products run under — the process's by default; a check passes the route it judges.
     package init(artifact: Artifact, gridHeight: Int, gridWidth: Int, maxText: Int = 512,
-                 neuralEngine: Bool = EngineSettings.effective.plan.usesANE,
-                 lora: LoRA? = nil, expanded: CacheLoRA? = nil) throws {
+                 accelerators: Accelerators = .process,
+                 lora: LoRA? = nil, expanded: CacheLoRA? = nil, plan: CapacityPlan? = nil) throws {
         guard artifact.header["kind"] as? String == MossImageDiT.kind else {
             throw Artifact.Failure.badHeader("map \(artifact.header["kind"] ?? "?"): \(MossImageDiT.kind) expected")
         }
@@ -135,7 +152,7 @@ package final class MossImageDiT: BoundaryRecording, PhaseTiming {
         self.artifact = artifact
         self.config = Config(header: artifact.header)
         self.prefetcher = Prefetcher(artifact: artifact)
-        self.gemm = try GEMM(neuralEngine: neuralEngine)
+        self.gemm = try GEMM(plan: plan ?? EngineSettings.effective.plan, accelerators: accelerators)
         self.elementwise = try ElementwiseGPU(device: gemm.device, queue: gemm.queue)
         self.kernels = try MossImageKernels(device: gemm.device, queue: gemm.queue)
         self.gridHeight = gridHeight; self.gridWidth = gridWidth
@@ -497,7 +514,7 @@ package final class MossImageDiT: BoundaryRecording, PhaseTiming {
             let split: HeadSplitAttention
             if let s = splits[n] { split = s } else {
                 split = try HeadSplitAttention(device: gemm.device, queue: gemm.queue, heads: config.heads, sequence: n,
-                                               headDim: config.headDim, cpuHeads: cut.cpuHeads, gpuKernel: cut.gpuKernel)
+                                               headDim: config.headDim, cpuHeads: cut.cpuHeads, gpuKernel: cut.gpuKernel, tile: cut.tile)
                 splits[n] = split
             }
             timed("sdpa wall") {

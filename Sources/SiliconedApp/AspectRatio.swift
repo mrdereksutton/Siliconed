@@ -7,10 +7,9 @@ import AppKit
 import Siliconed
 import SwiftUI
 
-/// The ratios offered and the size each takes: sides in multiples of 32, so that every model takes them
-/// (Qwen-Image-2.1 asks for 32). 2K doubles each side, except 9:16 and 16:9: at 1K they keep upstream's
-/// 768 × 1344 and 1344 × 768 (4:7, the nearest in multiples of 32 near a megapixel); at 2K they are the
-/// exact 1440 × 2560 and 2560 × 1440.
+/// The ratios offered and the size each takes — upstream's table (`SizeScales`, held by its tests: sides in multiples of 32,
+/// so that every model takes them), read for the composer's eight ratios. 9:16 and 16:9 are 768 × 1344 and 1344 × 768 at 1K
+/// (4:7, the nearest in multiples of 32 near a megapixel), the exact 1440 × 2560 and 2560 × 1440 at 2K.
 enum SizeTable {
     struct Ratio: Hashable, Identifiable {
         let w: Int, h: Int
@@ -29,22 +28,7 @@ enum SizeTable {
     static let square = Ratio(w: 1, h: 1)
 
     static func format(_ r: Ratio, _ t: Tier) -> RecommendedFormat {
-        switch (r.w, r.h, t) {
-        case (9, 16, .twoK): return RecommendedFormat(1440, 2560)
-        case (16, 9, .twoK): return RecommendedFormat(2560, 1440)
-        default: break
-        }
-        let (w, h): (Int, Int) = switch (r.w, r.h) {
-        case (9, 16): (768, 1344)
-        case (2, 3): (832, 1248)
-        case (3, 4): (864, 1152)
-        case (4, 5): (896, 1120)
-        case (4, 3): (1152, 864)
-        case (3, 2): (1248, 832)
-        case (16, 9): (1344, 768)
-        default: (1024, 1024)
-        }
-        return RecommendedFormat(w * t.rawValue, h * t.rawValue)
+        SizeScales.cell(SizeRatio(r.w, r.h), t == .oneK ? .oneK : .twoK)?.format ?? RecommendedFormat(1024, 1024)
     }
 
     /// The ratio and resolution that name `f`; nil for a size typed by hand.
@@ -68,58 +52,6 @@ extension AppState {
     /// Fork: the chosen model takes `f` and this Mac's memory holds it (`checkFormat`, `macNeeded`).
     func renders(_ f: RecommendedFormat) -> Bool {
         (try? checkFormat(width: f.width, height: f.height)) != nil && macNeeded(f, images: 0) == nil
-    }
-}
-
-/// The size as a labelled row (`DiTBox`, upstream's rack): the word, then the pills.
-struct SizePicker: View {
-    @Bindable var app: AppState
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text("Size").foregroundStyle(.secondary)
-            Spacer(minLength: 8)
-            SizePills(app: app)
-        }
-        .font(.callout)
-    }
-}
-
-/// **The ratio and the resolution as two pills** (upstream's rack, `SizePicker`), each opening its list
-/// only when clicked. The composer shows the same lists in its own panels (`Composer`).
-struct SizePills: View {
-    @Bindable var app: AppState
-    @State private var choosingRatio = false
-    @State private var choosingTier = false
-
-    var body: some View {
-        let current = SizeTable.match(app.format)
-        HStack(spacing: 8) {
-            Pill(isPresented: $choosingRatio) {
-                if let current {
-                    RatioShape(ratio: current.ratio, side: 13)
-                    Text(verbatim: current.ratio.label).monospacedDigit()
-                } else {
-                    Text(verbatim: "\(app.format.width) × \(app.format.height)").monospacedDigit()
-                }
-            } choices: {
-                VStack(alignment: .leading, spacing: 0) {
-                    RatioChoices(app: app) { choosingRatio = false }
-                    Rectangle().fill(Silicon.edge).frame(height: 1).padding(.horizontal, 14)
-                    CustomSize(app: app, title: "Custom size") { choosingRatio = false }
-                }
-            }
-            .help("Aspect ratio")
-            if let current {
-                Pill(isPresented: $choosingTier) {
-                    Image(systemName: "diamond").imageScale(.small)
-                    Text(verbatim: current.tier.label)
-                } choices: {
-                    TierChoices(app: app) { choosingTier = false }
-                }
-                .help("Resolution")
-            }
-        }
     }
 }
 
@@ -196,40 +128,7 @@ struct RatioShape: View {
     }
 }
 
-// MARK: - Pills (upstream's rack) and lists
-
-/// **A pill's face**: an icon and a word on a cell, brighter under the pointer or open.
-struct PillFace<Content: View>: View {
-    var active = false
-    @ViewBuilder var content: Content
-    @State private var hovering = false
-
-    var body: some View {
-        HStack(spacing: 6) { content }
-            .font(.callout)
-            .padding(.horizontal, 11)
-            .frame(height: 30)
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(hovering || active ? Silicon.cellHover : Silicon.cell))
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Silicon.edge))
-            .contentShape(Rectangle())
-            .onHover { hovering = $0 }
-            .animation(Motion.pick(.easeOut(duration: 0.12)), value: hovering)
-    }
-}
-
-/// A pill that shows only the current choice; its list opens over it on a click.
-struct Pill<Label: View, Choices: View>: View {
-    @Binding var isPresented: Bool
-    @ViewBuilder var label: Label
-    @ViewBuilder var choices: Choices
-
-    var body: some View {
-        Button { isPresented.toggle() } label: { PillFace(active: isPresented) { label } }
-            .buttonStyle(.plain)
-            .popover(isPresented: $isPresented, arrowEdge: .top) { choices }
-    }
-}
+// MARK: - Lists
 
 /// **A list of choices**: its spec-sheet title, then one row per choice.
 struct ChoiceList<Rows: View>: View {

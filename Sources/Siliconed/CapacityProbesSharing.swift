@@ -4,67 +4,166 @@ import Foundation
 import Metal
 import MetalPerformanceShadersGraph
 
-// The sharing probes: the sets of engines, each side alone and then together, the integers' pair included.
+// The sharing probes: the sets of engines, each side alone and then together, the pairs on a weight read as published included
+// (the integers', the rounded bf16 one).
 
 extension Diagnostic.CapacityProbes.Context {
-    // MARK: Sharing of the integers
+    // MARK: Sharing of the weights read as published
 
     /// **The GPU's int8 kernel beside the ANE's**, both reading the integers staged in the reserve — the pair a render of a Compact makes
     /// under `ane_int8` — as the fp32 sets are measured: chains, the lines' balance (pass 1), the balance of the κ it gave (pass 2, the
     /// same shape) and a long k (pass 3, on pass 2's κ), the fit reading the passes from the second. The long k is the point: the
     /// « down » projections of the three int8 families (k = 8 192 to 16 384) were left to the ANE alone for want of a pair measured
     /// there, which cost them a third of their seconds.
+    ///
+    /// **Twice: beside the GPU's kernel on the fp32 activation, and on the activation rounded to bf16** (`gpu/int8act+ane/int8`). The
+    /// rounded kernel runs on the GPU's tensor units at another rate and draws another power: what the ANE beside it keeps, and what it
+    /// keeps of itself, is that pair's own measure — the fp32 pair's κ read for it would be a guess (each set keeps its own sharing).
     func sharingInt8(_ measurements: inout Fit.Measurements) {
+        for form in Self.integerPairs { sharingPair(&measurements, gpu: Kernel(.gpu, form), ane: Kernel(.ane, .int8)) }
+    }
+
+    /// The GPU's kernels the ANE's integers are measured beside, each pair its own sharing (`gpu/int8+ane/int8`, `gpu/int8act+ane/int8`).
+    static let integerPairs: [CapacityModel.Form] = [.int8, .int8act]
+
+    /// **The Standard's own pair: the GPU's rounded rows on a bf16 weight read as published beside the ANE's fp16 program on the same
+    /// bf16 copy** (`gpu/bf16act+ane/fp16`, `WeightProducts.bf16Product`), measured as the integers' pairs. The ×1.52 once claimed
+    /// for GPU + ANE on a Standard was the rounded kernel's rate times the κ of `gpu/fp32+ane/fp16`: the GPU's tensor units beside the
+    /// ANE keep what this pair's own chains say, nothing borrowed.
+    func sharingRounded(_ measurements: inout Fit.Measurements) {
+        sharingPair(&measurements, gpu: Self.roundedPair[0], ane: Self.roundedPair[1])
+    }
+
+    /// The rounded bf16 pair, its sharing its own.
+    static let roundedPair = [Kernel(.gpu, .bf16act), Kernel(.ane, .fp16)]
+
+    /// One pair of a weight read as published, its three passes and its fit (`sharing`'s, for a pair of kernels).
+    func sharingPair(_ measurements: inout Fit.Measurements, gpu g: Kernel, ane a: Kernel) {
         restoreB()
         var model = Fit.model(from: measurements, allocationUnit: NeuralEngine.rowUnit)
-        let g = Kernel(.gpu, .int8), a = Kernel(.ane, .int8)
-        guard model.lines[g] != nil, model.lines[a] != nil, both.tensorInt8, neural.neuralEngine != nil, let short = sizes.chains.first else { return }
+        let ready = switch (g.form, a.form) {
+        case (.int8, .int8): both.tensorInt8
+        case (.int8act, .int8): alone.tensorInt8 && alone.bf16Activations
+        case (.bf16act, .fp16): alone.bf16Activations
+        default: false
+        }
+        guard ready, model.lines[g] != nil, model.lines[a] != nil, neural.neuralEngine != nil, let short = sizes.chains.first else { return }
         let key = CapacityModel.key([g, a])
-        for (pass, shape) in [(1, short), (2, short)] + (sizes.chains.count > 1 ? [(3, sizes.chains[1])] : []) {
-            if let t = trialInt8(key: key, shape: shape, model: model, pass: pass) {
+        // The rows the last chain ran: where the model of the passes so far gives the ANE none, the next chain runs them again. Each
+        // pass is a measure, not a verdict — the long k (where the ANE's per-call cost weighs least) is measured whatever the short one
+        // said; a pair skipped there is a pair one map has and the next has not.
+        var last: (gpu: Int, ane: Int)?
+        var plan = [(1, short), (2, short)] + (sizes.chains.count > 1 ? [(3, sizes.chains[1])] : [])
+        var next = 0
+        while next < plan.count {
+            let (pass, shape) = plan[next]; next += 1
+            if let t = trialPair(key: key, gpu: g, ane: a, shape: shape, model: model, pass: pass, previous: last) {
                 measurements.trials.append(t)
+                if let gr = t.sides.first(where: { $0.kernel == g.description })?.rows, let ar = t.sides.first(where: { $0.kernel == a.description })?.rows {
+                    last = (gr, ar)
+                }
                 log?(String(format: "  %@ pass %d  %dx%dx%d  wall %.2f ms  sides %@", key, pass, shape.m, shape.k, shape.n, t.wall * 1e3,
                             t.sides.map { String(format: "%@ %d rows line %.1f within %.1f", $0.kernel, $0.rows, $0.solo * 1e3, ($0.within ?? 0) * 1e3) }.joined(separator: " | ")))
             }
-            let trials = pass == 1 ? measurements.trials : measurements.trials.filter { $0.pass >= 2 }
-            if let fit = Fit.overlap(set: key, trials: trials, model: model) { model.sharing[key] = fit.sharing }
+            refit(key, pass: pass, shape: shape, measurements: measurements, model: &model, plan: &plan, at: next)
         }
     }
 
-    func trialInt8(key: String, shape: (m: Int, k: Int, n: Int), model: CapacityModel, pass: Int) -> Fit.Measurements.Trial? {
+    /// **After a chain, the set's fit again** — on the passes so far, from the second the chains `Fit.chains` reads — **and, after the
+    /// second, a third chain at the same shape where the first two disagree beyond the map's noise** (`Fit.needsAgain`): two chains
+    /// cannot say which met a disturbance, the median of three can. The third is the measure the guard would have taken had it seen
+    /// the chain disturbed (a whole chain slowed evenly does not spread its calls).
+    func refit(_ key: String, pass: Int, shape: (m: Int, k: Int, n: Int), measurements: Fit.Measurements, model: inout CapacityModel,
+               plan: inout [(Int, (m: Int, k: Int, n: Int))], at next: Int) {
+        let trials = pass == 1 ? measurements.trials : Fit.chains(set: key, trials: measurements.trials, model: model).used
+        if let fit = Fit.overlap(set: key, trials: trials, model: model) { model.sharing[key] = fit.sharing }
+        guard pass == 2, Fit.needsAgain(set: key, shape: [shape.m, shape.k, shape.n], trials: measurements.trials, model: model) else { return }
+        log?("  \(key) \(shape.m)x\(shape.k)x\(shape.n): two chains apart beyond the map's noise — a third")
+        plan.insert((Fit.Measurements.Trial.again, shape), at: next)
+    }
+
+    /// **One chain of a pair on a weight read as published**: the weight staged as a render stages it, the rows the model's balance gives
+    /// and the engines accept, the route a render takes (`WeightProducts.int8Product(…ane:)`, `WeightProducts.bf16Product`) judged once
+    /// against the fp64 truth at the half-precision bar, then chained.
+    func trialPair(key: String, gpu g: Kernel, ane a: Kernel, shape: (m: Int, k: Int, n: Int), model: CapacityModel, pass: Int,
+                   previous: (gpu: Int, ane: Int)? = nil) -> Fit.Measurements.Trial? {
         let (m, k, n) = shape
-        let g = Kernel(.gpu, .int8), a = Kernel(.ane, .int8)
         // The balance of a chain is asked of the model without the sets' domains: a chain at a k the pair was not measured at yet is how it gets it.
         var open = model
         for (name, var sharing) in model.sharing { sharing.kFrom = nil; sharing.kTo = nil; open.sharing[name] = sharing }
-        guard let plan = int8Plan(k, n), let engine = neural.neuralEngine,
-              let split = open.split(m: m, k: k, n: n, kernels: [g, a]), let aneRows = split.rows[a], let gpuRows = split.rows[g],
-              aneRows > 0, gpuRows > 0 else { log?("  \(key) \(m)x\(k)x\(n) pass \(pass): the model gives a side no row"); return nil }
-        // The rows the engines can run for this key: the plan's own rule (`isRunnable`) and the process's (the program loads).
-        guard ProductAssignment(path: .native, gpu: gpuRows, ane: aneRows).isRunnable(for: ProductKey(k: k, n: n, m: m, weight: .int8)),
-              engine.accepts(rows: aneRows, k: k, n: n, int8Group: plan.group) else {
-            log?("  \(key) \(m)x\(k)x\(n) pass \(pass): rows \(aneRows) not accepted by the engines"); return nil
-        }
-        prime(.int8, ane: true, m: m, k: k, n: n)
-        stageInt8(plan, k: k, n: n)
-        RouteBeacon.announce(g.description); RouteBeacon.announce(a.description)
-        let buffers = bothB
-        func once() -> (wall: Double, within: [String: Double])? {
+        guard let engine = neural.neuralEngine else { return nil }
+        let gpuRows: Int, aneRows: Int
+        if let split = open.split(m: m, k: k, n: n, kernels: [g, a]), let e = split.rows[a], let r = split.rows[g], e > 0, r > 0 {
+            (gpuRows, aneRows) = (r, e)
+        } else if let previous, previous.gpu + previous.ane == m {
+            // The model of the passes so far gives the ANE no row: the last chain's rows again (`sharingPair`).
+            (gpuRows, aneRows) = previous
+            log?("  \(key) \(m)x\(k)x\(n) pass \(pass): the model gives a side no row — the last chain's rows, \(aneRows) on the ANE")
+        } else { log?("  \(key) \(m)x\(k)x\(n) pass \(pass): the model gives a side no row"); return nil }
+        let truthKind: Truth
+        let once: () -> (wall: Double, within: [String: Double])?
+        func timedPair(_ run: () -> (gpu: Double, computed: Bool, gpuWall: Double, aneWall: Double)) -> (wall: Double, within: [String: Double])? {
             var result: (gpu: Double, computed: Bool, gpuWall: Double, aneWall: Double)?
-            guard let wall = CapacityProbes.timed({
-                result = WeightProducts.int8Product(gemm: both, plan: plan, reserve: buffers.b, a: buffers.a, c: buffers.c,
-                                                    m: m, k: k, n: n, ane: engine, aneRows: aneRows)
-                return result?.computed == true
-            }), let r = result else { return nil }
+            guard let wall = CapacityProbes.timed({ result = run(); return result?.computed == true }), let r = result else { return nil }
             return (wall, [a.description: r.aneWall, g.description: r.gpuWall])
         }
-        guard let verdict = judged(key, .int8, ane: true, m: m, k: k, n: n, { once() != nil }) else {
+        if a.form == .int8 {
+            let rounded = g.form == .int8act
+            // The rounded GPU side runs on `alone` (the rounding kernels), the plan's rounded copy in the reserve's tail beside the integers
+            // the ANE reads; the ANE is `neural`'s either way.
+            let gemm = rounded ? alone : both, buffers = rounded ? aloneB : bothB
+            // The rows the engines can run for this key: the plan's own rule (`isRunnable`) and the process's (the program loads).
+            guard let plan = int8Plan(k, n, rounded: rounded),
+                  ProductAssignment(path: .native, roundsActivation: rounded, gpu: gpuRows, ane: aneRows).isRunnable(for: ProductKey(k: k, n: n, m: m, weight: .int8)),
+                  engine.accepts(rows: aneRows, k: k, n: n, int8Group: plan.group) else {
+                log?("  \(key) \(m)x\(k)x\(n) pass \(pass): rows \(aneRows) not accepted by the engines"); return nil
+            }
+            truthKind = .int8
+            prime(.int8, ane: true, m: m, k: k, n: n)
+            stageInt8(plan, k: k, n: n)
+            once = {
+                timedPair { WeightProducts.int8Product(gemm: gemm, plan: plan, reserve: buffers.b, a: buffers.a, c: buffers.c,
+                                                       m: m, k: k, n: n, ane: engine, aneRows: aneRows) }
+            }
+        } else {
+            // The bf16 copy at the reserve's head (`b`, which the widened weight restores), the GPU's rounded rows in its tail.
+            guard let rounding = WeightProducts.roundingPlan(k: k, n: n, capacity: k * n),
+                  ProductAssignment(path: .bf16, roundsActivation: true, gpu: gpuRows, ane: aneRows).isRunnable(for: ProductKey(k: k, n: n, m: m)),
+                  engine.accepts(rows: aneRows, k: k, n: n) else {
+                log?("  \(key) \(m)x\(k)x\(n) pass \(pass): rows \(aneRows) not accepted by the engines"); return nil
+            }
+            truthKind = .fp32
+            prime(.fp32, ane: true, m: m, k: k, n: n)
+            Widen.copyBfloat16(source: operands.bf16.base, destination: operands.b.base, count: k * n)
+            dirty = max(dirty, k * n)
+            once = {
+                timedPair { WeightProducts.bf16Product(gemm: self.alone, rounding: (self.aloneB.b, rounding.offset, rounding.rows),
+                                                       reserve: self.aloneB.b, a: self.aloneB.a, c: self.aloneB.c,
+                                                       m: m, k: k, n: n, ane: engine, aneRows: aneRows) }
+            }
+        }
+        RouteBeacon.announce(g.description); RouteBeacon.announce(a.description)
+        guard let verdict = judged(key, truthKind, ane: true, m: m, k: k, n: n, { once() != nil }) else {
             log?("  \(key) \(m)x\(k)x\(n) pass \(pass): the set refused (fallback)"); return nil
         }
         guard verdict.pass else { log?("  \(key) \(m)x\(k)x\(n) pass \(pass): WRONG, error \(verdict.error)"); return .init(set: key, shape: [m, k, n], pass: pass, sides: [], wall: 0, error: verdict.error) }
-        // The chain, as the fp32 sets' (`trial`): back to back, the ramp thrown away, the median of the window.
+        guard let used = chained("\(key) \(m)x\(k)x\(n) pass \(pass)", once) else { return nil }
+        let wall = Fit.median(used.map(\.wall))
+        // `solo` is the line's seconds at the rows the side took (the reference of κ, as the fp32 sets').
+        var sides: [Fit.Measurements.Side] = []
+        for (kernel, rows) in [(g, gpuRows), (a, aneRows)] {
+            guard let solo = model.alone(kernel, rows: rows, k: k, n: n) else { return nil }
+            let within = used.compactMap { $0.within[kernel.description] }
+            sides.append(.init(kernel: kernel.description, rows: rows, solo: solo, within: within.isEmpty ? nil : Fit.median(within)))
+        }
+        return .init(set: key, shape: [m, k, n], pass: pass, sides: sides, wall: wall, error: verdict.error)
+    }
+
+    /// **A set's chain**: the call back to back, the ramp thrown away, the median's window (`CapacityProbes.quick`) — the samples kept,
+    /// under the guard that measures again a chain the Mac disturbed. `nil`: a call refused, or the guard gave up.
+    func chained(_ step: String, _ once: () -> (wall: Double, within: [String: Double])?) -> [(wall: Double, within: [String: Double])]? {
         var samples: [(wall: Double, within: [String: Double])] = []
-        guard guarded("\(key) \(m)x\(k)x\(n) pass \(pass)", { () -> Bool? in
+        guard guarded(step, { () -> Bool? in
             samples = []
             let begin = CapacityProbes.now()
             var calls = 0
@@ -80,16 +179,7 @@ extension Diagnostic.CapacityProbes.Context {
             CapacityProbes.lastSpread = max(CapacityProbes.lastSpread, CapacityProbes.spread(samples.map(\.wall)))
             return true
         }) != nil else { return nil }
-        let used = CapacityProbes.quick(samples)
-        let wall = Fit.median(used.map(\.wall))
-        // `solo` is the line's seconds at the rows the side took (the reference of κ, as the fp32 sets').
-        var sides: [Fit.Measurements.Side] = []
-        for (kernel, rows) in [(g, gpuRows), (a, aneRows)] {
-            guard let solo = model.alone(kernel, rows: rows, k: k, n: n) else { return nil }
-            let within = used.compactMap { $0.within[kernel.description] }
-            sides.append(.init(kernel: kernel.description, rows: rows, solo: solo, within: within.isEmpty ? nil : Fit.median(within)))
-        }
-        return .init(set: key, shape: [m, k, n], pass: pass, sides: sides, wall: wall, error: verdict.error)
+        return CapacityProbes.quick(samples)
     }
 
     // MARK: Sharing
@@ -115,14 +205,16 @@ extension Diagnostic.CapacityProbes.Context {
         let chains = sizes.chains
         for set in sets {
             let key = CapacityModel.key(set.map(\.engine))
-            for (pass, shape) in [(1, chains[0]), (2, chains[0])] + (chains.count > 1 ? [(3, chains[1])] : []) {
+            var plan = [(1, chains[0]), (2, chains[0])] + (chains.count > 1 ? [(3, chains[1])] : [])
+            var next = 0
+            while next < plan.count {
+                let (pass, shape) = plan[next]; next += 1
                 if let trial = trial(set, key: key, shape: shape, model: model, pass: pass) {
                     measurements.trials.append(trial)
                     log?(String(format: "  %@ pass %d  %dx%dx%d  wall %.2f ms  sides %@", key, pass, shape.m, shape.k, shape.n,
                                 trial.wall * 1e3, trial.sides.map { String(format: "%@ %d rows line %.1f within %.1f", $0.kernel, $0.rows, $0.solo * 1e3, ($0.within ?? 0) * 1e3) }.joined(separator: " | ")))
                 }
-                let trials = pass == 1 ? measurements.trials : measurements.trials.filter { $0.pass >= 2 }
-                if let fit = Fit.overlap(set: key, trials: trials, model: model) { model.sharing[key] = fit.sharing }
+                refit(key, pass: pass, shape: shape, measurements: measurements, model: &model, plan: &plan, at: next)
             }
         }
     }
@@ -190,25 +282,8 @@ extension Diagnostic.CapacityProbes.Context {
         // Judged once: the set's output on the sampled rows (every quantum of the cut is visited), then warmed.
         guard let verdict = judged(key, .fp32, ane: hasANE, m: m, k: k, n: n, { once() != nil }) else { log?("  \(key) \(m)x\(k)x\(n) pass \(pass): the set refused (fallback)"); return nil }
         guard verdict.pass else { log?("  \(key) \(m)x\(k)x\(n) pass \(pass): WRONG, error \(verdict.error)"); return .init(set: key, shape: [m, k, n], pass: pass, sides: [], wall: 0, error: verdict.error) }
-        // The chain: back to back, the ramp thrown away, the median of the window (`chain`); the set's clock per call.
-        var samples: [(wall: Double, within: [String: Double])] = []
-        guard guarded("\(key) \(m)x\(k)x\(n) pass \(pass)", { () -> Bool? in
-            samples = []
-            let begin = CapacityProbes.now()
-            var calls = 0
-            while true {
-                let start = CapacityProbes.now()
-                guard let s = once() else { return nil }
-                calls += 1
-                if calls > CapacityProbes.chainWarmCalls, start - begin >= CapacityProbes.chainWarm { samples.append(s) }
-                let elapsed = CapacityProbes.now() - begin
-                if elapsed >= CapacityProbes.chainWarm + CapacityProbes.chainWindow, samples.count >= CapacityProbes.chainCalls { break }
-                if elapsed >= CapacityProbes.chainCap, !samples.isEmpty { break }
-            }
-            CapacityProbes.lastSpread = max(CapacityProbes.lastSpread, CapacityProbes.spread(samples.map(\.wall)))
-            return true
-        }) != nil else { return nil }
-        let used = CapacityProbes.quick(samples)
+        // The chain: back to back, the ramp thrown away, the median of the window (`chained`); the set's clock per call.
+        guard let used = chained("\(key) \(m)x\(k)x\(n) pass \(pass)", once) else { return nil }
         let wall = Fit.median(used.map(\.wall))
         // `solo` is the line's seconds at the rows the side took: the reference of κ (the line's own bias at these rows is in κ).
         var sides: [Fit.Measurements.Side] = []

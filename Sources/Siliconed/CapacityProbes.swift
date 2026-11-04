@@ -22,7 +22,10 @@ import MetalPerformanceShadersGraph
 ///      ├─ attention                graph, flash, the CPU's heads, alone at two sequences                            → lines
 ///      ├─ sharing                  per set: each side alone at its rows, then the set (a balanced pass at three sizes) → keep, overhead
 ///      ├─ 8-bit and rounded kernels (they stage their weight in the reserve: after every fp32 route), `ane/int8` among them (as chains)
-///      ├─ sharing int8             the GPU's int8 kernel beside the ANE's, both reading the integers staged in the reserve (chains, a long k)
+///      ├─ sharing int8             the GPU's int8 kernel beside the ANE's, both reading the integers staged in the reserve (chains, a long k),
+///      │                           the GPU's on the fp32 activation, then on the activation rounded to bf16
+///      ├─ sharing rounded          the GPU's rounded rows on a bf16 weight read as published beside the ANE's fp16 program on the same copy
+///      │                           (chains, a long k: the Standard's own pair, `gpu/bf16act+ane/fp16`)
 ///      └─ witnesses, end
 ///
 ///     every timed step goes through `Context.guarded`: measured, then a pulse (`Regime`), and again after a wait while the pulse or the
@@ -72,6 +75,26 @@ extension Diagnostic {
         package static let chainWarm = 0.15, chainWarmCalls = 3, chainWindow = 0.4, chainCalls = 8, chainCap = 1.5
         /// **The end's witnesses, read in rounds** (the heat's numerator): three rounds a fifth of a second apart, the fast side kept.
         package static let endRounds = 3, endPause = 0.2
+
+        /// **What each stage's seconds buy: the error the plan would make without them** (`Diagnostic.StageTime.removes`). A stage that
+        /// removes no named bias has no place in the map; a stage added comes with its line here (a test holds every stage to one).
+        package static let biases: [String: String] = [
+            "setup": "a first call's compilation and buffers' first touch counted in a figure: paid before any figure is timed",
+            "preparation": "the weight's widening or staging counted as compute: its CPU seconds per value, measured apart, priced per call — a K-quant's own (its super-blocks decoded and transposed, or copied as stored), not a bf16 shift's",
+            "witnesses start": "a Mac's state read as its speed: each engine's rate at the start, against which the end tells the heat",
+            "bandwidth": "a memory-bound product priced at the arithmetic rate: the memory's own rate",
+            "disk": "every volume and quality of service read at one speed: the stream's own volume, by class",
+            "solos fp32": "an engine's rate guessed from one shape, or bent by one disturbed figure: the lines (fixed cost, rate, per-weight cost) of the GPU, the AMX and the ANE, each figure far over the line of the others measured once more, and the GPU's bf16 kernel at the tile chosen among candidates",
+            "stairs": "the GPU's time taken as smooth in rows: its steps at the tile's edges",
+            "attention": "an attention priced as products: its kernels and fused forms timed as they run, the form chosen among candidates, and the GPU's wake a call pays after the CPU left it idle (the render's QK-norm and RoPE)",
+            "sharing": "two engines' rates added as if each ran alone, or one disturbed chain read as the set: what each keeps beside the other (κ), by weight length, and a third chain where two at one shape disagree beyond the map's noise",
+            "solos 8-bit and rounded": "a rounded, 8-bit or K-quant product priced on the fp32 line, or on a line one disturbed figure bends: their own lines, the rounded ones on eight shapes so a disturbed figure is told apart and measured once more, their tiles chosen on rounds paired with the fastest's, a candidate in doubt measured again beside it",
+            "thin products": "a product of few rows or a short side priced on the wide line, or its fixed cost traded against its streaming, or a call's completion latency read as its cost: its own per-row and per-weight costs, a shape that does almost no work to hold the fixed cost, each figure on the fast mode of fifteen calls",
+            "sharing int8": "the GPU and the ANE on the integers priced as two solos: what each keeps beside the other, at every weight length even when the model gives the ANE nothing (the last rows it had), and a third chain where two at one shape disagree beyond the map's noise",
+            "sharing rounded": "the GPU's rounded rows and the ANE on one bf16 copy priced as two solos, or a gain within the error of its figure taken for one: what each keeps beside the other, and a third chain where two at one shape disagree beyond the map's noise, the median of three read and its MAD for the error; the ANE's per-call widening of the copy is the preparation's rate, not a second probe; every weight length measured, with the last rows the model gave when it gives the ANE nothing",
+            "witnesses end": "the heat read as noise, or a burst read as heat: the end's witnesses in three rounds, their ratio applied to every rate",
+            "fit": "none: the fit's own seconds, so that the map's total is accounted for",
+        ]
         /// Products the fit never saw, for `validate`: the truth test of a model (a probe is judged against a long measure).
         package static let validationShapes: [(m: Int, k: Int, n: Int)] = [(2048, 3840, 10240), (1536, 4096, 4096), (3072, 3072, 3072), (1024, 2048, 8192)]
 
@@ -181,7 +204,7 @@ extension Diagnostic {
                     let mine = m.solos.filter { $0.kernel == k.description && $0.seconds > 0 }
                     // A product's line has its shape's terms (the weight's lift, the host's passes, the rate by k): its error is the model's seconds at the shape.
                     let shaped = mine.compactMap { s -> Double? in
-                        guard [.fp32, .bf16, .bf16act, .int8, .q8, .fp16].contains(k.form), s.shape.count == 3,
+                        guard k.form.isProduct, s.shape.count == 3,
                               let t = model.alone(k, rows: s.shape[0], k: s.shape[1], n: s.shape[2]) else { return nil }
                         return abs(t / s.seconds - 1)
                     }
@@ -194,9 +217,7 @@ extension Diagnostic {
                 }
                 details.stairs = Fit.stairs(m.stairs.map { ($0.rows, $0.seconds) })
                 for set in Set(m.trials.map(\.set)) {
-                    let passes = Set(m.trials.filter { $0.set == set }.map(\.pass))
-                    let from = passes.contains(3) ? 2 : (passes.max() ?? 0)
-                    details.sharing[set] = Fit.overlap(set: set, trials: m.trials.filter { $0.pass >= from }, model: model)
+                    details.sharing[set] = Fit.overlap(set: set, trials: Fit.chains(set: set, trials: m.trials, model: model).used, model: model)
                 }
                 details.aneCompile = context.aneCompile()
                 let g = Kernel(.gpu, .fp32), a = Kernel(.ane, .fp16)
@@ -298,7 +319,7 @@ extension Diagnostic {
 
         // MARK: - The context
 
-        enum Truth: Hashable { case fp32, rounded, int8, roundedInt8, q8 }
+        enum Truth: Hashable { case fp32, rounded, int8, roundedInt8, q8, roundedQ8, q4k, roundedQ4k }
         struct TruthKey: Hashable { let truth: Truth; let m, k, n: Int }
 
         struct Buffers { let a, b, c: MTLBuffer }
@@ -312,8 +333,18 @@ extension Diagnostic {
             return now() - t
         }
 
-        /// **A steady figure**: runs until one is no longer 10 % faster than the one before (at most six), then a few more
-        /// when the runs are short, and the median. A long run (> 150 ms) is its own figure.
+        /// **A steady figure**: runs until one is no longer 10 % faster than the one before (at most six), then more of them when the
+        /// runs are short — `shortCalls` in all, or as many as `shortWindow` holds, four at least — read as a chain is (`figure`: the
+        /// median, or the median of the quickest third when the calls disagree). Between 30 and 150 ms the median of two; a longer run
+        /// is its own figure.
+        ///
+        /// **A short call's completion reaches the CPU in one of two modes.** An empty submission's latency (the pulse's `late`) is
+        /// bimodal on an M5 Pro — 0.13–0.2 ms or 0.7–1.0 ms, about one call in two —, and a median of four sub-millisecond calls fell
+        /// in either: two maps read the same thin product 62 to 238 % apart (`gpu/bf16act 256x1536x3072`: 0.58 ms against 0.26), and
+        /// 40 classes of 342 changed route. A render pays that latency once per command buffer of many products, never per product: the
+        /// fast mode is the product's cost. With half the calls in the slow mode, the quickest third of fifteen holds fast ones only
+        /// with a probability of 0.94 (binomial); `shortWindow` bounds a figure at a fiftieth of a second, so that from 5 ms up the four
+        /// calls and their median are what they were.
         static func steady(_ body: () -> Bool) -> Double? {
             var previous = Double.infinity, last = Double.infinity
             for i in 0..<6 {
@@ -321,15 +352,24 @@ extension Diagnostic {
                 last = t
                 if i >= 1, t >= previous * 0.9 {
                     var sample = [t]
-                    for _ in 0..<(t < 0.03 ? 3 : t < 0.15 ? 1 : 0) {
+                    for _ in 0..<(steadyCalls(t) - 1) {
                         guard let u = timed(body) else { return nil }
                         sample.append(u)
                     }
-                    return Fit.median(sample)
+                    return figure(sample)
                 }
                 previous = t
             }
             return last
+        }
+
+        /// A short figure's calls (`steady`): fifteen at most, as many as a fiftieth of a second holds, four at least under 30 ms.
+        package static let shortCalls = 15, shortWindow = 0.02
+        /// The calls `steady` reads after the first steady one, that one included.
+        package static func steadyCalls(_ t: Double) -> Int {
+            if t >= 0.15 { return 1 }
+            if t >= 0.03 { return 2 }
+            return min(shortCalls, max(4, Int(shortWindow / max(t, 1e-9))))
         }
 
         /// **A chain's figure** (`chainWarm`…): the median call over the window after the ramp (its quickest third when the calls disagree,
@@ -373,6 +413,8 @@ extension Diagnostic {
             var truths: [TruthKey: [Double]] = [:]
             var massives: [Massive] = []
             var floors: [[Int]: Double] = [:]
+            /// The solos `again` has measured once more (kernel and shape): never a second time.
+            var measuredAgain: Set<String> = []
             var dirty = 0
             var clock = CapacityProbes.now()
             /// The sizes in force: the tier the memory was planned at, stepped down once the witnesses have said what the engines do.
@@ -402,7 +444,7 @@ extension Diagnostic {
                 self.validating = validating
                 let all = sizes.products + (validating ? CapacityProbes.validationShapes : [])
                 operands = Operands(Operands.sizes(products: all.map { ($0.m, $0.k, $0.n, WeightKind.q8) }))
-                alone = try GEMM(plan: .probing(bf16Weights: true, roundedActivations: true))
+                alone = try GEMM(plan: .probing(bf16Weights: true, int8Weights: true, q8Weights: true, roundedActivations: true))
                 both = try GEMM(plan: .probing(amx: true, int8Weights: true, q8Weights: true))
                 neural = try GEMM(plan: .probing(ane: true))
                 three = try GEMM(plan: .probing(amx: true, ane: true))
@@ -463,28 +505,56 @@ extension Diagnostic {
                 case .q8:
                     result = Diagnostic.exactRows(rows, a: a, q: operands.q.base.assumingMemoryBound(to: Int8.self),
                                                   blockScales: operands.q8Scales.floats(), block: Diagnostic.q8Block, k: k, n: n)
+                case .roundedQ8:
+                    var rounded = [Float](repeating: 0, count: rows.count * k)
+                    for (i, row) in rows.enumerated() { for j in 0..<k { rounded[i * k + j] = Half.bf16.round(a[row * k + j]) } }
+                    result = rounded.withUnsafeBufferPointer {
+                        Diagnostic.exactRows(Array(0..<rows.count), a: $0.baseAddress!, q: operands.q.base.assumingMemoryBound(to: Int8.self),
+                                             blockScales: operands.q8Scales.floats(), block: Diagnostic.q8Block, k: k, n: n)
+                    }
+                case .q4k, .roundedQ4k:
+                    // The published values of the Q4_K blocks, widened into `b` by the engine's own decoder (ggml's arithmetic at the
+                    // bit), which `restoreB` puts back.
+                    Widen.dequantizePacked(operands.kquant.base, kind: .q4_k, rows: n, columns: k, transposing: true, into: operands.b.floats())
+                    dirty = max(dirty, k * n)
+                    if kind == .q4k {
+                        result = Diagnostic.exactRows(rows, a: a, b: operands.b.floats(), k: k, n: n)
+                    } else {
+                        var rounded = [Float](repeating: 0, count: rows.count * k)
+                        for (i, row) in rows.enumerated() { for j in 0..<k { rounded[i * k + j] = Half.bf16.round(a[row * k + j]) } }
+                        result = rounded.withUnsafeBufferPointer {
+                            Diagnostic.exactRows(Array(0..<rows.count), a: $0.baseAddress!, b: operands.b.floats(), k: k, n: n)
+                        }
+                    }
+                    restoreB()
                 }
                 truths[key] = result
                 return result
             }
 
-            /// bf16's own rounding of this product: the floor no fp16 path can pass under (invariant 3). `truthKind`: the exact
-            /// product it is the floor of — the widened weight's (`fp32`) or the integers' with their rotation (`int8`).
+            /// bf16's own rounding of this product: the floor no half-precision path can pass under (invariant 3). `truthKind`: the exact
+            /// product it is the floor of — the widened weight's (`fp32`), the integers' with their rotation (`int8`), a Q8_0's (`q8`).
             func aneThreshold(_ truthKind: Truth, m: Int, k: Int, n: Int) -> Double {
-                let ints = truthKind == .int8
-                if let f = floors[[m, k, n, ints ? 1 : 0]] { return max(Diagnostic.fp32Threshold, Diagnostic.floorMargin * f) }
+                let (exact, witnessKind, code): (Truth, Truth, Int) = switch truthKind {
+                case .int8, .roundedInt8: (.int8, .roundedInt8, 1)
+                case .q8, .roundedQ8: (.q8, .roundedQ8, 2)
+                case .q4k, .roundedQ4k: (.q4k, .roundedQ4k, 3)
+                case .fp32, .rounded: (.fp32, .rounded, 0)
+                }
+                if let f = floors[[m, k, n, code]] { return max(Diagnostic.fp32Threshold, Diagnostic.floorMargin * f) }
                 let rows = Diagnostic.sampleRows(m, count: Diagnostic.sampledRows)
-                let witness = truth(ints ? .roundedInt8 : .rounded, m: m, k: k, n: n).map { Double(Half.bf16.round(Float($0))) }
-                let floor = Diagnostic.judge(witness.map(Float.init), truth(truthKind, m: m, k: k, n: n), columns: rows.count, threshold: 1).error
-                floors[[m, k, n, ints ? 1 : 0]] = floor
+                let witness = truth(witnessKind, m: m, k: k, n: n).map { Double(Half.bf16.round(Float($0))) }
+                let floor = Diagnostic.judge(witness.map(Float.init), truth(exact, m: m, k: k, n: n), columns: rows.count, threshold: 1).error
+                floors[[m, k, n, code]] = floor
                 return max(Diagnostic.fp32Threshold, Diagnostic.floorMargin * floor)
             }
 
-            /// The truth of a product and, for the ANE, bf16's floor under it — both computed before a weight is staged in `b`: a truth
-            /// not yet kept restores `b` from its bf16 copy, and would take the staged integers away.
+            /// The truth of a product and, for a half-precision route (the ANE's, an 8-bit product on a rounded activation), bf16's floor
+            /// under it — both computed before a weight is staged in `b`: a truth not yet kept restores `b` from its bf16 copy, and would
+            /// take the staged integers away.
             func prime(_ kind: Truth, ane: Bool, m: Int, k: Int, n: Int) {
                 _ = truth(kind, m: m, k: k, n: n)
-                if ane { _ = aneThreshold(kind == .int8 ? .int8 : .fp32, m: m, k: k, n: n) }
+                if ane { _ = aneThreshold(kind, m: m, k: k, n: n) }
             }
 
             /// Keeps the judge's word on `name` (a kernel, or a set of engines): the worst error in proportion to its threshold, and a verdict
@@ -511,7 +581,7 @@ extension Diagnostic {
             /// kernel (or the set) the judge's word is kept under.
             func judged(_ name: String, _ truthKind: Truth, ane: Bool, m: Int, k: Int, n: Int, _ body: () -> Bool) -> (pass: Bool, error: Double)? {
                 let exact = truth(truthKind, m: m, k: k, n: n)
-                let threshold = ane ? aneThreshold(truthKind == .int8 ? .int8 : .fp32, m: m, k: k, n: n) : Diagnostic.fp32Threshold
+                let threshold = ane ? aneThreshold(truthKind, m: m, k: k, n: n) : Diagnostic.fp32Threshold
                 let rows = Diagnostic.sampleRows(m, count: Diagnostic.sampledRows)
                 let out = operands.c.floats()
                 Diagnostic.poison(out, rows: rows, n: n)
@@ -596,9 +666,10 @@ extension Diagnostic {
 
             /// The int8 operands as a render stages them (`WeightProducts.int8Plan`: the integers at the reserve's head, the scale
             /// after, the rotation of group 256), no AMX columns; `nil` where the plan does not fit or K is not a whole number of groups.
-            func int8Plan(_ k: Int, _ n: Int) -> WeightProducts.Int8Plan? {
+            func int8Plan(_ k: Int, _ n: Int, rounded: Bool = false) -> WeightProducts.Int8Plan? {
                 guard (k * n) % 2 == 0, k % Diagnostic.int8Group == 0 else { return nil }
-                return WeightProducts.int8Plan(k: k, n: n, capacity: k * n, perColumn: false, group: Diagnostic.int8Group, amxColumns: 0)
+                return WeightProducts.int8Plan(k: k, n: n, capacity: k * n, perColumn: false, group: Diagnostic.int8Group, amxColumns: 0,
+                                               rounded: rounded)
             }
 
             /// The integers and their scale into the reserve (`b`), which the bf16 copy restores.
@@ -649,13 +720,21 @@ extension Diagnostic {
                     m.diskBandwidth = readings?[.standard]?.rate
                     m.diskClasses = Dictionary(uniqueKeysWithValues: (readings ?? [:]).map { ($0.key.rawValue, $0.value) })
                 }
-                try stage("solos fp32") { solos([.gpu_fp32], &m, shapes: sizes.product); solos([.amx_fp32, .ane_fp16], &m, shapes: sizes.product, chained: true); solos([.ane_fp16], &m, shapes: sizes.small, chained: true); solos([.gpu_bf16], &m) }
+                try stage("solos fp32") { solos([.gpu_fp32], &m, shapes: sizes.product); solos([.amx_fp32, .ane_fp16], &m, shapes: sizes.product, chained: true); solos([.ane_fp16], &m, shapes: sizes.small, chained: true); chooseTiles(.gpu_bf16, &m); solos([.gpu_bf16], &m) }
                 try stage("stairs") { stairs(&m) }
                 try stage("attention") { try attention(&m) }
                 try stage("sharing") { sharing(&m) }
-                try stage("solos 8-bit and rounded") { solos([.gpu_bf16act, .gpu_int8, .gpu_q8], &m); solos([.ane_int8], &m, shapes: sizes.integers + sizes.small, chained: true) }
+                try stage("solos 8-bit and rounded") {
+                    chooseTiles(.gpu_bf16act, &m); chooseTiles(.gpu_int8, &m); chooseTiles(.gpu_int8act, &m)
+                    // The rounded kernels the Standard and the Compact run on every large class take the fp32 solos' shapes too: eight points,
+                    // so that a figure the Mac disturbed is told from the line and left out (`CapacityFit.kept`) — of three, none can be.
+                    solos([.gpu_bf16act, .gpu_int8act], &m, shapes: sizes.solo + sizes.product)
+                    solos([.gpu_int8, .gpu_q8, .gpu_q8act, .gpu_q4kact], &m)
+                    solos([.ane_int8], &m, shapes: sizes.integers + sizes.small, chained: true)
+                }
                 try stage("thin products") { thinSolos(&m) }
                 try stage("sharing int8") { sharingInt8(&m) }
+                try stage("sharing rounded") { sharingRounded(&m) }
                 d.massive = massives
                 try stage("witnesses end") {
                     restoreB()
@@ -762,10 +841,12 @@ extension Diagnostic {
 
             /// Each stage's seconds with its projection, and the fixed costs beside them.
             func stageTimes(fit: Double) -> [String: Diagnostic.StageTime] {
-                var out = seconds.mapValues { Diagnostic.StageTime(seconds: $0) }
-                for (name, p) in projected { out[name] = Diagnostic.StageTime(seconds: seconds[name] ?? 0, projected: p) }
-                out["setup"] = Diagnostic.StageTime(seconds: setup)
-                out["fit"] = Diagnostic.StageTime(seconds: fit)
+                var out: [String: Diagnostic.StageTime] = [:]
+                for name in Set(seconds.keys).union(projected.keys) {
+                    out[name] = Diagnostic.StageTime(seconds: seconds[name] ?? 0, projected: projected[name], removes: CapacityProbes.biases[name])
+                }
+                out["setup"] = Diagnostic.StageTime(seconds: setup, removes: CapacityProbes.biases["setup"])
+                out["fit"] = Diagnostic.StageTime(seconds: fit, removes: CapacityProbes.biases["fit"])
                 return out
             }
 
@@ -781,7 +862,9 @@ extension Diagnostic {
                 }
                 return [WeightKind.bf16.rawValue: [WeightPath.widened.rawValue: per("bf16"), WeightPath.bf16.rawValue: per("bf16 copy")],
                         WeightKind.int8.rawValue: [WeightPath.widened.rawValue: per("int8 convrot"), WeightPath.native.rawValue: per("int8 copy")],
-                        WeightKind.q8.rawValue: [WeightPath.widened.rawValue: per("q8_0"), WeightPath.native.rawValue: per("q8_0 copy")]]
+                        WeightKind.q8.rawValue: [WeightPath.widened.rawValue: per("q8_0"), WeightPath.native.rawValue: per("q8_0 copy")],
+                        // A K-quant has no `WeightKind`: the fit reads these two into `kquantPreparation` and `kquantStaging`.
+                        CapacityModel.kquantKind: [WeightPath.widened.rawValue: per("q4_k"), WeightPath.native.rawValue: per("q4_k copy")]]
             }
 
             /// The same product on each engine alone, median of five (after two warm-ups).

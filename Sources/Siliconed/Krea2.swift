@@ -139,8 +139,9 @@ package final class Krea2DiT: BoundaryRecording, PhaseTiming {
     /// The products by a weight, and their LoRA stack.
     private let products: WeightProducts
 
+    /// `plan`: the plan its products run under — the process's by default; a check passes the route it judges.
     package init(artifact: Artifact, latentHeight: Int, latentWidth: Int, maxText: Int = 512,
-                neuralEngine: Bool = EngineSettings.effective.plan.usesANE, lora: LoRA? = nil) throws {
+                accelerators: Accelerators = .process, lora: LoRA? = nil, plan: CapacityPlan? = nil) throws {
         guard artifact.header["kind"] as? String == "krea2-turbo-dit" else {
             throw Artifact.Failure.badHeader("map \(artifact.header["kind"] ?? "?"): krea2-turbo-dit expected")
         }
@@ -152,7 +153,7 @@ package final class Krea2DiT: BoundaryRecording, PhaseTiming {
         self.artifact = artifact
         self.config = Config(header: artifact.header)
         self.prefetcher = Prefetcher(artifact: artifact)
-        self.gemm = try GEMM(neuralEngine: neuralEngine)
+        self.gemm = try GEMM(plan: plan ?? EngineSettings.effective.plan, accelerators: accelerators)
         self.elementwise = try ElementwiseGPU(device: gemm.device, queue: gemm.queue)
         self.latentHeight = latentHeight
         self.latentWidth = latentWidth
@@ -483,7 +484,7 @@ package final class Krea2DiT: BoundaryRecording, PhaseTiming {
             let split: HeadSplitAttention
             if let s = splits[n] { split = s } else {
                 split = try HeadSplitAttention(device: gemm.device, queue: gemm.queue, heads: config.heads, sequence: n,
-                                               headDim: config.headDim, kvHeads: config.kvHeads, cpuHeads: cut.cpuHeads, gpuKernel: cut.gpuKernel)
+                                               headDim: config.headDim, kvHeads: config.kvHeads, cpuHeads: cut.cpuHeads, gpuKernel: cut.gpuKernel, tile: cut.tile)
                 splits[n] = split
             }
             let qb = try gemm.wrap(UnsafeMutableRawPointer(q), bytes: maxRows * d * 4, name: "q")
@@ -572,7 +573,7 @@ package final class Krea2TextFusion: BoundaryRecording {
     /// The products by a weight, and their LoRA stack (expanded at each call into `loraBas`/`loraHaut`).
     private let products: WeightProducts
 
-    package init(artifact: Artifact, maxTokens: Int, neuralEngine: Bool = EngineSettings.effective.plan.usesANE, lora: LoRA? = nil) throws {
+    package init(artifact: Artifact, maxTokens: Int, accelerators: Accelerators = .process, lora: LoRA? = nil) throws {
         guard artifact.header["kind"] as? String == "krea2-turbo-dit" else {
             throw Artifact.Failure.badHeader("the text fusion lives in the Krea 2 DiT map")
         }
@@ -580,7 +581,7 @@ package final class Krea2TextFusion: BoundaryRecording {
         self.artifact = artifact
         self.outDim = config.dim
         self.eps = Float(config.eps)
-        self.gemm = try GEMM(neuralEngine: neuralEngine)
+        self.gemm = try GEMM(accelerators: accelerators)
         self.rows = maxTokens * Shape.layers
         let rank = lora?.maxRank ?? 0
         // The arena is its slices (`Krea2TextFusion.slices`), each on its page: the function the memory

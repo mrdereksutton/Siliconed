@@ -67,11 +67,18 @@ extension RemoteControl {
 
     // ── diagnose ──
 
-    /// `diagnose [--issue]`: **« Measure This Mac », from the terminal** — the sheet opens in the
+    /// `diagnose [--issue|--stop]`: **« Measure This Mac », from the terminal** — the sheet opens in the
     /// app and the diagnostic runs (~1 min, no weights, the queue held meanwhile); the answer is the
     /// report, the same JSON the issue carries. `--issue` then does what the sheet's
     /// « Open a GitHub Issue » does: GitHub's form opens in the browser, prefilled — the user submits it.
     func diagnose(_ arguments: [String], _ c: Connection) throws {
+        // The sheet's « Stop », from another connection: the diagnose that waits on the measure answers `stopped`.
+        if arguments == ["--stop"] {
+            let running = app.diagnosticRunning
+            app.cancelDiagnostic()
+            finish(c, ["ok": true, "stopped": running])
+            return
+        }
         let issue = arguments.contains("--issue")
         if let unknown = arguments.first(where: { $0 != "--issue" }) {
             throw Refusal("usage", String(localized: "unknown flag: \(unknown)"), help: "silicontrol help diagnose")
@@ -119,11 +126,16 @@ extension RemoteControl {
         var detail = Detail.normal
         /// `--solver NAME`: the rack's Solver (`Request.solver`), More Solvers and `AppState.solverFamilies` only.
         var solver = Solver.euler
-        /// `--ane`, `--no-ane`: the rack's fp32 tag (`Job.neuralEngine`); `nil`, the model's choice.
-        var neuralEngine: Bool?
+        /// `--accelerators`, `--no-accelerators` (`--ane`, `--no-ane`, their former names): the DiT box's switch (`Job.accelerators`);
+        /// `nil`, the model's choice.
+        var accelerators: Bool?
         var loras: [(name: String, strength: Double)] = []
         /// The `--ref`, in their order: the first is image 1, the one edited.
         var references: [String] = []
+        /// `--image IMAGE|i7`: the starting image of an img2img (a model with "start_image": true); `--strength`: its strength,
+        /// diffusers' (the family's, `StartImage.defaultStrength`, when left out).
+        var image: String?
+        var strength: Double?
         /// `nil`: like the app's « Preview at every step » switch.
         var previews: Bool?
         var wait = false
@@ -256,28 +268,95 @@ extension RemoteControl {
 
     // ── set ──
 
-    /// **`set faster-rendering on|off [--model ID]`: one model's Settings switch, from the terminal** —
-    /// `AppState.setFasterRendering(_:for:)`, so the choice is written and the window's switch follows, exactly as a click. The
-    /// choice is per model (per installed version, like the Neural Engine's), so the model is named; without `--model`, the
-    /// model in the rack. Only with the queue empty, so that a series is not started under one recipe and finished under the
-    /// other (a job keeps the value it was queued with: `RenderSettings.fasterRendering`). Setting the value it already has
-    /// is not a change.
-    func set(_ arguments: [String]) throws -> [String: Any] {
-        let usage = Refusal("usage", "set faster-rendering on|off [--model ID]")
-        guard arguments.count == 2 || (arguments.count == 4 && arguments[2] == "--model"),
-              arguments[0] == "faster-rendering", ["on", "off"].contains(arguments[1]) else { throw usage }
-        let id = arguments.count == 4 ? arguments[3] : app.identifier
-        guard let card = app.cards.first(where: { $0.id == id }) else {
-            let visible = visibleCards(app.library).map(\.id).joined(separator: ", ")
-            throw Refusal("model", String(localized: "unknown model: \"\(id)\""), help: String(localized: "models: \(visible)"))
+    /// **`set faster-rendering|accelerators on|off [--model ID]` and `set beta [OPTION on|off]`: Settings' switches, from the
+    /// terminal.** Each goes through the function its switch calls — `AppState.setFasterRendering(_:for:)`, `setAccelerators(_:for:)`,
+    /// the Beta properties — so the choice is written and the window follows, exactly as a click. A model's choice is per
+    /// installed version; without `--model`, the model in the rack. Only with the queue empty, so that a series is not started
+    /// under one recipe and finished under the other (a job keeps the value it was queued with:
+    /// `RenderSettings.fasterRendering`). Setting the value it already has is not a change. The Beta options are the window's
+    /// switches, which have no such wait, and nor do these. `set save-images FOLDER|off` is Settings ▸ General's Save Every
+    /// Image To… (`EveryImage`), this Mac's: an existing folder, never created, as the panel only offers one — Fork: but
+    /// ~/Downloads/Siliconed, the default, which is created when missing, as Settings' Incognito and the writer do.
+    func set(_ arguments: [String], cwd: String) throws -> [String: Any] {
+        let order: SetOrder
+        switch SetOrder.parse(arguments) {
+        case .success(let parsed): order = parsed
+        case .failure(.usage(let line)): throw Refusal("usage", line, help: "silicontrol help set")
+        case .failure(.unknownBeta(let name)):
+            throw Refusal("usage", String(localized: "unknown Beta option: \"\(name)\""),
+                          help: String(localized: "Beta options: \(BetaOption.names)"))
         }
-        guard !app.busy, app.forgeInProgress == nil, !app.diagnosticRunning, app.awaitingLicense.isEmpty else {
-            throw Refusal("busy", String(localized: "a render, an installation or the diagnostic is running"),
-                          help: "silicontrol wait, then retry")
+        switch order {
+        case .saveImagesState: return ["ok": true, "save_images": EveryImage.shared.folder?.path ?? NSNull()]
+        case .saveImages(let typed):
+            let previous: Any = EveryImage.shared.folder?.path ?? NSNull()
+            if let typed {
+                let path = absolute(typed, cwd)
+                if path == EveryImage.downloads.path {
+                    try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+                }
+                var isFolder: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: path, isDirectory: &isFolder), isFolder.boolValue else {
+                    throw Refusal("write", String(localized: "not a folder: \(path)"), help: String(localized: "give an existing folder"))
+                }
+                EveryImage.shared.folder = URL(fileURLWithPath: path, isDirectory: true)
+            } else {
+                EveryImage.shared.folder = nil
+            }
+            return ["ok": true, "save_images": EveryImage.shared.folder?.path ?? NSNull(), "previous": previous]
+        case .betaList: return ["ok": true, "beta": betaState()]
+        case .beta(let option, let on): return setBeta(option, on)
+        case .perModel(let kind, let on, let model):
+            let id = model ?? app.identifier
+            guard let card = app.cards.first(where: { $0.id == id }) else {
+                let visible = visibleCards(app.library).map(\.id).joined(separator: ", ")
+                throw Refusal("model", String(localized: "unknown model: \"\(id)\""), help: String(localized: "models: \(visible)"))
+            }
+            guard !app.busy, app.forgeInProgress == nil, !app.diagnosticRunning, app.awaitingLicense.isEmpty else {
+                throw Refusal("busy", String(localized: "a render, an installation or the diagnostic is running"),
+                              help: "silicontrol wait, then retry")
+            }
+            switch kind {
+            case .fasterRendering:
+                // A Beta option, like --solver's More Solvers: turning it on is refused while the option is off (off stays possible:
+                // it is what a render takes anyway, and `measure` puts a value back through here).
+                if on, !app.fasterRenderingBeta {
+                    throw Refusal("faster_rendering", String(localized: "Faster Rendering is offered only when its Beta option is on"),
+                                  help: String(localized: "turn on Faster Rendering in Settings (⌘,), under Advanced › Beta"))
+                }
+                let previous = app.fasterRendering(for: card.id)
+                app.setFasterRendering(on, for: card.id)
+                return ["ok": true, "model": card.id, "faster_rendering": app.fasterRendering(for: card.id), "previous": previous]
+            case .accelerators:
+                // The switch is greyed where this Mac is not measured yet, or its measure chooses no accelerator (`DiTSwitches`):
+                // nothing to choose, either way.
+                if let why = DiTSwitches.acceleratorsUnavailable(measured: app.settingsRead, offered: app.acceleratorsOffered) {
+                    throw Refusal("accelerators", AcceleratorWords.unavailable(why), help: "silicontrol diagnose")
+                }
+                let previous = app.accelerators(for: card.id)
+                app.setAccelerators(on, for: card.id)
+                return ["ok": true, "model": card.id, "accelerators": app.accelerators(for: card.id), "previous": previous]
+            }
         }
-        let previous = app.fasterRendering(for: card.id)
-        app.setFasterRendering(arguments[1] == "on", for: card.id)
-        return ["ok": true, "model": card.id, "faster_rendering": app.fasterRendering(for: card.id), "previous": previous]
+    }
+
+    /// The four Beta options as the window's switches hold them (this Mac's preferences, shown by Settings whichever Mac computes).
+    func betaState() -> [String: Any] {
+        var o: [String: Any] = [:]
+        // JSON keys are snake_case; the name typed after `set beta` keeps its hyphens.
+        for option in BetaOption.allCases { o[option.key] = local.beta(option) }
+        return o
+    }
+
+    /// **`set beta OPTION on|off`**: the property the switch is bound to, on this Mac's state — and on the one the window shows,
+    /// when it computes elsewhere, whose copy of the preference would otherwise stay as it was at the switch (the rack there
+    /// reads it). Each option's own effect is its property's (`AppState.developerMode`'s `didSet` takes a solver the models no
+    /// longer offer out of the form; `negativeLoRAStrengths`' brings the strengths back to 0).
+    func setBeta(_ option: BetaOption, _ on: Bool) -> [String: Any] {
+        let previous = local.beta(option)
+        local.setBeta(option, on)
+        if app !== local { app.setBeta(option, on) }
+        return ["ok": true, "option": option.rawValue, "enabled": local.beta(option), "previous": previous, "beta": betaState()]
     }
 
     // ── history, save ──
@@ -291,9 +370,23 @@ extension RemoteControl {
         return ["ok": true, "images": app.history.prefix(n).map { json($0) }]
     }
 
+    /// **`save i7 [i8 …] DEST [--format png|jpeg|heic]`**: « Save… » and « Export… » without the panel. One image to a file takes its format from the
+    /// file's extension (.png, .jpg/.jpeg, .heic), as the panel's Format pop-up does; into a folder, each image under its export name, in `--format`
+    /// (PNG by default). Only PNG keeps the prompt, the seed and the model.
     func save(_ arguments: [String], cwd: String) throws -> [String: Any] {
+        var arguments = arguments
+        var kind = ExportFormat.png
+        if let i = arguments.firstIndex(of: "--format") {
+            guard i + 1 < arguments.count else { throw Refusal("usage", String(localized: "--format expects a value")) }
+            guard let k = ExportFormat(extension: arguments[i + 1]) else {
+                let v = arguments[i + 1]
+                throw Refusal("usage", String(localized: "--format expects png, jpeg or heic, not \"\(v)\""))
+            }
+            kind = k
+            arguments.removeSubrange(i...(i + 1))
+        }
         guard arguments.count >= 2, let destination = arguments.last else {
-            throw Refusal("usage", "save <i7> [i8 …] <file.png|file.jpg|folder>")
+            throw Refusal("usage", "save <i7> [i8 …] <file.png|file.jpg|file.heic|folder> [--format png|jpeg|heic]")
         }
         let entries = try arguments.dropLast().map { a -> Entry in
             guard let e = image(a) else {
@@ -304,14 +397,14 @@ extension RemoteControl {
         let target = absolute(destination, cwd)
         let ext = (target as NSString).pathExtension.lowercased()
         var files: [[String: Any]] = []
-        if entries.count == 1, ["png", "jpg", "jpeg"].contains(ext) {
+        if entries.count == 1, ExportFormat(extension: ext) != nil {
             // A named file: written, or replaced — it is « Save as ».
             try createFolder((target as NSString).deletingLastPathComponent)
             try writeFile(entries[0], target)
             files.append(["image": entries[0].name, "path": target])
         } else {
             try createFolder(target)
-            for e in entries { files.append(["image": e.name, "path": try write(e, in: target)]) }
+            for e in entries { files.append(["image": e.name, "path": try write(e, in: target, as: kind)]) }
         }
         return ["ok": true, "files": files]
     }
@@ -405,8 +498,8 @@ extension RemoteControl {
 
     /// In a folder, under the app's export name (`AppState.exportName`: the model, the LoRAs, the steps
     /// if they are not the model's, the format, the seed). Never over an existing file (`-2`, `-3`…).
-    func write(_ e: Entry, in folder: String) throws -> String {
-        let path = AppState.freeURL(in: URL(fileURLWithPath: folder), base: app.exportName(e), ext: "png").path
+    func write(_ e: Entry, in folder: String, as kind: ExportFormat = .png) throws -> String {
+        let path = AppState.freeURL(in: URL(fileURLWithPath: folder), base: app.exportName(e), ext: kind.fileExtension).path
         try writeFile(e, path)
         return path
     }

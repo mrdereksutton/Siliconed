@@ -9,6 +9,7 @@ import Metal
 ///     scratch × W       matmul2d  bfloat × bfloat → float     (a bf16 weight, as published)
 ///                                 bfloat × int8_t → float     (a published int8 weight, its scale after)
 ///                                 bfloat × float → float      (Q8_0: q · s into threadgroup memory)
+///                                 bfloat × half → float       (Q4_K, Q5_K: sc · q per super-block, `KQuantKernels`)
 ///
 /// What sets it apart:
 ///
@@ -19,11 +20,15 @@ import Metal
 ///   - **rounded by the engine's own code, not `bfloat(x)`**: the conversion's rounding on a GPU without
 ///     bf16 in hardware is the compiler's to choose; the integer sequence (add 0x7FFF and the lowest kept
 ///     bit, shift) is torch's rounding on every Mac, and what the check compares to diffusers' bf16;
-///   - **the tile is 64 × 32, as the fp32 operand's**, the one the map measured at 15.3 TFLOP/s on an
-///     M5 Pro (`bf16 → fp32`, 1024 × 3840 × 10240).
+///   - **the tile is the map's** (`MatmulTile`, `gpu/bf16act` and `gpu/int8act`), compiled apart; the kernels here are the
+///     standard ones (64 × 32 for a bf16 weight, 64 × 64 for an int8 one), and the Q8_0 one keeps its 64 × 64 (its weight is staged in
+///     threadgroup memory as `q · s` in fp32 — exact, but an fp32 operand, which the tensor units do not take at their half-precision
+///     rate: the map says what it is worth).
 package final class BFloatKernels {
     let round, byColumns, byRows, int8: MTLComputePipelineState
     let blocks: MTLComputePipelineState?
+    /// The K-quants' kernels (`KQuantKernels`, a library of their own: a refusal there widens the K-quants and nothing else).
+    let kquant: KQuantKernels?
 
     static let source = """
     #include <metal_stdlib>
@@ -133,6 +138,7 @@ package final class BFloatKernels {
               let byRows = pipeline("linear_nk"), let int8 = pipeline("linear_int8") else { return nil }
         self.round = round; self.byColumns = byColumns; self.byRows = byRows; self.int8 = int8
         blocks = pipeline("linear_q8")
+        kquant = KQuantKernels(device: device, options: options)
     }
 }
 
@@ -158,7 +164,9 @@ extension TensorGEMM {
     package func linear(a: MTLBuffer, rounding: Rounding, w: MTLBuffer, c: MTLBuffer, m: Int, k: Int, n: Int,
                         weightIsTransposed: Bool) -> Double {
         let kernels = rounded!
-        let pipeline = weightIsTransposed ? kernels.byColumns : kernels.byRows
+        let tiled = tiles.products(CapacityModel.Kernel(.gpu, .bf16act), rows: m, k: k, n: n)
+        let pipeline = (weightIsTransposed ? tiled?.byColumns : tiled?.byRows) ?? (weightIsTransposed ? kernels.byColumns : kernels.byRows)
+        let tile = tiled?.tile ?? MatmulTile.standard(for: CapacityModel.Kernel(.gpu, .bf16act))
         let commands = makeCommands()
         let encoder = commands.checkedEncoder()
         for first in stride(from: 0, to: m, by: rounding.rows) {
@@ -170,9 +178,7 @@ extension TensorGEMM {
             encoder.setBuffer(c, offset: first * n * 4, index: 2)
             var mkn = SIMD3<UInt32>(UInt32(rows), UInt32(k), UInt32(n))
             encoder.setBytes(&mkn, length: MemoryLayout<SIMD3<UInt32>>.stride, index: 3)
-            encoder.dispatchThreadgroups(MTLSize(width: (n + 31) / 32, height: (rows + 63) / 64, depth: 1),
-                                         threadsPerThreadgroup: MTLSize(width: pipeline.threadExecutionWidth * 4,
-                                                                        height: 1, depth: 1))
+            encoder.dispatchThreadgroups(tile.grid(rows: rows, columns: n), threadsPerThreadgroup: tile.threads(pipeline))
         }
         encoder.endEncoding()
         commands.commit()
@@ -191,6 +197,10 @@ extension TensorGEMM {
                        rounding: Rounding, c: MTLBuffer, m: Int, k: Int, n: Int, columns: Int) -> MTLCommandBuffer? {
         let kernels = rounded!
         if block != nil && kernels.blocks == nil { return nil }
+        // The int8 kernel at the tile the map chose for `gpu/int8act` (never beside the AMX: its columns may be wider than 64); the
+        // Q8_0 one keeps its 64 × 64 tile (its weight is staged in threadgroup memory by that tile).
+        let tiled = block == nil ? tiles.products(CapacityModel.Kernel(.gpu, .int8act), rows: m, k: k, n: n) : nil
+        let tile = block == nil ? tiled?.tile ?? MatmulTile.standard(for: CapacityModel.Kernel(.gpu, .int8act)) : MatmulTile(64, 64, simdgroups: 4)
         let commands = makeCommands()
         let encoder = commands.checkedEncoder()
         let rows = rotation.map { min($0.chunk, rounding.rows) } ?? rounding.rows
@@ -217,16 +227,14 @@ extension TensorGEMM {
                 var rowsPerScale = UInt32(block)
                 encoder.setBytes(&rowsPerScale, length: 4, index: 5)
             } else {
-                pipeline = kernels.int8
+                pipeline = tiled?.int8 ?? kernels.int8
                 encoder.setComputePipelineState(pipeline)
             }
             encoder.setBuffer(rounding.buffer, offset: rounding.offset, index: 0)
             encoder.setBuffer(w, offset: 0, index: 1)
             encoder.setBuffer(c, offset: first * n * 4, index: 2)
             encoder.setBytes(&mkn, length: MemoryLayout<SIMD3<UInt32>>.stride, index: 3)
-            encoder.dispatchThreadgroups(MTLSize(width: (columns + 63) / 64, height: (count + 63) / 64, depth: 1),
-                                         threadsPerThreadgroup: MTLSize(width: pipeline.threadExecutionWidth * 4,
-                                                                        height: 1, depth: 1))
+            encoder.dispatchThreadgroups(tile.grid(rows: count, columns: columns), threadsPerThreadgroup: tile.threads(pipeline))
         }
         if block == nil {
             encoder.setComputePipelineState(scaleColumns)

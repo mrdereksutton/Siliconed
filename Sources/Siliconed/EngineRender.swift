@@ -86,7 +86,7 @@ extension Engine {
             promptTokens: MemoryNeed.Request.promptTokens(request.prompt, family: model.card.family,
                                                            references: request.references.count))
         memoryRequest.solver = request.solver
-        memoryRequest.neuralEngine = admitted.neuralEngine
+        memoryRequest.accelerators = admitted.accelerators
         memoryRequest.batch = seeds.count
         memoryRequest.library = model.library ?? .processWide
         let lock = try Preflight.run(model, width: request.width, height: request.height,
@@ -108,7 +108,7 @@ extension Engine {
         let context = Context(cancellation: cancellation,
                                 previews: request.previews, onProgress: onProgress)
         context.cache = cache
-        context.neuralEngine = admitted.neuralEngine
+        context.accelerators = admitted.accelerators
         context.fasterRendering = admitted.fasterRendering
         // A sketch that reaches the plan's last evaluation is the whole render: no stop, no estimate.
         let sketch = request.sketch.map { max(1, $0) }.flatMap { $0 < plan.evaluations ? $0 : nil }
@@ -226,7 +226,7 @@ extension Engine {
             // the compressor, which keeps it: its floor climbed ~2.3 GB at every image boundary, never
             // within a denoising. In this order a batch has the one switch of a single render; the
             // latents waiting meanwhile are kilobytes. Same bits: each image is the same computation.
-            var pending: [(latent: Latent, timings: Timings, elapsed: TimeInterval, classes: [ProductLedger.Tally])] = []
+            var pending: [(latent: Latent, timings: Timings, elapsed: TimeInterval, classes: [ProductLedger.Tally], fallbacks: [ProductLedger.Fallback])] = []
             var imageStart = totalStart
             for (n, seed) in seeds.enumerated() {
                 try context.check()
@@ -257,7 +257,7 @@ extension Engine {
                 }
                 context.timings.denoising = Date().timeIntervalSince(denoisingStart)
                 PhaseBoundary.mark("denoising")
-                pending.append((latent, context.timings, Date().timeIntervalSince(imageStart), ledger.tallies))
+                pending.append((latent, context.timings, Date().timeIntervalSince(imageStart), ledger.tallies, ledger.fallbacks))
             }
 
             context.keptDenoiser = nil
@@ -266,7 +266,7 @@ extension Engine {
 
             var renderResults: [Render] = []
             var refused = false
-            for (n, (latent, timings, elapsed, classes)) in pending.enumerated() {
+            for (n, (latent, timings, elapsed, classes, fallbacks)) in pending.enumerated() {
                 try context.check()
                 context.image = n
                 context.timings = timings
@@ -285,7 +285,7 @@ extension Engine {
                 context.emit(.decoding(seconds: context.timings.decoding))
                 let seed = seeds[n]
 
-                let renderResult = Render(model: chain.denoising.model, prompt: request.prompt, seed: seed,
+                var renderResult = Render(model: chain.denoising.model, prompt: request.prompt, seed: seed,
                                   steps: steps, loras: request.loras, loraSummary: stack?.summary, image: image,
                                   evaluations: sketch ?? plan.evaluations, sketch: sketch, spectral: plan.reduced,
                                   strength: request.image != nil ? request.strength : nil, startStep: plan.startStep,
@@ -294,9 +294,12 @@ extension Engine {
                                   detail: request.detail, solver: request.solver,
                                   variations: request.variations.filter { $0.effectiveStrength > 0 },
                                   modelName: model.card.name, isImportedModel: model.card.isImported,
-                                  loraOrigins: stack?.origins ?? [], neuralEngine: context.neuralEngine,
+                                  loraOrigins: stack?.origins ?? [], neuralEngine: context.accelerators.neuralEngine,
+                                  accelerators: context.accelerators.isOn,
+                                  offer: AcceleratorOffer(plan: EngineSettings.effective.plan.forDenoiser(context.accelerators)),
                                   fasterRendering: admitted.fasterRendering, classes: classes,
                                   loraRank: stack?.maxRank ?? 0)
+                renderResult.fallbacks = fallbacks
                 context.emit(.image(index: n, renderResult))
                 renderResults.append(renderResult)
             }

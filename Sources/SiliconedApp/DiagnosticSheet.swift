@@ -165,8 +165,8 @@ private struct ReportView: View {
     /// published, then the attentions. A route the model measured and this list does not know follows, by its engine and form.
     private static let order: [CapacityModel.Kernel] = [
         .init(.gpu, .fp32), .init(.amx, .fp32), .init(.ane, .fp16),
-        .init(.gpu, .bf16), .init(.gpu, .bf16act), .init(.gpu, .int8), .init(.ane, .int8), .init(.gpu, .q8),
-        .init(.gpu, .graph), .init(.gpu, .flash), .init(.gpu, .tiles), .init(.gpu, .tiles16), .init(.cpu, .heads)]
+        .init(.gpu, .bf16), .init(.gpu, .bf16act), .init(.gpu, .int8), .init(.gpu, .int8act), .init(.ane, .int8), .init(.gpu, .q8), .init(.gpu, .q8act),
+        .init(.gpu, .graph), .init(.gpu, .flash), .init(.gpu, .tiles), .init(.gpu, .tiles16), .init(.gpu, .tilesbf16), .init(.cpu, .heads)]
 
     /// The label of a route, as a person reads it.
     static func label(for kernel: CapacityModel.Kernel) -> String {
@@ -178,18 +178,21 @@ private struct ReportView: View {
         case (.gpu, .bf16act): String(localized: "Matrix products, GPU tensor units, bf16 weights and activations")
         case (.gpu, .int8): String(localized: "Matrix products on the 8-bit weights, read as published")
         case (.ane, .int8): String(localized: "Matrix products on the 8-bit weights, Neural Engine")
+        case (.gpu, .int8act): String(localized: "Matrix products on the 8-bit weights, GPU tensor units, bf16 activations")
         case (.gpu, .q8): String(localized: "Matrix products on the GGUF 8-bit weights, read as published")
+        case (.gpu, .q8act): String(localized: "Matrix products on the GGUF 8-bit weights, GPU tensor units, bf16 activations")
         case (.gpu, .graph): String(localized: "Attention, system kernel")
         case (.gpu, .flash): String(localized: "Attention, Siliconed kernel")
         case (.gpu, .tiles): String(localized: "Attention, three stages by tiles")
         case (.gpu, .tiles16): String(localized: "Attention, three stages by tiles, half-precision operands")
+        case (.gpu, .tilesbf16): String(localized: "Attention, GPU tensor units, bf16 operands")
         case (.cpu, .heads): String(localized: "Attention, split between GPU and CPU")
         default: engineName(kernel.engine) + " · " + kernel.form.rawValue
         }
     }
 
     /// An attention kernel: the peak of the matrix products says nothing of it.
-    private static func isAttention(_ kernel: CapacityModel.Kernel) -> Bool { [.graph, .flash, .heads, .tiles, .tiles16].contains(kernel.form) }
+    private static func isAttention(_ kernel: CapacityModel.Kernel) -> Bool { [.graph, .flash, .heads, .tiles, .tiles16, .tilesbf16].contains(kernel.form) }
 
     /// The kernels to list: every route the model has a figure for, then those the judge left out without one.
     static func kernels(of report: Diagnostic.Report) -> [CapacityModel.Kernel] {
@@ -445,6 +448,8 @@ private struct ReportView: View {
             guard !keeps.isEmpty else { return nil }
             var name = attention ? String(localized: "Attention, split between GPU and CPU") : members.map(engineName).joined(separator: " + ")
             if kernels.contains(where: { $0?.form == .int8 }) { name += ", " + String(localized: "8-bit weights") }
+            // The GPU's rows on the activation rounded to bf16 (the Standard's pair, the integers' beside the rounded kernel): not the fp32 pair.
+            if kernels.contains(where: { [.bf16act, .int8act, .q8act].contains($0?.form) }) { name += ", " + String(localized: "bf16 activations") }
             return Together(name: name, keeps: keeps.sorted { engines.firstIndex(of: $0.engine)! < engines.firstIndex(of: $1.engine)! },
                             ofSum: sum > 0 ? joint / sum : nil)
         }

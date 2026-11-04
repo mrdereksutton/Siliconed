@@ -62,7 +62,7 @@ extension AppState {
         _ = settingsEpoch
         guard settingsRead else { return nil }
         let f = outputFormat
-        return need(f, images: references.count)
+        return need(f, images: sentImages)
     }
 
     /// Why "Generate" is grayed out, or `nil`: the app does not try what the request would refuse.
@@ -97,6 +97,7 @@ extension AppState {
             let accepted = acceptedSteps.map(String.init).formatted(.list(type: .or))
             return String(localized: "This model has no schedule for \(String(steps)) steps: \(accepted).")
         }
+        if let reason = startBlocker { return reason }
         return nil
     }
 
@@ -158,7 +159,7 @@ extension AppState {
         _ = settingsEpoch
         guard settingsRead, card != nil else { return nil }
         let f = outputFormat
-        let images = references.count
+        let images = sentImages
         do { try checkNeed(f, images: images) } catch {
             // A need that cannot be computed refuses too, with its own sentence (`memoryNeedUnknown`).
             guard case let .insufficientMemory(needed, budget) = error else { return MemoryRefusal(text: Problem(error).text, smaller: nil) }
@@ -271,10 +272,10 @@ extension AppState {
     var plannedCost: Double? {
         let withLoRA = loras.contains { !$0.path.isEmpty }
         let format = outputFormat
-        let images = references.count
+        let images = sentImages
         guard let v = speeds[Speed.key(identifier, format, references: images, lora: withLoRA)] else { return nil }
         guard let plan = expectedPlan(steps: steps, format: format, withLoRA: withLoRA || !plainSampling,
-                                      references: images) else { return nil }
+                                      references: references.count, strength: usedStart.map { _ in startStrength }) else { return nil }
         // One render per alternative, each the cost of one: same model, format, plan and batch.
         return Double(variantCount) * v.duration(plan, images: max(1, batch))
     }
@@ -284,7 +285,7 @@ extension AppState {
     func stageEstimate(_ stage: Engine.Stage) -> Double? {
         let withLoRA = loras.contains { !$0.path.isEmpty }
         let format = outputFormat
-        let images = references.count
+        let images = sentImages
         guard let v = speeds[Speed.key(identifier, format, references: images, lora: withLoRA)] else { return nil }
         switch stage {
         case .text: return v.text
@@ -292,7 +293,7 @@ extension AppState {
         case .decoding: return v.decoding
         case .denoising:
             guard let plan = expectedPlan(steps: steps, format: format, withLoRA: withLoRA || !plainSampling,
-                                      references: images) else { return nil }
+                                      references: references.count, strength: usedStart.map { _ in startStrength }) else { return nil }
             let reduced = min(plan.reduced, plan.evaluations)
             return Double(plan.evaluations - reduced) * v.full + Double(reduced) * (v.reducedAverage ?? v.full)
         }
@@ -318,6 +319,7 @@ extension AppState {
         loras.removeAll { !$0.path.isEmpty && !valid.contains($0.path) }
         steps = card?.defaultSteps ?? 8
         if references.count > maxReferences { references = Array(references.prefix(maxReferences)) }
+        if !startsFromImage { startImage = nil }
         // A size typed by hand stays while the new model takes it (`Format.check(…, family:)`: Qwen-Image-2.1
         // wants multiples of 32, Anima 2048 px a side at most) — and this Mac's memory, or the footer
         // says so and offers the largest that fits.
@@ -355,6 +357,33 @@ extension AppState {
         orientation = f.orientation
         format = f
         return nil
+    }
+
+    // ── Size in two scales (Beta): the cells are `SizeScales`'; this is only what the rack asks of them ──
+
+    /// The table cell the form's size is, `nil` for a size typed by hand or from the default menu that is not in the table.
+    var sizeCell: SizeCell? { SizeScales.cell(matching: format) }
+
+    /// **Why a cell is greyed in the rack**, `nil` where it can be chosen: the model's own limit (Anima's 2048 px a side)
+    /// first, then this Mac's memory — the same two checks as the default menu and the engine's preflight.
+    func scaleUnavailable(_ cell: SizeCell) -> String? {
+        let w = String(cell.width), h = String(cell.height)
+        if let family = card?.family, let refusal = SizeScales.refusal(cell, family: family) {
+            if case let .formatRefused(_, _, _, bound) = refusal {
+                return String(localized: "\(w) × \(h) — \(String(bound)) px a side at most")
+            }
+            return Problem(refusal).text
+        }
+        if let n = macNeeded(cell.format, images: 0) {
+            return String(localized: "\(w) × \(h) — needs a Mac with \(String(n)) GB")
+        }
+        return nil
+    }
+
+    /// Takes the cell as the form's size, as a click on the default menu would.
+    func selectScale(_ ratio: SizeRatio, _ resolution: SizeResolution) {
+        guard let cell = SizeScales.cell(ratio, resolution) else { return }
+        useFormat(cell.format)
     }
 
     /// The sizes the picker offers: the model's for this orientation, and the one typed by hand.

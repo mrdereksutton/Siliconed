@@ -170,25 +170,34 @@ struct ModuleSlot: View {
 /// language, so that it is never taken for the label of the computation (« computes fp32 »). The hover says what it is in plain words.
 struct WeightsTag: View {
     let format: WeightFormat?
+    /// What the accelerators do for this module on this Mac (the DiT's, `AppState.acceleratorsInEffect`); `none` for an encoder or
+    /// the VAE, which never take them.
+    var accelerators = AcceleratorOffer.none
     /// What the module is, in the sentence of the hover: its stage.
     var body: some View {
         if let format {
             Tag(text: Text("weights \(format.label)"), symbol: "shippingbox")
-                .help(Self.explanation(format))
+                .help(Self.explanation(format) + " " + Self.computation(accelerators))
         }
     }
 
-    static func explanation(_ f: WeightFormat) -> Text {
+    static func explanation(_ f: WeightFormat) -> String {
         switch f {
-        case .int8: Text("The weights are stored in 8 bits (int8), as published: a quarter of fp32’s size. The products are computed in fp32.")
-        case .q8_0: Text("The weights are stored in 8 bits in blocks of 32 (GGUF Q8_0), as published: a quarter of fp32’s size. The products are computed in fp32.")
-        case .fp8: Text("The weights are stored in 8 bits (fp8), as published. The products are computed in fp32.")
-        case .q4_k_m, .q4_k, .q4_0, .q4_1: Text("The weights are stored in about 4 bits (GGUF \(f.label)), as published: an eighth of fp32’s size. The products are computed in fp32.")
-        case .q5_k_m, .q5_k, .q5_0, .q5_1, .q6_k: Text("The weights are stored in 5 to 6 bits (GGUF \(f.label)), as published. The products are computed in fp32.")
-        case .bf16: Text("The weights are stored in bf16, as the publisher released them: half of fp32’s size. The products are computed in fp32.")
-        case .fp16: Text("The weights are stored in fp16: half of fp32’s size. The products are computed in fp32.")
-        case .fp32: Text("The weights are stored in fp32. The products are computed in fp32.")
+        case .int8: String(localized: "The weights are stored in 8 bits (int8), as published: a quarter of fp32’s size.")
+        case .q8_0: String(localized: "The weights are stored in 8 bits in blocks of 32 (GGUF Q8_0), as published: a quarter of fp32’s size.")
+        case .fp8: String(localized: "The weights are stored in 8 bits (fp8), as published.")
+        case .q4_k_m, .q4_k, .q4_0, .q4_1: String(localized: "The weights are stored in about 4 bits (GGUF \(f.label)), as published: an eighth of fp32’s size.")
+        case .q5_k_m, .q5_k, .q5_0, .q5_1, .q6_k: String(localized: "The weights are stored in 5 to 6 bits (GGUF \(f.label)), as published.")
+        case .bf16: String(localized: "The weights are stored in bf16, as the publisher released them: half of fp32’s size.")
+        case .fp16: String(localized: "The weights are stored in fp16: half of fp32’s size.")
+        case .fp32: String(localized: "The weights are stored in fp32.")
         }
+    }
+
+    /// What computes the products: fp32, or fp32 but for the part this Mac's map gives the accelerators.
+    static func computation(_ o: AcceleratorOffer) -> String {
+        if let place = AcceleratorWords.place(o) { return String(localized: "The products are computed in fp32, except part of them \(place).") }
+        return String(localized: "The products are computed in fp32.")
     }
 }
 
@@ -234,7 +243,7 @@ struct Cost: View {
 /// **The prompt is typed in its box**: what to make — or, when editing, what changes. A real text view
 /// (`TextEditor`, an `NSTextView`): ⌘A, ⌘C, ⌘Z, the spelling, a long prompt that scrolls. The grip
 /// under it gives it the height one wants; Esc leaves it (the arrows then walk the strip). The wand facing
-/// its title opens the Prompt Lab.
+/// its title opens the Prompt Lab; the cross in its corner empties it, and ⌘Z brings it back.
 struct PromptNode: View {
     @Bindable var app: AppState
     @FocusState private var typing: Bool
@@ -264,12 +273,26 @@ struct PromptNode: View {
                         .font(.body)
                         .scrollContentBackground(.hidden)
                         .scrollIndicators(.automatic)
+                        // Room for the clear button: a line never runs under it.
+                        .contentMargins(.trailing, app.prompt.isEmpty ? 0 : 18, for: .scrollContent)
                         .focused($typing)
                     if app.prompt.isEmpty {
                         Text(app.references.isEmpty ? "Describe the image…" : "Say what changes…")
                             .font(.body).foregroundStyle(.tertiary)
                             .padding(.leading, 5)
                             .allowsHitTesting(false)
+                    }
+                }
+                .overlay(alignment: .topTrailing) {
+                    // A search field's clear button, where the eye looks for it; ⌘Z (Edit ▸ Undo) brings the prompt back.
+                    if !app.prompt.isEmpty {
+                        Button { MainWindow.shared.setPrompt("", of: app, action: String(localized: "Clear Prompt")) } label: {
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.trailing, 2)
+                        .help("Clear the prompt (⌘Z brings it back)")
+                        .accessibilityLabel(Text("Clear Prompt"))
                     }
                 }
                 .frame(height: min(max(height + stretch, Self.heights.lowerBound), Self.heights.upperBound))
@@ -364,5 +387,81 @@ struct ImagesNode: View {
         }
         .font(.caption).foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// **The image the render starts from** (img2img), on a model that starts from one: shown only once the Prompt Lab (or
+/// `silicontrol start-image`) has carried one — the rack has no empty slot for it, the Lab is where it is chosen. Its thumbnail,
+/// and its strength on a slider from 0 to 100 %, like a LoRA's: retouched between two renders. Low keeps the image's composition
+/// and colours, 100 % ignores it; the tooltip says how many of the steps the strength leaves. A file dropped here replaces it.
+struct StartImageNode: View {
+    @Bindable var app: AppState
+    @State private var hover = false
+
+    var body: some View {
+        PortBox(title: "Starting Image", symbol: "photo", kind: .image) {
+            Text(verbatim: StartWords.percent(app.startStrength))
+                .onTapGesture(count: 2) { app.setStartStrength(app.defaultStartStrength) }
+                .help("Strength — double-click for \(StartWords.percent(app.defaultStartStrength))")
+        } content: {
+            if let start = app.usedStart {
+                HStack(alignment: .center, spacing: 10) {
+                    thumbnail(start)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Strength").font(.callout).foregroundStyle(.secondary)
+                        Slider(value: Binding(get: { app.startStrength }, set: { app.setStartStrength($0) }), in: 0...1)
+                            .controlSize(.small)
+                            .accessibilityLabel(Text("Strength"))
+                            .accessibilityValue(Text(verbatim: StartWords.percent(app.startStrength)))
+                        HStack {
+                            Text("Faithful")
+                            Spacer(minLength: 4)
+                            Text("Free")
+                        }
+                        .font(.caption2).foregroundStyle(.tertiary)
+                    }
+                    .help(StartWords.explanation(app.startRedraws))
+                }
+                let caption = app.startCaption
+                Text(caption.text)
+                    .font(.caption)
+                    .foregroundStyle(caption.tone == .failure ? Palette.failure
+                                     : caption.tone == .warning ? Color(nsColor: .systemOrange) : Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .contextMenu {
+            Button("Reset to \(StartWords.percent(app.defaultStartStrength))") { app.setStartStrength(app.defaultStartStrength) }
+            Button("Replace…") { app.chooseStartReplacement() }
+            Divider()
+            Button("Remove", role: .destructive) { app.removeStart() }
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            guard let url = urls.first(where: { $0.isFileURL && !AppState.importable($0) }) else { return false }
+            app.replaceStart(with: url)
+            return true
+        }
+    }
+
+    private func thumbnail(_ start: ReferenceImage) -> some View {
+        Image(nsImage: start.vignette).resizable().scaledToFill()
+            .frame(width: ReferenceThumbnail.side, height: ReferenceThumbnail.side)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WireKind.image.color, lineWidth: 1.5))
+            .overlay(alignment: .topTrailing) {
+                if hover {
+                    Button { app.removeStart() } label: {
+                        Image(systemName: "xmark.circle.fill").symbolRenderingMode(.palette)
+                            .foregroundStyle(.white, .black.opacity(0.6))
+                            .frame(width: 24, height: 24).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Remove: the next render starts from noise")
+                    .accessibilityLabel(Text("Remove"))
+                }
+            }
+            .onHover { hover = $0 }
+            .help(Text(verbatim: "\(start.name) · \(start.width) × \(start.height)"))
+            .accessibilityLabel(Text(verbatim: start.name))
     }
 }

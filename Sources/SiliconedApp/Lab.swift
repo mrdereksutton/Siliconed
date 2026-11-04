@@ -20,6 +20,10 @@
 //   always had: its Prompt (the text translated, the `@names` turned into « image N »; ⌘Z in the field brings the old
 //   prompt back) and its Images box (1 to 3 numbered images, which have no undo — the line says so). The rack does not
 //   know the subjects. The rules are `LabInputs` (`Sources/Siliconed`), pure and tested.
+// - **The starting image of an img2img** (Z-Image, Anima, Krea 2: a model that reads no image but starts from one) is a role
+//   too, chosen by a gesture — « Start From This Image », or the role menu — never by default: a picture dropped to be described
+//   must not turn the next render into an img2img. Its tile then carries the strength (0 to 100 %, `StartImage`), and « Carry »
+//   puts both in the rack's Images box (`AppState.carryStart`), the size set to the format nearest the image's proportions.
 // - **No tabs, gestures that mix, written in the field as they come.** Describe writes into the text: it fills it when empty,
 //   otherwise it inserts at the caret or replaces the selection. Rewrite works on all of it. Both draw their marks token by
 //   token over the field (additions in the accent, removals struck; « Edit » puts them away), and the text lands in the field
@@ -58,6 +62,12 @@ final class LabModel {
         var role: LabInputs.Role
     }
 
+    /// **The strength the starting image is carried with** (img2img), set on its tile — the rack's own is retouched there afterwards.
+    /// The aimed family's default (`StartImage.defaultStrength`) until one is chosen.
+    var startStrength: Double { chosenStartStrength ?? defaultStartStrength }
+    var defaultStartStrength: Double { StartImage.defaultStrength(for: target) }
+    private var chosenStartStrength: Double?
+
     /// What a rewrite changed, to draw its marks while the text is still the one it wrote.
     struct Changes: Equatable { var before: String; var after: String }
 
@@ -94,7 +104,12 @@ final class LabModel {
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var watching = false
 
-    var isWriting: Bool { phase != .idle }
+    /// A gesture of the window, or one `silicontrol` asked: there is one writer, and it writes one text at a time.
+    var isWriting: Bool { phase != .idle || remote != nil }
+
+    /// **The gesture a command asked** (`LabRemote.swift`), if one is under way: it holds the writer like the window's does, and
+    /// a render starting stops it (`stop` is what says so to the command).
+    @ObservationIgnored var remote: (task: Task<Void, Never>, stop: @MainActor () -> Void)?
 
     func refresh() {
         (writer as? EngineLabWriter)?.library = MainWindow.shared.local.library
@@ -117,28 +132,42 @@ final class LabModel {
         return Family.allCases.filter(ready.contains)
     }
 
-    var target: Family? {
-        if let c = chosenTarget, families.contains(c) { return c }
-        if let f = rack.card?.family, families.contains(f) { return f }
-        return families.first
-    }
+    var target: Family? { WriterTarget.pick(chosen: chosenTarget, rack: rack.card?.family, installed: families) }
 
     /// The installed card the rack takes to render for `family`: its own when it is of that family.
-    private func card(for family: Family) -> ModelCard? {
+    func card(for family: Family) -> ModelCard? {
         if let current = rack.card, current.family == family { return current }
         return rack.cards.first { $0.family == family && rack.readySet.contains($0.id) }
     }
 
     /// **How many images the model aimed at reads** (0: none) — from its denoiser here, from the traits the other Mac
     /// published in a mirror.
-    var capacity: Int {
-        guard let family = target else { return 0 }
+    var capacity: Int { capacity(for: target) }
+
+    /// The same, for the model a gesture writes for (`silicontrol rewrite --for`).
+    func capacity(for family: Family?) -> Int {
+        guard let family else { return 0 }
         if following { return rack.promptNamesImages ? rack.maxReferences : 0 }
         guard let card = card(for: family), let model = rack.model(card.id) else { return 0 }
         return model.chain.text.output.readsImages ? model.chain.denoising.maxReferences : 0
     }
 
-    var offeredRoles: [LabInputs.Role] { LabInputs.roles(capacity: capacity) }
+    /// **Whether the model aimed at starts from an image** (img2img): its chain offers the image entry. Never in a mirror — the
+    /// other Mac's traits do not say it, and its jobs carry no starting image.
+    var startsFromImage: Bool { startsFromImage(for: target) }
+
+    func startsFromImage(for family: Family?) -> Bool {
+        guard !following, let family, let card = card(for: family), let model = rack.model(card.id) else { return false }
+        return model.chain.entries.contains { $0.kind == .image }
+    }
+
+    /// The model's start is an img2img's — not Qwen-Image-2.1's image 1, which the model reads as a reference.
+    var startIsImg2Img: Bool { capacity == 0 && startsFromImage }
+
+    var offeredRoles: [LabInputs.Role] { LabInputs.roles(capacity: capacity, startsFromImage: startsFromImage) }
+
+    /// What the roles depend on: a change of either conforms them.
+    var rolesKey: String { "\(capacity)·\(startsFromImage)" }
 
     // MARK: The render's priority
 
@@ -168,7 +197,8 @@ final class LabModel {
         rendering = busy
         if busy {
             // The memory goes back even when nothing was being written: the writer may still be loaded.
-            if isWriting { stop(becauseOfRender: true) }
+            if phase != .idle { stop(becauseOfRender: true) }
+            remote?.stop()
             Task { await writer.release() }
         } else {
             refresh()
@@ -215,20 +245,32 @@ final class LabModel {
 
     /// **Why Rewrite and Describe wait**, in one sentence; `nil` when they can run. They are the only gestures that need the
     /// language model: everything else in the lab works without it, during a render too.
-    var writerPause: (symbol: String, sentence: String)? {
-        if following { return ("macbook", String(localized: "Rewrite and Describe are off while the window follows another Mac.")) }
-        if rendering { return ("pause.circle", String(localized: "Rewrite and Describe wait while an image renders.")) }
-        if case .unavailable(let why) = availability {
-            switch why {
-            case .notInstalled: return ("shippingbox", String(localized: "No writer is installed yet. Install a model to have one."))
-            case .needsMemory(let n): return ("memorychip", String(localized: "The writer needs a Mac with \(n) GB of memory."))
-            case .preparing: return ("hourglass", String(localized: "The writer is being prepared."))
-            case .needsHead(let bytes):
-                return ("arrow.down.circle", String(localized: "The writer needs one more download from Qwen-Image-2.1’s repository: \(Figures.disk(Int(bytes))).")) 
-            }
+    var writerPause: (symbol: String, sentence: String)? { pause(rendering: rendering).map(Self.presentation) }
+
+    /// The decision (`WriterPause.decide`), for the window and for `silicontrol rewrite` and `describe`: the render is passed in
+    /// because the command reads the queue itself, not the copy this model keeps up to date for the window.
+    func pause(rendering: Bool) -> WriterPause? {
+        let installed: WriterPause?
+        switch availability {
+        case .ready: installed = nil
+        case .unavailable(.notInstalled): installed = .notInstalled
+        case .unavailable(.needsMemory(let n)): installed = .needsMemory(gigabytes: n)
+        case .unavailable(.preparing): installed = .preparing
+        case .unavailable(.needsHead(let bytes)): installed = .needsHead(bytes: bytes)
         }
-        if target == nil { return ("shippingbox", String(localized: "No writer is installed yet. Install a model to have one.")) }
-        return nil
+        return WriterPause.decide(following: following, rendering: rendering, installed: installed, hasTarget: target != nil)
+    }
+
+    static func presentation(_ pause: WriterPause) -> (symbol: String, sentence: String) {
+        switch pause {
+        case .following: ("macbook", String(localized: "Rewrite and Describe are off while the window follows another Mac."))
+        case .rendering: ("pause.circle", String(localized: "Rewrite and Describe wait while an image renders."))
+        case .notInstalled: ("shippingbox", String(localized: "No writer is installed yet. Install a model to have one."))
+        case .needsMemory(let n): ("memorychip", String(localized: "The writer needs a Mac with \(n) GB of memory."))
+        case .preparing: ("hourglass", String(localized: "The writer is being prepared."))
+        case .needsHead(let bytes):
+            ("arrow.down.circle", String(localized: "The writer needs one more download from Qwen-Image-2.1’s repository: \(Figures.disk(Int(bytes))).")) 
+        }
     }
 
     var canRewrite: Bool {
@@ -244,21 +286,29 @@ final class LabModel {
     func rewrite() {
         guard canRewrite, let target else { return }
         let typed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        // `@` is a subject's only for a model that reads images; elsewhere it is the model's own (Anima's artists).
-        let guarded = capacity > 0 ? LabInputs.MentionGuard(typed) : nil
-        let input = LabInput.text(guarded?.masked ?? typed)
+        let (input, guarded) = Self.rewriteInput(typed, capacity: capacity)
         begin(input, for: target, gesture: .rewrite, picture: nil, progress: { [self] written in
             changes = Changes(before: typed, after: guarded?.restore(written).text ?? written)
         }) { [self] written in
-            var final = written
-            if let guarded {
-                let back = guarded.restore(written)
-                final = back.text
-                if !back.intact { notice = Self.mentionNotice(lost: back.lost) }
-            }
-            place(Self.splice(final, into: text, at: nil))
+            let back = Self.rewritten(written, guarded: guarded)
+            notice = back.notice
+            place(Self.splice(back.text, into: text, at: nil))
             changes = Changes(before: typed, after: text)
         }
+    }
+
+    /// **What a rewrite sends the writer** — the lab's and `silicontrol rewrite`'s alike. `@` is a subject's only for a model that
+    /// reads images (`capacity` > 0); elsewhere it is the model's own (Anima's artists), and the text goes as it is.
+    static func rewriteInput(_ typed: String, capacity: Int) -> (input: LabInput, guarded: LabInputs.MentionGuard?) {
+        let guarded = capacity > 0 ? LabInputs.MentionGuard(typed) : nil
+        return (.text(guarded?.masked ?? typed), guarded)
+    }
+
+    /// **What a rewrite gives back**: the mentions put back, and the sentence that says which one the writer lost or deformed.
+    static func rewritten(_ written: String, guarded: LabInputs.MentionGuard?) -> (text: String, lost: [String], notice: String?) {
+        guard let guarded else { return (written, [], nil) }
+        let back = guarded.restore(written)
+        return (back.text, back.lost, back.intact ? nil : mentionNotice(lost: back.lost))
     }
 
     /// **Describe**: an image of the zone, or a subject's first picture.
@@ -299,7 +349,7 @@ final class LabModel {
                     switch event {
                     case .loading(let f): phase = .loading(f)
                     case .text(let t): phase = .writing; last = t; progress(t)
-                    case .finished(let t): last = t; end(last, finished)
+                    case .finished(let t, _): last = t; end(last, finished)
                     case .cancelled: self.stop(becauseOfRender: false); return
                     }
                 }
@@ -380,7 +430,9 @@ final class LabModel {
 
     /// The window closes: nothing keeps writing, nothing keeps the memory.
     func windowClosed() {
-        if isWriting { stop() }
+        if phase != .idle { stop() }
+        // A command's gesture is not the window's: closing the window does not take its writer away.
+        guard remote == nil else { return }
         Task { await writer.release() }
     }
 
@@ -391,12 +443,17 @@ final class LabModel {
 
     /// After a change of the model aimed at: an image whose role it no longer offers is « describe only ».
     func conformRoles() {
-        let kept = LabInputs.conforming(slots, capacity: capacity)
+        let kept = LabInputs.conforming(slots, capacity: capacity, startsFromImage: startsFromImage)
         for (i, slot) in kept.enumerated() where pictures[i].role != slot.role { pictures[i].role = slot.role }
     }
 
+    /// « Start From This Image »: the gesture that makes an img2img's start — the previous start, if any, goes back to « describe only ».
+    func startFrom(_ picture: Picture) { setRole(.start, of: picture) }
+
+    func setStartStrength(_ s: Double) { chosenStartStrength = StartImage.snapped(s) }
+
     func setRole(_ role: LabInputs.Role, of picture: Picture) {
-        for slot in LabInputs.assigning(role, to: picture.id, in: slots) {
+        for slot in LabInputs.assigning(role, to: picture.id, in: slots, capacity: capacity) {
             if let i = pictures.firstIndex(where: { $0.id == slot.id }), pictures[i].role != slot.role { pictures[i].role = slot.role }
         }
     }
@@ -521,8 +578,11 @@ final class LabModel {
     var receipt: LabInputs.Receipt<Picture.ID> {
         let family = target
         let changesModel = !following && family != nil && rack.card?.family != family
-        return LabInputs.receipt(text: text, slots: slots, subjects: subjects.all, capacity: capacity,
-                                 rackPrompt: rack.prompt, rackImages: rack.references.count, changesModel: changesModel)
+        let img2img = startIsImg2Img
+        return LabInputs.receipt(text: text, slots: slots, subjects: subjects.all, capacity: capacity, startsFromImage: img2img,
+                                 rackPrompt: rack.prompt,
+                                 rackImages: img2img ? (rack.startImage == nil ? 0 : 1) : rack.references.count,
+                                 changesModel: changesModel)
     }
 
     /// The picture behind an image of the carried list.
@@ -541,6 +601,12 @@ final class LabModel {
     var outputFormat: RecommendedFormat? {
         guard !following, let first = receipt.first, let size = size(of: first), let family = target,
               let card = card(for: family), let denoising = rack.model(card.id)?.chain.denoising else { return nil }
+        // An img2img's size follows its starting image too, but among the model's sizes: the nearest proportions, at the rack's scale.
+        if startIsImg2Img {
+            return rack.identifier == card.id
+                ? rack.recommendedFormat(width: size.width, height: size.height)
+                : StartImage.recommendedFormat(width: size.width, height: size.height, among: card.formats, current: rack.format)
+        }
         let f = denoising.editFormat(referenceWidth: size.width, referenceHeight: size.height)
         return AppState.cappedForEditing(RecommendedFormat(f.width, f.height))
     }
@@ -552,8 +618,15 @@ final class LabModel {
         let receipt = receipt
         guard case .carries(let carry) = receipt.outcome, let family = target else { return }
         let app = rack
+        let img2img = startIsImg2Img
         if !following, receipt.changesModel, let wanted = card(for: family) { app.identifier = wanted.id }
-        if !carry.images.isEmpty { app.references = references(of: carry) }
+        if img2img, case .plain(let id, _)? = carry.images.first, let picture = picture(id) {
+            app.carryStart(AppState.startImage(bytes: picture.data, thumbnail: picture.thumbnail, width: picture.width,
+                                               height: picture.height, name: String(localized: "image from the lab")),
+                           strength: startStrength)
+        } else if !carry.images.isEmpty {
+            app.references = references(of: carry)
+        }
         if receipt.replacesPrompt { MainWindow.shared.setPrompt(carry.prompt, of: app) }
         self.carried = true
         MainWindow.shared.show()
@@ -610,11 +683,18 @@ final class LabWindow: NSObject, NSWindowDelegate {
         w.isRestorable = false
         w.delegate = self
         w.setContentSize(NSSize(width: 640, height: 780))
-        w.contentMinSize = NSSize(width: 560, height: 640)
         w.center()
         window = w
         NSApp.activate()
         w.makeKeyAndOrderFront(nil)
+    }
+
+    /// **The smallest the Lab gets** (`MinimumContent`, issue #7): its pieces with the text at about twice its own minimum (110 pt),
+    /// and room for the status lines a rewrite adds.
+    static let minimumContent = NSSize(width: 560, height: 640)
+
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        MinimumContent.clamp(frameSize, of: sender, to: Self.minimumContent)
     }
 
     func windowWillClose(_ notification: Notification) { LabModel.shared.windowClosed() }

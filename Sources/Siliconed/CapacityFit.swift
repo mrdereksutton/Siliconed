@@ -17,6 +17,12 @@ import Foundation
 ///   - **a line is fitted on the relative error** (weights 1/t²): the 300 GFLOP point is a hundred times the 4 GFLOP one in
 ///     seconds, and an unweighted fit would be the big one's alone — the small one is where t₀ lives. A negative t₀ is a
 ///     fit that reached past its data: it is clamped to 0 and the rate refitted through the origin.
+///   - **a disturbed figure is measured again, never left out by the fit** (`suspects`): a point more than the regime's spread (15 %)
+///     above the line of the others is measured once more by the probes and the faster kept; the line is then fitted on every point.
+///     A kernel's own shape effects (tile counts against the GPU's cores) put genuine points 20–60 % off any line: a trim by distance
+///     cannot tell them from disturbances, a second measure can.
+///   - **the map's noise is the rounds' own** (`noise`): the median, over the tiles' and attention forms' candidates, of the spread of
+///     their repeated rounds — what a figure of this map is sure to; the solver's margin is twice it.
 ///   - **the ANE's unit is read, not assumed**: the candidates are fitted on the same rows and the *largest* unit that
 ///     explains them as well as the best (within half a percent) wins — samples all at multiples of 256 cannot tell 256 from
 ///     128, and the coarser is the one the model's rounding needs; an odd multiple of 256 in the samples is what rules 512 out.
@@ -65,8 +71,26 @@ package enum CapacityFit {
         return b > 0 ? (a, b) : nil
     }
 
+    /// **A kernel's line: the weighted least squares on every point.** None is left out: a point far from the line is either a figure
+    /// the Mac disturbed — measured again by the probes before the fit (`suspects`), the faster kept — or the kernel's own shape (a tile
+    /// count that fills the GPU's cores badly: on an M5 Pro the rounded bf16 kernel runs 1 024 × 3 840² at 11 TFLOP/s and 2 048 × 2 048 ×
+    /// 4 096 at 20, map after map), which a line must average, not drop. Leaving out what lies above a lower envelope dropped exactly those:
+    /// one map kept the small product and lost the 4 096-row ones the renders run (+21 and +34 % above its line), the next kept them and
+    /// lost a small product disturbed 2.2× — two lines 16 % apart from the same silicon.
     package static func line(_ points: [Point]) -> CapacityModel.Line? {
-        affine(points.map { ($0.flop, $0.seconds) }).map { .init(t0: $0.a, rate: 1 / $0.b) }
+        affine(points.filter { $0.seconds > 0 && $0.flop > 0 }.map { ($0.flop, $0.seconds) }).map { .init(t0: $0.a, rate: 1 / $0.b) }
+    }
+
+    /// **The points to measure again before a line is fitted**: those more than `Regime.Rules.spread` above the line the *other* points
+    /// give (leave one out) — a busy Mac only adds time. The probes measure each once more and keep the faster: a disturbed figure comes
+    /// back to the line, a shape the kernel is slow at stays where it is. Under three points none can be told: none.
+    package static func suspects(_ points: [Point]) -> [Int] {
+        guard points.count >= 3 else { return [] }
+        return points.indices.filter { i in
+            let others = points.enumerated().filter { $0.offset != i }.map(\.element)
+            guard let l = line(others), points[i].seconds > 0 else { return false }
+            return points[i].seconds > (l.t0 + points[i].flop / l.rate) * (1 + Diagnostic.Regime.Rules.spread)
+        }
     }
 
     /// **The intercept the points give before it is clamped at 0**: the fit's own, on the same weights. A line through two points
@@ -154,8 +178,10 @@ package enum CapacityFit {
             /// `gpu+ane`, in `CapacityModel.key` order.
             package var set: String
             package var shape: [Int]
-            /// 1: the rows the solo lines (no sharing) balance; 2: the rows the first pass's keep balances.
+            /// 1: the rows the solo lines (no sharing) balance; 2: the rows the first pass's keep balances; 3: a long k on pass 2's;
+            /// `again` (4): the short shape a third time, where the first two disagreed (`CapacityFit.needsAgain`).
             package var pass: Int
+            package static let again = 4
             package var sides: [Side]
             package var wall: Double
             package var error: Double?
@@ -187,6 +213,16 @@ package enum CapacityFit {
         package var preparation: [String: [String: Double]] = [:]
         /// Kernels the judge refused (a wrong route fills nothing).
         package var wrong: [String] = []
+        /// **The tile chosen per kernel** (`"gpu/bf16act": "128x128/8"`, `MatmulTile`) for its wide products and for its thin ones, and each
+        /// candidate's solos that chose them (`kernel` = `"gpu/bf16act 128x128/8"`, one per round and shape). `nil` in a report that predates them.
+        package var tiles: [String: String]?
+        package var thinTiles: [String: String]?
+        /// The form each half-precision attention kernel runs (`AttentionTile` text), measured before its line; absent: the three stages.
+        package var attentionTiles: [String: String]?
+        package var tileTrials: [Solo]?
+        /// **The GPU's wake** (`Context.wake`): the tier's shortest tiled attention timed after the longest and an idle, one per idle (its
+        /// microseconds last in `shape`). `nil` in a report that predates it.
+        package var wake: [Solo]?
         package init() {}
 
         /// **The same numbers to `digits` significant digits** — what a report keeps (an exact FLOP count stays exact). The model of a
@@ -197,6 +233,7 @@ package enum CapacityFit {
             m.solos = solos.map { Solo(kernel: $0.kernel, shape: $0.shape, flop: $0.flop, seconds: r($0.seconds),
                                        error: $0.error.map { Diagnostic.significant($0, 3) }) }
             m.thin = thin?.map { Solo(kernel: $0.kernel, shape: $0.shape, flop: $0.flop, seconds: r($0.seconds), error: $0.error.map { Diagnostic.significant($0, 3) }) }
+            m.tileTrials = tileTrials?.map { Solo(kernel: $0.kernel, shape: $0.shape, flop: $0.flop, seconds: r($0.seconds), error: $0.error.map { Diagnostic.significant($0, 3) }) }
             m.stairs = stairs.map { Stair(rows: $0.rows, seconds: r($0.seconds)) }
             m.trials = trials.map { t in
                 Trial(set: t.set, shape: t.shape, pass: t.pass,
@@ -208,6 +245,7 @@ package enum CapacityFit {
             m.diskBandwidth = diskBandwidth.map(r)
             m.diskClasses = diskClasses.mapValues { .init(rate: r($0.rate), mean: r($0.mean)) }
             m.preparation = preparation.mapValues { $0.mapValues(r) }
+            m.wake = wake?.map { Solo(kernel: $0.kernel, shape: $0.shape, flop: $0.flop, seconds: r($0.seconds)) }
             return m
         }
     }
@@ -374,8 +412,10 @@ package enum CapacityFit {
                 }
                 return h
             }
-            guard let x = regress(used.map { solo in ([1] + basis(solo.shape[1]).map { $0 * solo.flop * 1e-12 }, solo.seconds) }),
-                  x[0] >= 0, x.dropFirst().allSatisfy({ $0 > 0 }) else { return plain }
+            // t₀ held at zero where the free fit would make it negative: a fixed cost within its error of zero is zero, not a reason to
+            // drop the knots (the AMX's line changed form between two maps of one Mac, its t₀ 0.20 or 0.68 ms with it).
+            guard let x = regressNonNegative(used.map { solo in ([1] + basis(solo.shape[1]).map { $0 * solo.flop * 1e-12 }, solo.seconds) }),
+                  x.dropFirst().allSatisfy({ $0 > 0 }) else { return plain }
             let rates = x.dropFirst().map { 1e12 / $0 }
             return .init(t0: x[0], rate: rates[0], rateByK: zip(knots, rates).map { .init(k: $0, rate: $1) })
         default:
@@ -397,31 +437,79 @@ package enum CapacityFit {
     ///
     /// `nil` without the big products' line or the memory's bandwidth, or unless the shapes tell the two apart (three distinct at least).
     package static func thinLine(kernel: Kernel, solos: [Measurements.Solo], arithmetic: CapacityModel.Line?, bandwidth: Double?) -> CapacityModel.Line? {
+        thinFit(kernel: kernel, solos: solos, arithmetic: arithmetic, bandwidth: bandwidth)?.line
+    }
+
+    /// A thin solo's two terms on `arithmetic`'s rate: the bytes streamed at the bandwidth, and the arithmetic.
+    private static func thinTerms(_ kernel: Kernel, _ s: Measurements.Solo, arithmetic: CapacityModel.Line, bandwidth: Double) -> (stream: Double, arithmetic: Double) {
+        let (weightBytes, activationBytes) = CapacityModel.streamedBytes(kernel.form)
+        let (k, n) = (Double(s.shape[1]), Double(s.shape[2]))
+        let rows = Double(CapacityModel.computedRows(kernel, rows: s.shape[0]))
+        return ((weightBytes * k * n + activationBytes * rows * (k + n)) / bandwidth, 2 * rows * k * n / arithmetic.rate(atK: s.shape[1]))
+    }
+
+    /// `thinLine`, with the solos its second pass kept.
+    private static func thinFit(kernel: Kernel, solos: [Measurements.Solo], arithmetic: CapacityModel.Line?,
+                                bandwidth: Double?) -> (line: CapacityModel.Line, kept: [Measurements.Solo])? {
         guard let arithmetic, arithmetic.rate > 0, let bandwidth, bandwidth > 0 else { return nil }
         let used = solos.filter { $0.shape.count == 3 && $0.seconds > 0 && $0.flop > 0 }
         guard used.count >= 3, Set(used.map { $0.shape }).count >= 3 else { return nil }
         let (weightBytes, activationBytes) = CapacityModel.streamedBytes(kernel.form)
-        func terms(_ s: Measurements.Solo) -> (stream: Double, arithmetic: Double) {
-            let (k, n) = (Double(s.shape[1]), Double(s.shape[2]))
-            let rows = Double(CapacityModel.computedRows(kernel, rows: s.shape[0]))
-            return ((weightBytes * k * n + activationBytes * rows * (k + n)) / bandwidth, 2 * rows * k * n / arithmetic.rate(atK: s.shape[1]))
-        }
+        func terms(_ s: Measurements.Solo) -> (stream: Double, arithmetic: Double) { thinTerms(kernel, s, arithmetic: arithmetic, bandwidth: bandwidth) }
         func solve(_ kept: [Measurements.Solo]) -> (t0: Double, share: Double)? {
             let rows = kept.map { s -> (features: [Double], seconds: Double) in
                 let t = terms(s)
                 return ([1 / s.seconds, t.stream / s.seconds], (s.seconds - t.arithmetic) / s.seconds)
             }
-            guard let x = regressNonNegative(rows), x[1] > 0 else { return nil }
+            // A share the non-negative fit sets to zero is a share of zero — the stream hidden under the arithmetic and the call's fixed
+            // cost —, not a missing line: the fit is continuous in the solos where the share crosses zero.
+            guard let x = regressNonNegative(rows) else { return nil }
             return (x[0], x[1])
         }
         guard var fit = solve(used) else { return nil }
         func time(_ s: Measurements.Solo) -> Double { fit.t0 + fit.share * terms(s).stream + terms(s).arithmetic }
-        let kept = used.filter { $0.seconds < 2 * time($0) }
-        if kept.count < used.count, kept.count >= 3, let again = solve(kept) { fit = again }
+        var kept = used.filter { $0.seconds < 2 * time($0) }
+        if kept.count < used.count, kept.count >= 3, let again = solve(kept) { fit = again } else { kept = used }
         var line = CapacityModel.Line(t0: fit.t0, rate: arithmetic.rate, perWeight: fit.share * weightBytes / bandwidth, rateByK: arithmetic.rateByK,
                                       perRow: fit.share * activationBytes / bandwidth)
         if kernel.engine == .amx || kernel.engine == .ane, let fewest = used.map({ $0.shape[0] }).min() { line.rowsFrom = max(1, fewest / 2) }
-        return line
+        return (line, kept)
+    }
+
+    /// **The thin lines of a map, the GPU's on one fixed cost.** Each kernel's line as `thinLine` fits it; then the GPU's kernels again
+    /// together, one `t₀` for all and each its own share of the bandwidth, on the solos each one's own fit kept. A thin product's seconds are
+    /// mostly that fixed cost — the call's submission and its completion reaching the CPU, the GPU's whatever the kernel —, and seven
+    /// kernels each fitting their own read it 0.09 to 0.18 ms apart in no order a second map kept (two maps of an M5 Pro: `gpu/fp32` 0.175
+    /// and 0.142 ms, `gpu/bf16act` 0.159 and 0.172): the choice between two GPU forms of a thin product, a gap of a few hundredths of a
+    /// millisecond, followed that noise across the thin margin (`gpu/bf16act` 19 % under `gpu/bf16` in one map, 11 % in the next). Read
+    /// once from every GPU solo, the fixed cost is common to the forms, and what tells them apart is what they stream and compute.
+    package static func thinLines(_ groups: [Kernel: [Measurements.Solo]], lines: [Kernel: CapacityModel.Line],
+                                  bandwidth: Double?) -> [Kernel: CapacityModel.Line] {
+        var out: [Kernel: CapacityModel.Line] = [:], kept: [Kernel: [Measurements.Solo]] = [:]
+        for (kernel, solos) in groups {
+            guard let f = thinFit(kernel: kernel, solos: solos, arithmetic: lines[kernel], bandwidth: bandwidth) else { continue }
+            out[kernel] = f.line; kept[kernel] = f.kept
+        }
+        let gpu = kept.keys.filter { $0.engine == .gpu }.sorted { $0.description < $1.description }
+        guard gpu.count >= 2, let bandwidth else { return out }
+        var rows: [(features: [Double], seconds: Double)] = []
+        for (j, kernel) in gpu.enumerated() {
+            guard let arithmetic = lines[kernel] else { continue }
+            for s in kept[kernel] ?? [] {
+                let t = thinTerms(kernel, s, arithmetic: arithmetic, bandwidth: bandwidth)
+                var f = [Double](repeating: 0, count: gpu.count + 1)
+                f[0] = 1 / s.seconds; f[j + 1] = t.stream / s.seconds
+                rows.append((f, (s.seconds - t.arithmetic) / s.seconds))
+            }
+        }
+        guard let x = regressNonNegative(rows) else { return out }
+        for (j, kernel) in gpu.enumerated() {
+            guard var line = out[kernel] else { continue }
+            let (weightBytes, activationBytes) = CapacityModel.streamedBytes(kernel.form)
+            line.t0 = x[0]; line.perWeight = x[j + 1] * weightBytes / bandwidth; line.perRow = x[j + 1] * activationBytes / bandwidth
+            out[kernel] = line
+        }
+        return out
     }
 
     // MARK: - Sharing as an overlap
@@ -457,6 +545,9 @@ package enum CapacityFit {
     package static func overlap(set: String, trials: [Measurements.Trial], model: CapacityModel) -> SharingFit? {
         let used = trials.filter { $0.set == set && $0.sides.count >= 2 && $0.shape.count == 3 && $0.wall > 0 }
         guard !used.isEmpty else { return nil }
+        // What a side pays per call in this set beyond its line, known before the chains (`lift(set:model:)`): out of the κ, into the solo.
+        let perWeight = lift(set: set, model: model)
+        let paid = CapacityModel.Sharing(perWeight: perWeight)
         var byEngine: [CapacityModel.Engine: [Double]] = [:]
         var byK: [Int: [CapacityModel.Engine: [Double]]] = [:]
         var keeps: [[Double?]] = [], overheads: [Double] = [], residuals: [Double] = []
@@ -465,7 +556,7 @@ package enum CapacityFit {
             var sides: [(kernel: Kernel, solo: Double, within: Double)] = []
             for side in trial.sides {
                 guard let kernel = Kernel(side.kernel), let s = model.alone(kernel, rows: side.rows, k: k, n: n) else { continue }
-                sides.append((kernel, s, side.within ?? trial.wall))
+                sides.append((kernel, s + paid.lift(kernel.engine, k: k, n: n), side.within ?? trial.wall))
             }
             guard sides.count == trial.sides.count, let ks = overlapKeeps(sides: sides, k: k, sub: { model.sharing($0) }) else { keeps.append([]); continue }
             keeps.append(trial.sides.map { Kernel($0.kernel).flatMap { ks[$0] } })
@@ -473,7 +564,7 @@ package enum CapacityFit {
             overheads.append(max(0, trial.wall - (sides.map(\.within).max() ?? trial.wall)))
         }
         guard !byEngine.isEmpty else { return nil }
-        var fit = CapacityModel.Sharing(overhead: median(overheads), keep: byEngine.mapValues(median))
+        var fit = CapacityModel.Sharing(overhead: median(overheads), keep: byEngine.mapValues(median), perWeight: perWeight)
         fit.overhead = fit.overhead.isFinite ? fit.overhead : 0
         // κ by k where the chains came at more than one: each engine's median at each k.
         if let low = byK.keys.min(), let high = byK.keys.max() { fit.kFrom = max(1, low / 2); fit.kTo = high * 2 }
@@ -498,6 +589,89 @@ package enum CapacityFit {
         return SharingFit(sharing: fit, keeps: keeps, overheads: overheads, residuals: residuals)
     }
 
+    /// **The chains a set's fit reads, and the error of its figure** (`Sharing.noise`). The passes from the second (pass 1 only balances
+    /// on the lines; a set with no long k is read on its last), except where a shape was chained three times or more — the third chain
+    /// is taken only when the first two disagree beyond what the map's noise allows (`needsAgain`) —: there, the median chain alone,
+    /// each wall over the seconds the model fitted on the usual passes gives its rows (two passes balanced at different rows compare).
+    ///
+    /// Two chains are one degree of freedom: their gap is the estimate a single disturbed chain decides — the rounded pair's 13 % and
+    /// the integers' rounded pair's 1.9 % in one map, 32 % in the next (7.01 against 5.32 ms at the same rows, the ANE side 7.0 ms inside
+    /// the pair against 5.2). Three chains have a median one disturbance cannot move and a spread it cannot fake: σ = 1.4826 · MAD over
+    /// the median (the median absolute deviation of the ratios, 1.4826 its factor to a normal's σ), and the median of n chains has the
+    /// standard error 1.2533 · σ / √n (its efficiency against the mean, π/2 in variance). `noise` is that standard error, relative; `nil`
+    /// where no shape was chained three times — two chains that agree within the map's noise carry the map's.
+    package static func chains(set: String, trials: [Measurements.Trial], model: CapacityModel) -> (used: [Measurements.Trial], noise: Double?) {
+        let mine = trials.filter { $0.set == set && $0.sides.count >= 2 && $0.shape.count == 3 && $0.wall > 0 }
+        let passes = Set(mine.map(\.pass)).subtracting([Measurements.Trial.again])
+        let from = passes.contains(3) ? 2 : (passes.max() ?? 0)
+        var used = mine.filter { $0.pass >= from && $0.pass != Measurements.Trial.again }
+        var reference = model
+        if let f = overlap(set: set, trials: used, model: model) { reference.sharing[set] = f.sharing }
+        var noise: Double?
+        for (shape, group) in Dictionary(grouping: mine, by: \.shape) where group.count >= 3 {
+            let ratios = group.compactMap { t -> (Measurements.Trial, Double)? in
+                guard let r = ratio(t, model: reference) else { return nil }
+                return (t, r)
+            }.sorted { $0.1 < $1.1 }
+            guard ratios.count >= 3 else { continue }
+            let mid = ratios[ratios.count / 2]
+            let m = median(ratios.map(\.1)), mad = median(ratios.map { abs($0.1 - m) })
+            let se = 1.2533 * (1.4826 * mad / m) / Double(ratios.count).squareRoot()
+            noise = max(noise ?? 0, se)
+            used.removeAll { $0.shape == shape }
+            used.append(mid.0)
+        }
+        return (used, noise)
+    }
+
+    /// A chain's wall over the seconds `model` gives its rows.
+    static func ratio(_ trial: Measurements.Trial, model: CapacityModel) -> Double? {
+        var rows: [Kernel: Int] = [:]
+        for side in trial.sides { if let kernel = Kernel(side.kernel) { rows[kernel] = side.rows } }
+        guard let t = model.seconds(m: trial.shape[0], k: trial.shape[1], n: trial.shape[2], rows: rows), t > 0 else { return nil }
+        return trial.wall / t
+    }
+
+    /// **A figure's own σ, from the map's noise** (`CapacityModel.noise`): the median over the candidates of the slowest of three alternated
+    /// rounds over the fastest, less one — a range of three, whose expectation is d₂(3) = 1.693 σ. `nil`: a map without rounds.
+    package static func sigma(mapNoise: Double?) -> Double? { mapNoise.map { $0 / 1.693 } }
+
+    /// **Whether a set's two chains at one shape call for a third** (`Measurements.Trial.again`): their ratios (wall over the model's
+    /// seconds at their rows) apart by more than twice the σ of a difference of two figures, 2√2 σ — under it, the gap is the map's own
+    /// noise; over it, one chain met what the other did not (a disturbance only adds time, and a pair's ANE side can run a third slower in
+    /// one chain), and only a third tells which. Without the map's noise, always.
+    package static func needsAgain(set: String, shape: [Int], trials: [Measurements.Trial], model: CapacityModel) -> Bool {
+        let ratios = trials.filter { $0.set == set && $0.shape == shape && $0.sides.count >= 2 && $0.wall > 0 }.compactMap { ratio($0, model: model) }
+        guard ratios.count == 2, let low = ratios.min(), let high = ratios.max() else { return false }
+        guard let sigma = sigma(mapNoise: model.noise) else { return true }
+        return high / low - 1 > 2 * 2.squareRoot() * sigma
+    }
+
+    /// **What a side of `set` pays per call beyond its line, per weight value** (`Sharing.perWeight`), from what the map measured before
+    /// any chain: the rounded bf16 pair's ANE (`gpu/bf16act+ane/fp16`) reads the bf16 copy as published, and its program widens every value
+    /// of it at every call (the lift reads each row widened, the conversion widens it again where the widened weight's is read as it is:
+    /// one widening more than the line's weight, the shift that `preparation[bf16][widened]` times per value). `nil` for every other set:
+    /// its sides read the weight their lines were measured on (the integers' pairs read the integers alone as in the set).
+    package static func lift(set: String, model: CapacityModel) -> [CapacityModel.Engine: Double]? {
+        guard set == CapacityModel.key([Kernel(.gpu, .bf16act), Kernel(.ane, .fp16)]),
+              let widening = model.preparation[.bf16]?[.widened], widening > 0 else { return nil }
+        return [.ane: widening]
+    }
+
+    /// **How far the map's identical calls disagreed** (`CapacityModel.noise`): for every candidate timed in alternated rounds on a wide product
+    /// (no short side: a thin shape's first round pays what the next do not) or an attention, its slowest round over its fastest, less one;
+    /// the median of those. `nil` with no such rounds (a report that predates them).
+    package static func noise(_ trials: [Measurements.Solo]) -> Double? {
+        var rounds: [String: [Double]] = [:]
+        for t in trials where t.seconds > 0 && t.shape.count == 3 {
+            guard let name = t.kernel.split(separator: " ").first, let kernel = Kernel(String(name)) else { continue }
+            if kernel.form.isProduct, CapacityModel.isThin(rows: t.shape[0], k: t.shape[1], n: t.shape[2]) { continue }
+            rounds["\(t.kernel) \(t.shape)", default: []].append(t.seconds)
+        }
+        let spreads = rounds.values.filter { $0.count >= 2 }.map { $0.max()! / $0.min()! - 1 }
+        return spreads.isEmpty ? nil : median(spreads)
+    }
+
     // MARK: - The model
 
     /// **The `CapacityModel` the measurements give** (`allocationUnit`: the rows an engine takes come in whole units of it, `NeuralEngine.rowUnit`): the lines, the ANE's unit, the sets' sharing (from the second pass
@@ -505,42 +679,62 @@ package enum CapacityFit {
     package static func model(from m: Measurements, allocationUnit: Int = 256) -> CapacityModel {
         var model = CapacityModel()
         var points: [Kernel: [Point]] = [:]
+        for (name, text) in m.tiles ?? [:] {
+            if let k = Kernel(name), let t = MatmulTile(text) { model.tiles[k] = t }
+        }
+        for (name, text) in m.thinTiles ?? [:] {
+            if let k = Kernel(name), let t = MatmulTile(text) { model.thinTiles[k] = t }
+        }
+        for (name, text) in m.attentionTiles ?? [:] {
+            if let k = Kernel(name), AttentionTile.kernels.contains(k), let t = AttentionTile(text) { model.attentionTiles[k] = t }
+        }
         for s in m.solos {
             guard !m.wrong.contains(s.kernel), let k = Kernel(s.kernel), s.seconds > 0 else { continue }
             points[k, default: []].append(Point(flop: s.flop, seconds: s.seconds))
         }
-        let products: Set<CapacityModel.Form> = [.fp32, .bf16, .bf16act, .int8, .q8, .fp16]
         for (k, p) in points {
-            if products.contains(k.form), let l = productLine(kernel: k, solos: m.solos.filter { $0.kernel == k.description && !m.wrong.contains($0.kernel) }) {
+            if k.form.isProduct, let l = productLine(kernel: k, solos: m.solos.filter { $0.kernel == k.description && !m.wrong.contains($0.kernel) }) {
                 model.lines[k] = l
             } else if let l = line(p) { model.lines[k] = l }
         }
+        var thinGroups: [Kernel: [Measurements.Solo]] = [:]
         for (name, group) in Dictionary(grouping: (m.thin ?? []).filter({ !m.wrong.contains($0.kernel) && $0.seconds > 0 }), by: \.kernel) {
-            if let kernel = Kernel(name), let line = thinLine(kernel: kernel, solos: group, arithmetic: model.lines[kernel], bandwidth: m.memoryBandwidth) { model.thin[kernel] = line }
+            if let kernel = Kernel(name) { thinGroups[kernel] = group }
         }
+        model.thin = thinLines(thinGroups, lines: model.lines, bandwidth: m.memoryBandwidth)
         // The unit the ANE *charges* can be finer than the one an engine *allocates* (rows are given in whole
         // `allocationUnit`s): the model's rounding is the larger.
         if let st = stairs(m.stairs.map { ($0.rows, $0.seconds) }) { model.aneRowUnit = max(st.unit, allocationUnit) }
+        // The preparation before the sets: a set's side may pay a widening its line does not hold (`lift(set:model:)`).
+        for (kindName, paths) in m.preparation {
+            if kindName == CapacityModel.kquantKind {
+                model.kquantPreparation = paths[WeightPath.widened.rawValue].flatMap { $0 > 0 ? $0 : nil }
+                model.kquantStaging = paths[WeightPath.native.rawValue].flatMap { $0 > 0 ? $0 : nil }
+                continue
+            }
+            guard let kind = WeightKind(rawValue: kindName) else { continue }
+            for (pathName, seconds) in paths { if let path = WeightPath(rawValue: pathName) { model.preparation[kind, default: [:]][path] = seconds } }
+        }
         // The sets from the smallest: a set's κ is read through the sets that remain when its first side has ended.
         func size(_ set: String) -> Int { set.split(separator: "+").count }
         let order: [String] = Set(m.trials.map(\.set)).sorted { (a: String, b: String) -> Bool in size(a) != size(b) ? size(a) < size(b) : a < b }
         for set in order {
             // The passes from the second were balanced on a κ measured (the first, on the lines, only gives it); a set with two passes only
             // is read on the second.
-            let passes = Set(m.trials.filter { $0.set == set }.map(\.pass))
-            let from = passes.contains(3) ? 2 : (passes.max() ?? 0)
-            if let f = overlap(set: set, trials: m.trials.filter { $0.pass >= from }, model: model) { model.sharing[set] = f.sharing }
+            let chosen = chains(set: set, trials: m.trials, model: model)
+            if let f = overlap(set: set, trials: chosen.used, model: model) {
+                model.sharing[set] = f.sharing
+                model.sharing[set]?.noise = chosen.noise
+            }
         }
         for w in m.witnesses {
             if let e = CapacityModel.Engine(rawValue: w.engine), w.before > 0, w.after > 0 { model.heat[e] = max(1, w.after / w.before) }
         }
+        model.noise = m.tileTrials.flatMap(noise)
+        if let w = wake(m.wake) { model.wake = w.seconds; model.wakeIdle = w.idle }
         model.memoryBandwidth = m.memoryBandwidth
         model.diskBandwidth = m.diskBandwidth
         model.diskClasses = m.diskClasses
-        for (kindName, paths) in m.preparation {
-            guard let kind = WeightKind(rawValue: kindName) else { continue }
-            for (pathName, seconds) in paths { if let path = WeightPath(rawValue: pathName) { model.preparation[kind, default: [:]][path] = seconds } }
-        }
         return model
     }
 }

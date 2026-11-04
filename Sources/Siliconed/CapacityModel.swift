@@ -7,7 +7,9 @@ import Foundation
 ///     read (inventory)      crest[engine]           FLOP/s the silicon announces, nil where nothing says it
 ///     measured (the map)    lines[kernel]           t(W) = t₀ + W / rate          one kernel = an engine × what it reads
 ///                           aneRowUnit              the ANE's rows come in units: an odd unit costs a whole one
-///                           sharing[engines]        each engine keeps `keep` of its own rate, the set pays `overhead` once
+///                           sharing[engines]        each engine keeps `keep` of its own rate, the set pays `overhead` once;
+///                                                   a side may pay `perWeight`·k·n more inside the set than alone (`lift`)
+///                           noise                   the map's own repeatability: under twice it, two plans are one
 ///                           heat[engine]            sustained over cold time (≥ 1): the fanless Mac's late minute
 ///                           memory, disk            bytes per second
 ///                           preparation             seconds per value to bring a weight to the form a kernel reads
@@ -21,6 +23,10 @@ import Foundation
 ///     balanced (every side ends together), κᵢ the full set's:
 ///         sᵢ = κᵢ · T*        T* = (W + Σ fᵢ Rᵢ) / Σ κᵢ Rᵢ        fᵢ = t₀ᵢ + wᵢ·k·n        rᵢ = (κᵢT* − fᵢ) · Rᵢ / (2·k·n)
 ///         an engine whose rᵢ ≤ 0 leaves the set, and the rest is solved again
+///     inside a set whose side pays per call for the set's own operand (the ANE's fp16 program widening the GPU's bf16 copy:
+///     `gpu/bf16act+ane/fp16`), fᵢ += λᵢ·k·n, λᵢ = `Sharing.perWeight[i]` — a cost in k·n, not in rows: it does not shrink
+///     with the ANE's share, so at few rows (512² images: m ≈ 1 024) the ANE's balanced share falls to nothing and the pair
+///     leaves the candidates, while at m ≈ 4 096 it is a few percent of the ANE's side
 ///
 /// What sets it apart — what a model written by analogy with "add the engines' rates" would get wrong:
 ///
@@ -59,11 +65,24 @@ package struct CapacityModel: Codable, Sendable, Equatable {
         /// Products: the weight widened to fp32; the bf16 weight as published, its activation in fp32 or rounded to
         /// bf16; the 8-bit weight as published (`gpu/int8`; `ane/int8`: the ANE's program that takes the integers as its
         /// input, scale per column or for the tensor, the rotation on the activation); fp16 (the ANE's programs, from the
-        /// widened weight).
-        case fp32, bf16, bf16act, int8, q8, fp16
+        /// widened weight); the 8-bit weight as published beside an activation rounded to bf16 (`gpu/int8act`: after its
+        /// rotation, `bfloat × int8`, the scale after the sums; `gpu/q8act`: a GGUF Q8_0, each block's scale applied in fp32
+        /// to its partial sums) — the integers are exact in bf16, so only the operand is rounded, as for `bf16act`; a K-quant
+        /// (`gpu/q4kact`: Q4_K, Q5_K's `sc·q` exact in fp16, `bfloat × half` per super-block, its `d` in fp32 on the partial sums,
+        /// the mins apart — `KQuantKernels`).
+        case fp32, bf16, bf16act, int8, q8, fp16, int8act, q8act, q4kact
         /// Attentions: the MPSGraph graph, the flash kernel, a share of the heads on the CPU, the three stages by tiles of query rows
-        /// (`tiles`: fp32 throughout; `tiles16`: fp16 operands, fp32 sums).
-        case graph, flash, heads, tiles, tiles16
+        /// (`tiles`: fp32 throughout; `tiles16`: fp16 operands, fp32 sums; `tilesbf16`: bf16 operands, fp32 sums) — the last two in
+        /// the form their map chose (`attentionTiles`).
+        case graph, flash, heads, tiles, tiles16, tilesbf16
+
+        /// A product's form (its seconds a line of `k`, `n` and rows), not an attention's.
+        package var isProduct: Bool {
+            switch self {
+            case .fp32, .bf16, .bf16act, .int8, .q8, .fp16, .int8act, .q8act, .q4kact: return true
+            case .graph, .flash, .heads, .tiles, .tiles16, .tilesbf16: return false
+            }
+        }
     }
 
     /// One engine computing one form: `gpu/fp32`, `ane/fp16`, `cpu/heads`.
@@ -163,15 +182,33 @@ package struct CapacityModel: Codable, Sendable, Equatable {
         /// over its seconds), so the model gives no seconds to the set there. `nil`: no bound — the attention's pair has no ceiling
         /// (`CapacityFit.overlap`: it streams no weight, and no probe reaches the sequences of the large formats).
         package var kFrom: Int?, kTo: Int?
+        /// **Seconds per weight value a side pays at every call in this set, beyond its own line** (keyed by engine): what the side's line,
+        /// measured on another form of the weight, does not hold. The ANE's fp16 program beside the GPU's rounded rows reads the bf16 copy
+        /// as published (`gpu/bf16act+ane/fp16`): every call widens the whole copy once more before its lift and conversion than the
+        /// widened weight its line was measured on — `k·n` values whatever its rows, the bf16 widening's own rate (`preparation`). Read
+        /// into the κ of a chain of 1 024 ANE rows it cost each of them a quarter of a call; at 256 rows (a 512² render's half grid) the
+        /// same κ hid four times as much: the pair taken there ran 22–52 % over the GPU alone. `nil`: none.
+        package var perWeight: [Engine: Double]?
+        /// **The standard error of the set's figure** (relative), where its chains at one shape were measured three times because the
+        /// first two disagreed beyond the map's noise (`CapacityFit.needsAgain`): 1.2533 · 1.4826 · MAD / median / √n over the chains'
+        /// ratios to the model (`CapacityFit.chains`). The map's noise is read on single engines in alternated rounds; a pair's chains,
+        /// two engines and the CPU's host passes beside them, can disagree more — the rounded pair 13 % in one map, the integers' rounded
+        /// pair 1.9 % in one and 32 % in the next at the same rows. The solver keeps the set only where its gain passes twice the error of
+        /// the difference (`CapacitySolver`'s `passingTheirError`). `nil`: two chains that agreed, a figure as sure as the map's.
+        package var noise: Double?
         package struct KeepAt: Codable, Sendable, Equatable {
             package var k: Int
             /// Keyed by the engine's name (`"gpu"`).
             package var keep: [String: Double]
             package init(k: Int, keep: [String: Double]) { self.k = k; self.keep = keep }
         }
-        package init(overhead: Double = 0, keep: [Engine: Double] = [:], sustained: Double? = nil, keepByK: [KeepAt]? = nil, kFrom: Int? = nil, kTo: Int? = nil) {
+        package init(overhead: Double = 0, keep: [Engine: Double] = [:], sustained: Double? = nil, keepByK: [KeepAt]? = nil, kFrom: Int? = nil, kTo: Int? = nil,
+                     perWeight: [Engine: Double]? = nil, noise: Double? = nil) {
             self.overhead = overhead; self.keep = keep; self.sustained = sustained; self.keepByK = keepByK; self.kFrom = kFrom; self.kTo = kTo
+            self.perWeight = perWeight; self.noise = noise
         }
+        /// The seconds `engine` pays per call in this set beyond its line, on a `k×n` weight (`perWeight`).
+        package func lift(_ engine: Engine, k: Int, n: Int) -> Double { (perWeight?[engine] ?? 0) * Double(k) * Double(n) }
         /// Whether a weight of length `k` is inside the set's domain.
         package func covers(k: Int) -> Bool { k >= (kFrom ?? 0) && k <= (kTo ?? Int.max) }
         /// The κ of `engine` in this set on a weight of length `k`.
@@ -187,7 +224,7 @@ package struct CapacityModel: Codable, Sendable, Equatable {
             return last.keep
         }
 
-        private enum CodingKeys: String, CodingKey { case overhead, keep, sustained, keepByK, kFrom, kTo }
+        private enum CodingKeys: String, CodingKey { case overhead, keep, sustained, keepByK, kFrom, kTo, perWeight, noise }
         /// `keep` keyed by the engine's name (`{"gpu": 0.95}`), as a person reads it.
         package init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -197,6 +234,9 @@ package struct CapacityModel: Codable, Sendable, Equatable {
             keepByK = try c.decodeIfPresent([KeepAt].self, forKey: .keepByK)
             kFrom = try c.decodeIfPresent(Int.self, forKey: .kFrom)
             kTo = try c.decodeIfPresent(Int.self, forKey: .kTo)
+            perWeight = try c.decodeIfPresent([String: Double].self, forKey: .perWeight)
+                .map { try CapacityModel.engines($0, codingPath: c.codingPath + [CodingKeys.perWeight]) }
+            noise = try c.decodeIfPresent(Double.self, forKey: .noise)
         }
         package func encode(to encoder: any Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
@@ -206,6 +246,8 @@ package struct CapacityModel: Codable, Sendable, Equatable {
             try c.encodeIfPresent(keepByK, forKey: .keepByK)
             try c.encodeIfPresent(kFrom, forKey: .kFrom)
             try c.encodeIfPresent(kTo, forKey: .kTo)
+            try c.encodeIfPresent(perWeight.map { Dictionary(uniqueKeysWithValues: $0.map { ($0.key.rawValue, $0.value) }) }, forKey: .perWeight)
+            try c.encodeIfPresent(noise, forKey: .noise)
         }
     }
 
@@ -238,13 +280,39 @@ package struct CapacityModel: Codable, Sendable, Equatable {
     /// Seconds per value to widen a K-quant (Q4_K to Q6_K) weight: it has no `WeightKind`, so `preparation` cannot say it,
     /// and a super-block's unpacking costs more than a bf16 shift. `nil`: the solver falls back on `preparation[.bf16]`.
     package var kquantPreparation: Double?
+    /// Seconds per value to copy a K-quant's blocks as they are into the reserve (`Artifact.stagePacked`, the `gpu/q4kact` route: the GPU
+    /// unpacks them). `nil`: a map before the route, priced as a Q8_0's copy.
+    package var kquantStaging: Double?
+    /// The name the probes' preparation gives the K-quant's two figures (`Fit.Measurements.preparation`), beside the `WeightKind`s.
+    package static let kquantKind = "q4k"
+    /// **The `matmul2d` tile each kernel runs** (`MatmulTile`): the fastest of its candidates on this Mac, measured before its line (which is
+    /// the line of that tile). A kernel absent runs its standard tile — what every map before tiles were measured planned with.
+    package var tiles: [Kernel: MatmulTile] = [:]
+    /// ... and on its thin products (`isThin`), chosen on `Sizes.thin`: the tile that times its `thin` line.
+    package var thinTiles: [Kernel: MatmulTile] = [:]
+    /// **The form of each half-precision attention kernel** (`AttentionTile`, `gpu/tiles16` and `gpu/tilesbf16`): fused at this tile,
+    /// the fastest of the candidates on this Mac, measured before its line (which is the line of that form). A kernel absent runs the
+    /// three stages — what every map before the fused form planned with.
+    package var attentionTiles: [Kernel: AttentionTile] = [:]
+    /// **How far this map's identical calls disagreed** (relative): the median, over every candidate the map timed in alternated rounds on
+    /// a wide product or an attention (`tileTrials`), of its slowest round over its fastest, less one (`CapacityFit.noise`). The solver
+    /// reads it as the width under which two assignments are one (`CapacitySolver`: twice it, the difference of two such figures) and
+    /// takes the first in its written order there — a choice the noise cannot flip from one map to the next. `nil`: a map without
+    /// rounds, whose choices are the fastest's (a part in a billion).
+    package var noise: Double?
+    /// **What a self-attention pays beyond its line, after the CPU left the GPU idle** (seconds per call, `Context.wake`): the CPU's QK-norm
+    /// and RoPE run before every self-attention of the five denoisers, and the GPU's governor makes the call after an idle past `wakeIdle`
+    /// pay its clock back. `nil`: a map without the probe, priced as before.
+    package var wake: Double?
+    /// The idle from which the wake is paid (seconds): the report's.
+    package var wakeIdle: Double?
 
     package init() {}
 
     // MARK: - JSON
 
     private enum CodingKeys: String, CodingKey {
-        case crest, lines, thin, aneRowUnit, sharing, heat, memoryBandwidth, diskBandwidth, diskClasses, preparation, kquantPreparation
+        case crest, lines, thin, aneRowUnit, sharing, heat, memoryBandwidth, diskBandwidth, diskClasses, preparation, kquantPreparation, kquantStaging, tiles, thinTiles, attentionTiles, noise, wake, wakeIdle
     }
 
     /// The engines of a dictionary keyed by their names.
@@ -284,6 +352,8 @@ package struct CapacityModel: Codable, Sendable, Equatable {
         memoryBandwidth = try c.decodeIfPresent(Double.self, forKey: .memoryBandwidth)
         diskBandwidth = try c.decodeIfPresent(Double.self, forKey: .diskBandwidth)
         diskClasses = try c.decodeIfPresent([String: CapacityDisk.Reading].self, forKey: .diskClasses) ?? [:]
+        wake = try c.decodeIfPresent(Double.self, forKey: .wake)
+        wakeIdle = try c.decodeIfPresent(Double.self, forKey: .wakeIdle)
         let prepared = try c.decodeIfPresent([String: [String: Double]].self, forKey: .preparation) ?? [:]
         for (kindName, paths) in prepared {
             guard let kind = WeightKind(rawValue: kindName) else {
@@ -297,6 +367,26 @@ package struct CapacityModel: Codable, Sendable, Equatable {
             }
         }
         kquantPreparation = try c.decodeIfPresent(Double.self, forKey: .kquantPreparation)
+        kquantStaging = try c.decodeIfPresent(Double.self, forKey: .kquantStaging)
+        for (name, tile) in try c.decodeIfPresent([String: MatmulTile].self, forKey: .tiles) ?? [:] {
+            guard let kernel = Kernel(name) else {
+                throw DecodingError.dataCorruptedError(forKey: .tiles, in: c, debugDescription: "kernel « \(name) »")
+            }
+            tiles[kernel] = tile
+        }
+        for (name, tile) in try c.decodeIfPresent([String: MatmulTile].self, forKey: .thinTiles) ?? [:] {
+            guard let kernel = Kernel(name) else {
+                throw DecodingError.dataCorruptedError(forKey: .thinTiles, in: c, debugDescription: "kernel « \(name) »")
+            }
+            thinTiles[kernel] = tile
+        }
+        for (name, tile) in try c.decodeIfPresent([String: AttentionTile].self, forKey: .attentionTiles) ?? [:] {
+            guard let kernel = Kernel(name) else {
+                throw DecodingError.dataCorruptedError(forKey: .attentionTiles, in: c, debugDescription: "kernel « \(name) »")
+            }
+            attentionTiles[kernel] = tile
+        }
+        noise = try c.decodeIfPresent(Double.self, forKey: .noise)
     }
 
     package func encode(to encoder: any Encoder) throws {
@@ -310,10 +400,23 @@ package struct CapacityModel: Codable, Sendable, Equatable {
         try c.encodeIfPresent(memoryBandwidth, forKey: .memoryBandwidth)
         try c.encodeIfPresent(diskBandwidth, forKey: .diskBandwidth)
         if !diskClasses.isEmpty { try c.encode(diskClasses, forKey: .diskClasses) }
+        try c.encodeIfPresent(wake, forKey: .wake)
+        try c.encodeIfPresent(wakeIdle, forKey: .wakeIdle)
         try c.encode(Dictionary(uniqueKeysWithValues: preparation.map { kind, paths in
             (kind.rawValue, Dictionary(uniqueKeysWithValues: paths.map { ($0.key.rawValue, $0.value) }))
         }), forKey: .preparation)
         try c.encodeIfPresent(kquantPreparation, forKey: .kquantPreparation)
+        try c.encodeIfPresent(kquantStaging, forKey: .kquantStaging)
+        if !tiles.isEmpty {
+            try c.encode(Dictionary(uniqueKeysWithValues: tiles.map { ($0.key.description, $0.value) }), forKey: .tiles)
+        }
+        if !thinTiles.isEmpty {
+            try c.encode(Dictionary(uniqueKeysWithValues: thinTiles.map { ($0.key.description, $0.value) }), forKey: .thinTiles)
+        }
+        if !attentionTiles.isEmpty {
+            try c.encode(Dictionary(uniqueKeysWithValues: attentionTiles.map { ($0.key.description, $0.value) }), forKey: .attentionTiles)
+        }
+        try c.encodeIfPresent(noise, forKey: .noise)
     }
 
     /// **Every number to `digits` significant digits**: what a report keeps (`Diagnostic.significant`), so that a model read back
@@ -325,12 +428,15 @@ package struct CapacityModel: Codable, Sendable, Equatable {
         m.crest = crest.mapValues(r)
         m.lines = lines.mapValues { Line(t0: r($0.t0), rate: r($0.rate), perWeight: $0.perWeight.map(r), rateByK: $0.rateByK?.map { .init(k: $0.k, rate: r($0.rate)) }, rowsFrom: $0.rowsFrom, perRow: $0.perRow.map(r)) }
         m.thin = thin.mapValues { Line(t0: r($0.t0), rate: r($0.rate), perWeight: $0.perWeight.map(r), rateByK: $0.rateByK?.map { .init(k: $0.k, rate: r($0.rate)) }, rowsFrom: $0.rowsFrom, perRow: $0.perRow.map(r)) }
-        m.sharing = sharing.mapValues { Sharing(overhead: r($0.overhead), keep: $0.keep.mapValues(r), sustained: $0.sustained.map(r), keepByK: $0.keepByK?.map { .init(k: $0.k, keep: $0.keep.mapValues(r)) }, kFrom: $0.kFrom, kTo: $0.kTo) }
+        m.sharing = sharing.mapValues { Sharing(overhead: r($0.overhead), keep: $0.keep.mapValues(r), sustained: $0.sustained.map(r), keepByK: $0.keepByK?.map { .init(k: $0.k, keep: $0.keep.mapValues(r)) }, kFrom: $0.kFrom, kTo: $0.kTo, perWeight: $0.perWeight?.mapValues(r), noise: $0.noise.map(r)) }
         m.heat = heat.mapValues(r)
         m.memoryBandwidth = memoryBandwidth.map(r); m.diskBandwidth = diskBandwidth.map(r)
         m.diskClasses = diskClasses.mapValues { .init(rate: r($0.rate), mean: r($0.mean)) }
         m.preparation = preparation.mapValues { $0.mapValues(r) }
         m.kquantPreparation = kquantPreparation.map(r)
+        m.kquantStaging = kquantStaging.map(r)
+        m.noise = noise.map(r)
+        m.wake = wake.map(r); m.wakeIdle = wakeIdle.map(r)
         return m
     }
 
@@ -397,6 +503,11 @@ package struct CapacityModel: Codable, Sendable, Equatable {
         case .bf16act: return (2, 8)
         case .int8: return (1, 12)
         case .q8: return (1 + 4.0 / 64, 4)
+        // The rounded copy of the activation besides (read once in fp32, written and read in bf16).
+        case .int8act: return (1, 16)
+        case .q8act: return (1 + 4.0 / 64, 8)
+        // The blocks (0.56 B), unpacked into `sc·q` (half: written, then read) and the mins; the activation's rounded copy and sums.
+        case .q4kact: return (0.5625 + 4 + 4.0 / 32, 9)
         default: return (4, 4)
         }
     }
@@ -437,11 +548,12 @@ package struct CapacityModel: Codable, Sendable, Equatable {
     /// of the overlap, before the set's overhead.
     package func busy(m: Int, k: Int, n: Int, rows: [Kernel: Int], sustained: Bool = false) -> [Kernel: Double] {
         let running = rows.filter { $0.value > 0 }.map(\.key)
-        if running.count > 1, !sharing(running).covers(k: k) { return [:] }
+        let set = running.count > 1 ? sharing(running) : Sharing()
+        if running.count > 1, !set.covers(k: k) { return [:] }
         var solo: [Kernel: Double] = [:]
         for (kernel, r) in rows where r > 0 {
             guard let t = alone(kernel, rows: r, k: k, n: n, sustained: sustained) else { return [:] }
-            solo[kernel] = t
+            solo[kernel] = t + set.lift(kernel.engine, k: k, n: n)
         }
         return overlap(solo, k: k)
     }
@@ -475,7 +587,7 @@ package struct CapacityModel: Codable, Sendable, Equatable {
                 guard let (line, short) = self.line(for: kernel, rows: m, k: k, n: n), line.rate > 0 else { return nil }
                 let slow = sustained ? max(1, heat[kernel.engine] ?? 1) : 1
                 rate[kernel] = self.rate(kernel, line: line, k: k, n: n, short: short) / slow
-                fixed[kernel] = line.fixed(k: k, n: n)
+                fixed[kernel] = line.fixed(k: k, n: n) + set.lift(kernel.engine, k: k, n: n)
                 kappa[kernel] = speed(kernel, in: set, k: k)
             }
             let w = perRow * Double(m)
