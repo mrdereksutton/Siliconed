@@ -141,7 +141,7 @@ struct SettingsView: View {
                                          })) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Faster Rendering")
-                            Text(verbatim: unavailable.map(Self.sentence)
+                            Text(verbatim: unavailable.map(DiTBox.sentence)
                                  ?? String(localized: "From 1024² up, the first steps at half size: faster, a slightly different image."))
                                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }
@@ -155,15 +155,15 @@ struct SettingsView: View {
                     SettingLabel("Incognito", "New images stay in memory until you save them. When this is off, each new image is also saved as a PNG, with its prompt, seed and model, in Downloads › Siliconed.")
                 }
                 if let folder = EveryImage.shared.folder {
-                    LabeledContent {
+                    Text(verbatim: folder.path(percentEncoded: false)).font(.caption).textSelection(.enabled)
+                    HStack {
+                        Button("Change Folder…") { EveryImage.shared.choose() }
                         Button("Show in Finder") {
                             if folder.path == EveryImage.downloads.path {
                                 try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                             }
                             NSWorkspace.shared.activateFileViewerSelecting([folder])
                         }
-                    } label: {
-                        Text(verbatim: folder.path(percentEncoded: false)).font(.caption).textSelection(.enabled)
                     }
                 }
             }
@@ -179,16 +179,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-    }
-
-    /// Why Faster Rendering would do nothing for this render, in a sentence (`DiTBox.sentence`).
-    private static func sentence(_ reason: DiTSwitchUnavailable) -> String {
-        switch reason {
-        case .sizeUnder1024: String(localized: "Needs 1024 px or more on each side.")
-        case .withLoRADetailOrEdit: String(localized: "Not with a LoRA, Detail or an edit.")
-        case .stepsOffRecipe: String(localized: "Only at the model’s own step count.")
-        case .notMeasured, .noAccelerator: AcceleratorWords.unavailable(reason)
-        }
     }
 
     /// Out of the everyday way: the capacity map that renders are planned from, the terminal, then what

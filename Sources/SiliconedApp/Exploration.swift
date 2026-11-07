@@ -273,7 +273,7 @@ struct ExplorationPanel: View {
                 ChipPicker(selection: $app.exploreShape, choices: ExploreShape.allCases) { shape in
                     HStack(spacing: 5) {
                         RatioShape(ratio: shape.ratio, side: 11)
-                        Text(verbatim: shape.ratio.label)
+                        Text(verbatim: shape.ratio.description)
                     }
                 }
             }
@@ -428,11 +428,11 @@ struct ExplorationPanel: View {
 
 extension ExploreShape {
     /// Fork: the shape as a ratio, the composer's way of naming a size.
-    var ratio: SizeTable.Ratio {
+    var ratio: SizeRatio {
         switch self {
-        case .square: SizeTable.Ratio(w: 1, h: 1)
-        case .portrait: SizeTable.Ratio(w: 2, h: 3)
-        case .landscape: SizeTable.Ratio(w: 3, h: 2)
+        case .square: SizeRatio(1, 1)
+        case .portrait: SizeRatio(2, 3)
+        case .landscape: SizeRatio(3, 2)
         }
     }
 }

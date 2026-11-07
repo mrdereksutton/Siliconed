@@ -8,73 +8,57 @@ import Siliconed
 import SwiftUI
 
 /// The ratios offered and the size each takes — upstream's table (`SizeScales`, held by its tests: sides in multiples of 32,
-/// so that every model takes them), read for the composer's eight ratios. 9:16 and 16:9 are 768 × 1344 and 1344 × 768 at 1K
-/// (4:7, the nearest in multiples of 32 near a megapixel), the exact 1440 × 2560 and 2560 × 1440 at 2K.
+/// so that every model takes them), ordered from tallest to widest. 9:16 and 16:9 are 768 × 1344 and 1344 × 768 at 1K
+/// (4:7, the nearest in multiples of 32 near a megapixel, shown as « ≈ 9:16 » and « ≈ 16:9 »), the exact 1440 × 2560 and
+/// 2560 × 1440 at 2K.
 enum SizeTable {
-    struct Ratio: Hashable, Identifiable {
-        let w: Int, h: Int
-        var id: String { label }
-        var label: String { "\(w):\(h)" }
-    }
-
-    enum Tier: Int, CaseIterable, Hashable {
-        case oneK = 1, twoK = 2
-        var label: String { "\(rawValue)K" }
-    }
-
     /// Tallest to widest.
-    static let ratios: [Ratio] = [Ratio(w: 9, h: 16), Ratio(w: 2, h: 3), Ratio(w: 3, h: 4), Ratio(w: 4, h: 5),
-                                  Ratio(w: 1, h: 1), Ratio(w: 4, h: 3), Ratio(w: 3, h: 2), Ratio(w: 16, h: 9)]
-    static let square = Ratio(w: 1, h: 1)
+    static let ratios: [SizeRatio] = SizeScales.portraits.reversed() + [SizeRatio(1, 1)] + SizeScales.landscapes
+    static let square = SizeRatio(1, 1)
 
-    static func format(_ r: Ratio, _ t: Tier) -> RecommendedFormat {
-        SizeScales.cell(SizeRatio(r.w, r.h), t == .oneK ? .oneK : .twoK)?.format ?? RecommendedFormat(1024, 1024)
+    /// « 3:4 », or « ≈ 9:16 » where the pixels at this resolution are not quite that proportion.
+    static func ratioTitle(_ cell: SizeCell) -> String {
+        cell.isApproximate ? "≈ \(cell.ratio)" : cell.ratio.description
     }
 
-    /// The ratio and resolution that name `f`; nil for a size typed by hand.
-    static func match(_ f: RecommendedFormat) -> (ratio: Ratio, tier: Tier)? {
-        for r in ratios {
-            for t in Tier.allCases where format(r, t) == f { return (r, t) }
-        }
-        return nil
-    }
-}
-
-extension AppState {
-    /// Fork: takes the size a ratio and a resolution name (`SizeTable`).
-    func pickSize(_ r: SizeTable.Ratio, _ t: SizeTable.Tier) {
-        let f = SizeTable.format(r, t)
-        format = f
-        // After the format: `orientationChanged` then finds the two agreeing and keeps the size.
-        if orientation != f.orientation { orientation = f.orientation }
-    }
-
-    /// Fork: the chosen model takes `f` and this Mac's memory holds it (`checkFormat`, `macNeeded`).
-    func renders(_ f: RecommendedFormat) -> Bool {
-        (try? checkFormat(width: f.width, height: f.height)) != nil && macNeeded(f, images: 0) == nil
+    /// The footnote of an approximate proportion, as a tooltip.
+    static func approximateHelp(_ cell: SizeCell?) -> Text {
+        guard let cell, cell.isApproximate else { return Text("Aspect ratio") }
+        let pixels = "\(cell.width) × \(cell.height)"
+        let really = cell.actualRatio.description, asked = cell.ratio.description
+        let off = cell.deviation.formatted(.percent.precision(.fractionLength(1)))
+        return Text("\(pixels) is really \(really), \(off) off \(asked): an exact \(asked) in multiples of 32 has no size near this resolution.")
     }
 }
 
-/// **The aspect ratios**, tallest to widest, each with its shape; a ratio beyond this Mac's memory at
-/// the current resolution falls back to 1K, one this Mac cannot render at all is greyed.
+/// **The aspect ratios**, tallest to widest, each with its shape; a ratio beyond this Mac's memory or
+/// the model's side limit at the current resolution falls back to 1K, one unavailable at 1K too is greyed
+/// with its reason (`scaleUnavailable`).
 struct RatioChoices: View {
     @Bindable var app: AppState
     let done: () -> Void
 
     var body: some View {
-        let current = SizeTable.match(app.format)
-        let tier = current?.tier ?? .oneK
+        let current = app.sizeCell
+        let resolution = current?.resolution ?? .oneK
         ChoiceList(title: "Aspect ratio") {
-            ForEach(SizeTable.ratios) { r in
-                let fits = app.renders(SizeTable.format(r, tier))
-                ChoiceRow(selected: current?.ratio == r, enabled: fits || app.renders(SizeTable.format(r, .oneK))) {
-                    app.pickSize(r, fits ? tier : .oneK)
+            ForEach(SizeTable.ratios, id: \.self) { r in
+                let cell = SizeScales.cell(r, resolution)!
+                let fallback = SizeScales.cell(r, .oneK)!
+                let fits = app.scaleUnavailable(cell) == nil
+                let target = fits ? cell : fallback
+                let why = app.scaleUnavailable(target)
+                ChoiceRow(selected: current?.ratio == r, enabled: why == nil) {
+                    app.selectScale(r, target.resolution)
                     done()
                 } label: {
                     RatioShape(ratio: r, side: 14)
-                    Text(verbatim: r.label).monospacedDigit().frame(width: 36, alignment: .leading)
-                    let f = SizeTable.format(r, fits ? tier : .oneK)
-                    Text(verbatim: "\(f.width) × \(f.height)").font(Silicon.readout).foregroundStyle(.secondary)
+                    Text(verbatim: SizeTable.ratioTitle(target)).monospacedDigit().frame(width: 48, alignment: .leading)
+                    if let why {
+                        Text(verbatim: why).foregroundStyle(.secondary)
+                    } else {
+                        Text(verbatim: "\(target.width) × \(target.height)").font(Silicon.readout).foregroundStyle(.secondary)
+                    }
                 }
             }
         }
@@ -82,29 +66,28 @@ struct RatioChoices: View {
 }
 
 /// **The resolutions** at the current ratio: 1K about a megapixel, 2K about four — with the pixels, or
-/// the Mac a size needs when this one's memory falls short.
+/// why a resolution is greyed (the model's side limit or the Mac it needs: `scaleUnavailable`).
 struct TierChoices: View {
     @Bindable var app: AppState
     let done: () -> Void
 
     var body: some View {
-        let current = SizeTable.match(app.format)
-        let tier = current?.tier ?? .oneK
+        let current = app.sizeCell
+        let resolution = current?.resolution ?? .oneK
         let ratio = current?.ratio ?? SizeTable.square
         ChoiceList(title: "Resolution") {
-            ForEach(SizeTable.Tier.allCases, id: \.self) { t in
-                let f = SizeTable.format(ratio, t)
-                ChoiceRow(selected: t == tier, enabled: app.renders(f)) {
-                    app.pickSize(ratio, t)
+            ForEach(SizeResolution.allCases, id: \.self) { q in
+                let cell = SizeScales.cell(ratio, q)!
+                let why = app.scaleUnavailable(cell)
+                ChoiceRow(selected: q == resolution, enabled: why == nil) {
+                    app.selectScale(ratio, q)
                     done()
                 } label: {
-                    Text(verbatim: t.label).frame(width: 24, alignment: .leading)
-                    // Beyond this Mac's memory: the Mac it needs, said where the choice is made.
-                    if let n = app.macNeeded(f, images: 0) {
-                        Text("\(String(f.width)) × \(String(f.height)) — needs a Mac with \(String(n)) GB")
-                            .foregroundStyle(.secondary)
+                    Text(verbatim: q.rawValue).frame(width: 24, alignment: .leading)
+                    if let why {
+                        Text(verbatim: why).foregroundStyle(.secondary)
                     } else {
-                        Text(verbatim: "\(f.width) × \(f.height)").font(Silicon.readout).foregroundStyle(.secondary)
+                        Text(verbatim: "\(cell.width) × \(cell.height)").font(Silicon.readout).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -114,12 +97,12 @@ struct TierChoices: View {
 
 /// A ratio's shape, fitted in a square of `side` points.
 struct RatioShape: View {
-    let ratio: SizeTable.Ratio
+    let ratio: SizeRatio
     var side: CGFloat = 14
 
     var body: some View {
-        let w = ratio.w >= ratio.h ? side : side * CGFloat(ratio.w) / CGFloat(ratio.h)
-        let h = ratio.h >= ratio.w ? side : side * CGFloat(ratio.h) / CGFloat(ratio.w)
+        let w = ratio.width >= ratio.height ? side : side * CGFloat(ratio.width) / CGFloat(ratio.height)
+        let h = ratio.height >= ratio.width ? side : side * CGFloat(ratio.height) / CGFloat(ratio.width)
         RoundedRectangle(cornerRadius: side / 6, style: .continuous)
             .strokeBorder(.primary, lineWidth: 1.3)
             .frame(width: w, height: h)

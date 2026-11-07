@@ -185,11 +185,8 @@ private struct AppCommands: Commands {
             Button("Statistics") { window.toggleStatistics() }
                 .keyboardShortcut("i", modifiers: [.command, .option])
             // By its character, never its key code: the same letter on an AZERTY keyboard. Free in the menus.
-            // Fork: held back until the window's look is finished (`Fork.promptLab`).
-            if Fork.promptLab {
-                Button("Prompt Lab") { LabWindow.shared.show() }
-                    .keyboardShortcut("l", modifiers: [.command, .option])
-            }
+            Button("Prompt Lab") { LabWindow.shared.show() }
+                .keyboardShortcut("l", modifiers: [.command, .option])
         }
     }
 }

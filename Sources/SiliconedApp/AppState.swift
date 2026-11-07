@@ -106,7 +106,7 @@ final class AppState {
     /// leaves memory without a gesture, as upstream.
     var incognito: Bool {
         get { EveryImage.shared.folder == nil }
-        set { EveryImage.shared.folder = newValue ? nil : EveryImage.downloads }
+        set { EveryImage.shared.folder = newValue ? nil : EveryImage.preferredFolder }
     }
     /// Fork: the left column's tab, the rack (Generate) or the exploration's controls (Explore).
     var sidebarTab: SidebarTab = .generate

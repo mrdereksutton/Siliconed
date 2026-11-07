@@ -37,15 +37,20 @@ final class EveryImage {
             UserDefaults.standard.set(folder == nil, forKey: Self.incognitoKey)
             if let folder, folder.path != Self.downloads.path {
                 UserDefaults.standard.set(folder.path, forKey: Self.key)
-            } else {
+            } else if folder != nil {
                 UserDefaults.standard.removeObject(forKey: Self.key)
             }
         }
     }
 
+    /// The user's chosen folder, or `Downloads/Siliconed` when none was chosen.
+    static var preferredFolder: URL {
+        UserDefaults.standard.string(forKey: key).map { URL(fileURLWithPath: $0, isDirectory: true) } ?? downloads
+    }
+
     private static var initialFolder: URL? {
         if UserDefaults.standard.bool(forKey: incognitoKey) { return nil }
-        return UserDefaults.standard.string(forKey: key).map { URL(fileURLWithPath: $0, isDirectory: true) } ?? downloads
+        return preferredFolder
     }
 
     /// The panel that turns the setting on, or moves it to another folder; Cancel changes nothing.

@@ -129,7 +129,7 @@ extension AppState {
                 } else if let file = files.first {
                     replaceStart(with: file)
                 }
-            } else if startsFromImage, Fork.promptLab {
+            } else if startsFromImage {
                 flash(String(localized: "To start from an image, choose it in the Prompt Lab"))
             } else {
                 flash(String(localized: "To start from an image, choose a model that edits"))

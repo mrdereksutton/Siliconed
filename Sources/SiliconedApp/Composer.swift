@@ -15,11 +15,15 @@ struct Composer: View {
     /// composer is in the window: its width holds a panel, its top gives the room above a cell.
     @State private var cells: [ComposerPanel: CGRect] = [:]
     @State private var frame: CGRect = .zero
-    private static let space = "composer"
+    private nonisolated static let space = "composer"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if app.editingPossible, !app.references.isEmpty { references }
+            if app.editingPossible, !app.references.isEmpty {
+                references
+            } else if let start = app.usedStart {
+                StartImageRow(app: app, start: start)
+            }
             prompt
             HStack(alignment: .center, spacing: 8) {
                 if app.editingPossible { AttachCell(app: app) }
@@ -29,19 +33,19 @@ struct Composer: View {
                 }
                 .help("The denoiser: the publisher’s model, or a fine-tune you imported")
                 if app.references.isEmpty {
-                    let current = SizeTable.match(app.format)
+                    let current = app.sizeCell
                     cell(.ratio, "Ratio") {
                         if let current {
                             RatioShape(ratio: current.ratio, side: 12)
-                            Text(verbatim: current.ratio.label)
+                            Text(verbatim: SizeTable.ratioTitle(current))
                         } else {
                             Text(verbatim: "\(app.format.width) × \(app.format.height)")
                         }
                     }
-                    .help("Aspect ratio")
+                    .help(SizeTable.approximateHelp(current))
                     if let current {
-                        cell(.tier, "Resolution") { Text(verbatim: current.tier.label) }
-                            .help("Resolution")
+                        cell(.tier, "Resolution") { Text(verbatim: current.resolution.rawValue) }
+                            .help("1K is about 1 megapixel, 2K about 4")
                     }
                 } else {
                     // An edit keeps image 1's framing: its size, not a choice.
@@ -97,7 +101,7 @@ struct Composer: View {
         }
         .overlay(alignment: .topLeading) { panels }
         // As on the canvas: a PNG Siliconed wrote brings back its settings; on a model that edits, any
-        // other image joins the edit.
+        // other image joins the edit; when a starting image is held, a dropped image replaces it.
         .dropDestination(for: DroppedImage.self) { items, _ in
             var files: [URL] = []
             var pasted: [Data] = []
@@ -109,10 +113,22 @@ struct Composer: View {
                 }
             }
             if items.count == 1, files.count == 1, app.restoreSettings(fromPNG: files[0]) { return true }
-            guard app.editingPossible, !(files.isEmpty && pasted.isEmpty) else { return false }
-            pasted.forEach { app.addReference(png: $0) }
-            app.addReferences(files)
-            return true
+            if app.editingPossible, !(files.isEmpty && pasted.isEmpty) {
+                pasted.forEach { app.addReference(png: $0) }
+                app.addReferences(files)
+                return true
+            }
+            if app.usedStart != nil {
+                if let data = pasted.first, let image = AppState.startImage(png: data, name: String(localized: "dropped image")) {
+                    app.carryStart(image)
+                    return true
+                }
+                if let url = files.first {
+                    app.replaceStart(with: url)
+                    return true
+                }
+            }
+            return false
         }
     }
 
@@ -183,7 +199,7 @@ struct Composer: View {
             case .tier:
                 TierChoices(app: app, done: close)
             case .lora:
-                LoRAStack(app: app)
+                LoRAStack(app: app, done: close)
             case .settings:
                 ChoiceList(title: "Settings") {
                     RenderOptions(app: app).padding(.horizontal, 8)
@@ -197,14 +213,15 @@ struct Composer: View {
     // MARK: The prompt and an edit's images
 
     /// **The prompt**: as tall as its text — two lines to seven, then it scrolls. Return makes a new
-    /// line; ⌘↩ renders.
+    /// line; ⌘↩ renders. On its right: the clear button (⌘Z brings the prompt back) and the Prompt Lab (⌥⌘L).
     private var prompt: some View {
         // The text, invisible, gives the editor its height (`TextEditor` takes any height it is offered);
         // its line limit is the cap — a `frame(maxHeight:)` would grow to the height offered.
         Text(verbatim: app.prompt + " ")
             .font(.system(size: 15))
             .lineLimit(7)
-            .padding(.horizontal, 5)
+            .padding(.leading, 5)
+            .padding(.trailing, app.prompt.isEmpty ? 34 : 58)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
             .opacity(0)
             .accessibilityHidden(true)
@@ -215,6 +232,8 @@ struct Composer: View {
                         .font(.system(size: 15))
                         .scrollContentBackground(.hidden)
                         .scrollIndicators(.never)
+                        // Room for the clear and Prompt Lab buttons: a line never runs under them.
+                        .contentMargins(.trailing, app.prompt.isEmpty ? 32 : 56, for: .scrollContent)
                     if app.prompt.isEmpty {
                         Text(app.references.isEmpty ? "Describe the image…" : "Say what changes…")
                             .font(.system(size: 15))
@@ -222,6 +241,31 @@ struct Composer: View {
                             .padding(.leading, 5)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                             .allowsHitTesting(false)
+                    }
+                }
+                .overlay(alignment: .topTrailing) {
+                    HStack(spacing: 6) {
+                        if !app.prompt.isEmpty {
+                            Button { MainWindow.shared.setPrompt("", of: app, action: String(localized: "Clear Prompt")) } label: {
+                                Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                                    .frame(width: 22, height: 26).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .help("Clear the prompt (⌘Z brings it back)")
+                            .accessibilityLabel(Text("Clear Prompt"))
+                        }
+                        Button { LabWindow.shared.show() } label: {
+                            Image(systemName: "wand.and.sparkles")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(WireKind.text.color)
+                                .frame(width: 26, height: 26)
+                                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Silicon.cell))
+                                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Silicon.edge))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open the Prompt Lab (⌥⌘L)")
+                        .accessibilityLabel(Text("Prompt Lab"))
                     }
                 }
             }
@@ -238,6 +282,95 @@ struct Composer: View {
             }
         }
         .scrollIndicators(.never)
+    }
+}
+
+/// **The image the render starts from** (img2img), on a model that starts from one: shown at the head of
+/// the composer once the Prompt Lab (or `silicontrol start-image`) has carried one. Its thumbnail, its
+/// strength from 0 to 100 % on a slider (`SiliconSlider`), and what the strength does here.
+private struct StartImageRow: View {
+    @Bindable var app: AppState
+    let start: ReferenceImage
+    @State private var hover = false
+
+    var body: some View {
+        let caption = app.startCaption
+        HStack(alignment: .center, spacing: 12) {
+            thumbnail
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    SpecCaption("Starting Image")
+                    Text("Strength").font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    Text(verbatim: StartWords.percent(app.startStrength))
+                        .font(Silicon.readout)
+                        .foregroundStyle(.secondary)
+                        .onTapGesture(count: 2) { app.setStartStrength(app.defaultStartStrength) }
+                        .help("Strength — double-click for \(StartWords.percent(app.defaultStartStrength))")
+                }
+                HStack(spacing: 8) {
+                    Text("Faithful").font(.caption2).foregroundStyle(.tertiary)
+                    SiliconSlider(value: Binding(get: { app.startStrength }, set: { app.setStartStrength($0) }),
+                                  range: 0...1, reset: app.defaultStartStrength)
+                        .accessibilityLabel(Text("Strength"))
+                        .accessibilityValue(Text(verbatim: StartWords.percent(app.startStrength)))
+                    Text("Free").font(.caption2).foregroundStyle(.tertiary)
+                }
+                .help(StartWords.explanation(app.startRedraws))
+                Text(caption.text)
+                    .font(.caption)
+                    .foregroundStyle(caption.tone == .failure ? Palette.failure
+                                     : caption.tone == .warning ? Color(nsColor: .systemOrange) : Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Silicon.cell))
+        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(Silicon.edge))
+        .contextMenu {
+            Button("Reset to \(StartWords.percent(app.defaultStartStrength))") { app.setStartStrength(app.defaultStartStrength) }
+            Button("Replace…") { app.chooseStartReplacement() }
+            Divider()
+            Button("Remove", role: .destructive) { app.removeStart() }
+        }
+        .dropDestination(for: DroppedImage.self) { items, _ in
+            for item in items {
+                switch item {
+                case .file(let url) where !AppState.importable(url):
+                    app.replaceStart(with: url)
+                    return true
+                case .file:
+                    break
+                case .png(let data):
+                    guard let image = AppState.startImage(png: data, name: String(localized: "dropped image")) else { return false }
+                    app.carryStart(image)
+                    return true
+                }
+            }
+            return false
+        }
+    }
+
+    private var thumbnail: some View {
+        Image(nsImage: start.vignette).resizable().scaledToFill()
+            .frame(width: ReferenceThumbnail.side, height: ReferenceThumbnail.side)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WireKind.image.color, lineWidth: 1.5))
+            .overlay(alignment: .topTrailing) {
+                if hover {
+                    Button { app.removeStart() } label: {
+                        Image(systemName: "xmark.circle.fill").symbolRenderingMode(.palette)
+                            .foregroundStyle(.white, .black.opacity(0.6))
+                            .frame(width: 24, height: 24).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Remove: the next render starts from noise")
+                    .accessibilityLabel(Text("Remove"))
+                }
+            }
+            .onHover { hover = $0 }
+            .help(Text(verbatim: "\(start.name) · \(start.width) × \(start.height)"))
+            .accessibilityLabel(Text(verbatim: start.name))
     }
 }
 

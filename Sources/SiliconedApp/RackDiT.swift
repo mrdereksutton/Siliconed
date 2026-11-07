@@ -303,7 +303,7 @@ struct DiTBox: View {
     }
 
     /// Why Faster Rendering would do nothing for this render, in a sentence.
-    private static func sentence(_ reason: DiTSwitchUnavailable) -> String {
+    static func sentence(_ reason: DiTSwitchUnavailable) -> String {
         switch reason {
         case .sizeUnder1024: String(localized: "Needs 1024 px or more on each side.")
         case .withLoRADetailOrEdit: String(localized: "Not with a LoRA, Detail or an edit.")
@@ -473,14 +473,18 @@ struct LoRARow: View {
 
     /// The name's tooltip: what the file says of itself.
     private var details: String {
-        guard let f = app.loraCard(slot.path) else { return String(localized: "Choose a LoRA") }
-        let line = ([f.name, (f.smallestRank == f.rank ? String(localized: "rank \(f.rank)") : String(localized: "ranks \(f.smallestRank)–\(f.rank)")), f.resolution.map { String(localized: "trained at \($0)") }, f.trainedOn]
-            .compactMap { $0 }).joined(separator: " · ")
-        return ([line] + f.fromItsMetadata).joined(separator: "\n")
+        app.loraCard(slot.path)?.details ?? String(localized: "Choose a LoRA")
     }
 }
 
 extension LoRACard {
+    /// What the file says of itself: its rank, training resolution, base model, trainer name and trigger words.
+    var details: String {
+        let line = ([name, (smallestRank == rank ? String(localized: "rank \(rank)") : String(localized: "ranks \(smallestRank)–\(rank)")), resolution.map { String(localized: "trained at \($0)") }, trainedOn]
+            .compactMap { $0 }).joined(separator: " · ")
+        return ([line] + fromItsMetadata).joined(separator: "\n")
+    }
+
     /// What the file says of itself beyond its name, one line each: the trainer's name when it is
     /// not the one shown, the trigger words when the file states them. Empty for a map forged
     /// before these keys, or a file that says neither — then nothing is shown.

@@ -288,7 +288,7 @@ struct MenuEntry: View {
             }
             Button(entry.grid == nil ? "Reuse These Settings" : "Reuse This Grid") { app.restoreSettings(entry) }
             if entry.grid == nil { EditButtons(app: app, entry: entry) }
-            if entry.grid == nil, Fork.promptLab { Button("Open in the Prompt Lab") { LabModel.shared.load(image: entry.png); LabWindow.shared.show() } }
+            if entry.grid == nil { Button("Open in the Prompt Lab") { LabModel.shared.load(image: entry.png); LabWindow.shared.show() } }
             Divider()
             Button("Remove from History", role: .destructive) { app.delete(entry) }
         }

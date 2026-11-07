@@ -133,22 +133,35 @@ private struct GraphCanvas: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             if !app.history.isEmpty || app.explored != nil {
-                // Fork: the strip in the composer's column, its thumbnails over the prompt.
+                // Fork: the strip in the composer's column, its thumbnails over the prompt; dimmed while a
+                // composer panel is open over it.
                 Banner(app: app)
                     .frame(maxWidth: 920)
                     .padding(.horizontal, 24)
+                    .opacity(app.composerPanel == nil ? 1 : 0.25)
+                    .allowsHitTesting(app.composerPanel == nil)
+                    .animation(Motion.pick(.easeOut(duration: 0.14)), value: app.composerPanel == nil)
             }
             // Fork: at the foot of the canvas, what goes on (`ActivityCard`) over the prompt and every
             // setting of a render (`Composer`); the Explore tab keeps its own form in the left column.
             if app.activityShows || app.sidebarTab == .generate {
                 VStack(spacing: 10) {
-                    if app.activityShows { ActivityCard(app: app) }
-                    if app.sidebarTab == .generate { Composer(app: app) }
+                    if app.activityShows {
+                        ActivityCard(app: app)
+                            .opacity(app.composerPanel == nil ? 1 : 0.25)
+                            .allowsHitTesting(app.composerPanel == nil)
+                            .animation(Motion.pick(.easeOut(duration: 0.14)), value: app.composerPanel == nil)
+                    }
+                    if app.sidebarTab == .generate {
+                        Composer(app: app)
+                            .zIndex(2)
+                    }
                 }
                 .frame(maxWidth: 920)
                 .padding(.horizontal, 24)
                 .padding(.top, 12)
                 .padding(.bottom, 18)
+                .zIndex(2)
                 .animation(Motion.pick(.easeInOut(duration: 0.2)), value: app.activityShows)
             }
         }
@@ -168,18 +181,23 @@ private struct GraphCanvas: View {
         .animation(Motion.pick(.spring(duration: 0.3)), value: app.toast)
         // A PNG Siliconed wrote brings back its settings — the canvas is where an image is opened.
         // Any other image keeps the canvas's meaning: an edit's reference when the model edits
-        // (to edit a Siliconed image, drop it on the rack's « Images » box, or « Edit This Image »).
+        // (to edit a Siliconed image, drop it on the composer's « Images », or « Edit This Image »),
+        // or the starting image's replacement when a starting image is held.
         .dropDestination(for: URL.self) { urls, _ in
             let images = urls.filter { !AppState.importable($0) }
             if images.count == 1, app.restoreSettings(fromPNG: images[0]) { return true }
-            guard app.editingPossible, !images.isEmpty else {
-                if images.count == 1, images[0].pathExtension.lowercased() == "png" {
-                    app.flash(String(localized: "No Siliconed settings in this image"))
-                }
-                return false
+            if app.editingPossible, !images.isEmpty {
+                app.addReferences(images)
+                return true
             }
-            app.addReferences(images)
-            return true
+            if app.usedStart != nil, let first = images.first {
+                app.replaceStart(with: first)
+                return true
+            }
+            if images.count == 1, images[0].pathExtension.lowercased() == "png" {
+                app.flash(String(localized: "No Siliconed settings in this image"))
+            }
+            return false
         }
     }
 }

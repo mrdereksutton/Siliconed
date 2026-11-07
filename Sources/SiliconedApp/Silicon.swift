@@ -8,12 +8,6 @@
 import AppKit
 import SwiftUI
 
-/// Fork: what is held back until the look is finished — the Prompt Lab's way in (Window menu,
-/// the history's menu); the window itself stays in the app.
-enum Fork {
-    static let promptLab = false
-}
-
 enum Silicon {
     // MARK: Colors — graphite in dark, porcelain in light
 

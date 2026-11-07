@@ -12,6 +12,7 @@ import SwiftUI
 /// « Import… » in the footer, as under the model list.
 struct LoRAStack: View {
     @Bindable var app: AppState
+    var done: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -31,7 +32,7 @@ struct LoRAStack: View {
             Rectangle().fill(Silicon.edge).frame(height: 1).padding(.horizontal, 16)
             HStack {
                 Spacer()
-                Button("Import…") { app.chooseToImport() }
+                Button("Import…") { done(); app.chooseToImport() }
                     .buttonStyle(SiliconButtonStyle())
                     .disabled(!app.importPossible)
                     .help("A model (.safetensors or .gguf) or a LoRA (.safetensors), as published on Civitai")
@@ -61,29 +62,45 @@ struct LoRAChoices: View {
                             Text(verbatim: l.name).lineLimit(1).truncationMode(.middle)
                         }
                     }
-                    .help(([l.name] + l.fromItsMetadata).joined(separator: "\n"))
+                    .help(l.details)
                 }
             }
         }
     }
 }
 
-/// **A LoRA of the stack**: its name, its strength as a figure and a slider — a double click puts 0.8
-/// back —, and its remove button.
+/// **A LoRA of the stack**: its name (a menu to swap it for another), its strength as a figure and a
+/// slider — a double click puts 0.8 back —, and its remove button.
 struct LoRALine: View {
     let app: AppState
     @Binding var slot: LoRASlot
 
     var body: some View {
+        let name = app.loraCard(slot.path)?.name ?? URL(fileURLWithPath: slot.path).deletingPathExtension().lastPathComponent
+        let tooltip = app.loraCard(slot.path)?.details ?? slot.path
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text(verbatim: app.loraCard(slot.path)?.name ?? URL(fileURLWithPath: slot.path).deletingPathExtension().lastPathComponent)
-                    .lineLimit(1).truncationMode(.middle)
-                    .help(app.loraCard(slot.path).map { ([$0.name] + $0.fromItsMetadata).joined(separator: "\n") } ?? slot.path)
+                if app.compatibleLoras.count > 1 {
+                    Menu {
+                        ForEach(app.compatibleLoras) { l in
+                            Button(l.name) { slot.path = l.path }.disabled(l.path == slot.path)
+                        }
+                    } label: {
+                        Text(verbatim: name).lineLimit(1).truncationMode(.middle)
+                    }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden)
+                    .help(tooltip)
+                } else {
+                    Text(verbatim: name)
+                        .lineLimit(1).truncationMode(.middle)
+                        .help(tooltip)
+                }
                 Spacer(minLength: 4)
                 Text(Figures.strength(slot.strength)).font(Silicon.readout).foregroundStyle(.secondary)
                     .onTapGesture(count: 2) { slot.strength = LoRASlot().strength }
                     .help("Strength — double-click for 0.8")
+                    .accessibilityLabel(Text("Strength"))
+                    .accessibilityAddTraits(.isStaticText)
                 Button {
                     // The id is read BEFORE: `slot` is a binding on `app.loras`, and re-reading it in
                     // `removeAll`'s predicate accesses the array during its mutation.
