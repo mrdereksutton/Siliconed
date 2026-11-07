@@ -1,13 +1,11 @@
-// **The app's window: the rack on the left, the image on the right**.
+// **The app's window: the left column on demand, the canvas and composer on the right**.
 //
-// On the left (`Sidebar.swift`), **the rack** (`Rack.swift`): the chain of the render drawn from
-// `model.chain`, top to bottom in the direction of the signal — the prompt typed in its box, an edit's
-// images, the encoders, the DiT with its model, size, seed, steps and LoRAs, the VAE —, wired by
-// type, lit stage by stage while it runs; under it, what it will cost and « Generate ». On the
-// right, the canvas: the step-by-step preview in the frame of the coming image, then the image, its
-// details (the time and memory of each stage), and the history as a strip — in memory, gone with the
-// app. The column follows the window: narrower, its boxes narrow and their rows wrap; too narrow,
-// the split view folds it away. The sheets: the models (`ModelsSheet.swift`), a license to accept
+// On the right, the canvas: the step-by-step preview in the frame of the coming image, then the image,
+// its actions and details (the time and memory of each stage), the history as a strip, and at the foot
+// of the canvas the composer (`Composer.swift`) with the prompt and every setting in one glass card.
+// On the left (`Sidebar.swift`), folded away by default on Generate and opened on Explore: the
+// exploration's controls (`ExplorationPanel`), or on Generate the settings laid out side by side
+// (`SettingsColumn`). The sheets: the models (`ModelsSheet.swift`), a license to accept
 // (`LicenseSheet.swift`), the diagnostic (`DiagnosticSheet.swift`).
 
 import AppKit
@@ -21,10 +19,6 @@ struct MainView: View {
     /// Fork: the left column folded away on the Generate tab (the composer has it all), shown on Explore.
     @State private var columns: NavigationSplitViewVisibility = .detailOnly
 
-    private static func columns(_ tab: SidebarTab) -> NavigationSplitViewVisibility {
-        tab == .explore ? .all : .detailOnly
-    }
-
     var body: some View {
         NavigationSplitView(columnVisibility: $columns) {
             Sidebar(app: app)
@@ -33,42 +27,52 @@ struct MainView: View {
             GraphCanvas(app: app)
         }
         .onChange(of: app.sidebarTab, initial: true) { _, tab in
-            app.composerPanel = nil
-            withAnimation(Motion.pick(.easeInOut(duration: 0.25))) { columns = Self.columns(tab) }
+            withAnimation(Motion.pick(.easeInOut(duration: 0.25))) {
+                columns = tab == .explore ? .all : .detailOnly
+            }
             guard tab == .explore else { return }
             if app.explorePrompt.isEmpty { app.explorePrompt = app.prompt }
             app.gridDefaults()
         }
-        // Fork: one place per setting — the column is Explore's form and nothing else: on Generate the
-        // composer has every setting, so the column never opens there (nor folds away on Explore).
-        .onChange(of: columns) { _, shown in
-            let wanted = Self.columns(app.sidebarTab)
-            if shown != wanted { columns = wanted }
-        }
-        // Fork: **the top bar on the canvas** — no band of its own, no system title: the name on the
-        // left (`Wordmark`), the window's two modes in the middle, the statistics on the right. What
-        // acts on an image (copy, save, share) is under the image, with its other actions (`SceneView`).
-        .toolbar(removing: .sidebarToggle)
-        .toolbar(removing: .title)
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .toolbar {
-            // The name: beside the traffic lights on Generate; on Explore, at the head of the canvas
-            // (a split view's bar puts its items over the detail column).
-            ToolbarItem(placement: .navigation) { Wordmark(note: app.wordmarkNote) }
-                .sharedBackgroundVisibility(.hidden)
-            ToolbarItem(placement: .principal) {
-                ModeSwitch(app: app).fixedSize()
-            }
-            .sharedBackgroundVisibility(.hidden)
-            ToolbarItem(placement: .primaryAction) {
-                Button(action: toggleStatistics) {
-                    Image(systemName: "gauge.with.dots.needle.33percent")
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    withAnimation(Motion.pick(.easeInOut(duration: 0.25))) {
+                        columns = columns == .detailOnly ? .all : .detailOnly
+                    }
+                } label: {
+                    Label("Show or hide the left column", systemImage: "sidebar.left")
                 }
-                .buttonStyle(SiliconIconStyle())
-                .help("Render statistics (⌥⌘I)")
-                .accessibilityLabel(Text("Statistics"))
+                .help("Show or hide the left column")
             }
-            .sharedBackgroundVisibility(.hidden)
+            // Fork: the window's two modes, in the middle of the toolbar.
+            ToolbarItem(placement: .principal) {
+                Picker("Exploration", selection: $app.sidebarTab) {
+                    Text("Generate").tag(SidebarTab.generate)
+                    Text("Explore").tag(SidebarTab.explore)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
+            ToolbarItemGroup(placement: .primaryAction) {
+                let group = app.targets
+                Button { app.copyImages(group) } label: { Label("Copy Image", systemImage: "doc.on.doc") }
+                    .disabled(group.isEmpty)
+                    .help(group.count > 1 ? "Copy the selected images (⇧⌘C)" : "Copy the image (PNG, with its metadata)")
+                Button { app.export(group) } label: { Label("Save…", systemImage: "square.and.arrow.down") }
+                    .disabled(group.isEmpty)
+                    .help(group.count > 1 ? "Export the selected images to a folder (⇧⌘E)" : "Save the image (⌘S)")
+                ShareLink(items: group.map(app.transferable), preview: { SharePreview($0.name) }) {
+                    Label("Share…", systemImage: "square.and.arrow.up")
+                }
+                    .disabled(group.isEmpty)
+                    .help("Share — AirDrop, Messages, Mail, Photos…")
+                Button(action: toggleStatistics) {
+                    Label("Statistics", systemImage: "gauge.with.dots.needle.33percent")
+                }
+                .help("Render statistics (⌥⌘I)")
+            }
         }
         .sheet(isPresented: $app.managementOpen) { ModelManagement(app: app) }
         .sheet(item: $app.licenseRequest) { request in LicenseSheet(app: app, card: request.card) }
@@ -78,14 +82,6 @@ struct MainView: View {
             if app.fullScreen, let image = app.selectedImage?.image { FullScreen(app: app, image: image) }
         }
         .animation(Motion.pick(.easeInOut(duration: 0.15)), value: app.fullScreen)
-    }
-}
-
-extension AppState {
-    /// Fork: beside the name in the top bar — the Mac that computes, or this instance's name (the
-    /// subtitle the bar no longer draws).
-    var wordmarkNote: String? {
-        mirror.map { String(localized: "Computing on “\($0.macName)”") } ?? MainWindow.instanceName
     }
 }
 
@@ -117,6 +113,12 @@ extension View {
     }
 }
 
+/// The canvas background: a near-black gray in dark, a light gray in light — neutral, so that
+/// the image alone carries the color.
+private let canvasBackground = Color(nsColor: NSColor(name: nil) { appearance in
+    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        ? NSColor(white: 0.075, alpha: 1) : NSColor(white: 0.9, alpha: 1)
+})
 
 // MARK: - The canvas
 
@@ -133,47 +135,32 @@ private struct GraphCanvas: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             if !app.history.isEmpty || app.explored != nil {
-                // Fork: the strip in the composer's column, its thumbnails over the prompt; dimmed while a
-                // composer panel is open over it.
+                // Fork: the strip in the composer's column, its thumbnails over the prompt.
                 Banner(app: app)
                     .frame(maxWidth: 920)
                     .padding(.horizontal, 24)
-                    .opacity(app.composerPanel == nil ? 1 : 0.25)
-                    .allowsHitTesting(app.composerPanel == nil)
-                    .animation(Motion.pick(.easeOut(duration: 0.14)), value: app.composerPanel == nil)
             }
             // Fork: at the foot of the canvas, what goes on (`ActivityCard`) over the prompt and every
             // setting of a render (`Composer`); the Explore tab keeps its own form in the left column.
             if app.activityShows || app.sidebarTab == .generate {
                 VStack(spacing: 10) {
-                    if app.activityShows {
-                        ActivityCard(app: app)
-                            .opacity(app.composerPanel == nil ? 1 : 0.25)
-                            .allowsHitTesting(app.composerPanel == nil)
-                            .animation(Motion.pick(.easeOut(duration: 0.14)), value: app.composerPanel == nil)
-                    }
-                    if app.sidebarTab == .generate {
-                        Composer(app: app)
-                            .zIndex(2)
-                    }
+                    if app.activityShows { ActivityCard(app: app) }
+                    if app.sidebarTab == .generate { Composer(app: app) }
                 }
                 .frame(maxWidth: 920)
                 .padding(.horizontal, 24)
                 .padding(.top, 12)
                 .padding(.bottom, 18)
-                .zIndex(2)
                 .animation(Motion.pick(.easeInOut(duration: 0.2)), value: app.activityShows)
             }
         }
-        // Fork: graphite over a wafer's die grid (`WaferBackground`) — still neutral: the image alone
-        // carries the color. It runs under the top bar, which has no band of its own.
-        .background(WaferBackground().ignoresSafeArea())
+        .background(canvasBackground)
         .overlay(alignment: .top) {
             if let toast = app.toast {
                 Text(toast)
                     .font(.callout)
                     .padding(.horizontal, 16).padding(.vertical, 9)
-                    .siliconPanel(Capsule(), sheen: true)
+                    .glass(Capsule())
                     .padding(.top, 14)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }

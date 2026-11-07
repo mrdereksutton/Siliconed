@@ -77,39 +77,17 @@ struct SettingsView: View {
     /// The state the window shows: the Mac that computes, whose switch and map these are.
     private var shown: AppState { MainWindow.shared.carrier.mirror ?? app }
 
-    /// Fork: the pane shown — on Silicon's capsule tabs, as the main window's modes.
-    private enum Pane: CaseIterable { case general, otherMacs, advanced }
-    @State private var pane = Pane.general
-
     var body: some View {
-        // A fixed frame: the window keeps one size from one pane to the next, so that it never jumps
-        // under the pointer. A pane longer than this scrolls.
-        VStack(spacing: 0) {
-            CapsuleTabs(selection: $pane, tabs: Pane.allCases) { pane in
-                switch pane {
-                case .general: "General"
-                case .otherMacs: "Other Macs"
-                case .advanced: "Advanced"
-                }
-            }
-            .fixedSize()
-            .padding(.top, 12)
-            .padding(.bottom, 2)
-            Group {
-                switch pane {
-                case .general: general
-                case .otherMacs: Form { OtherMacsSection(macs: macs) }.formStyle(.grouped)
-                case .advanced: advanced
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // A fixed frame: a TabView takes the size of no tab in particular, and a window that changed
+        // size from one tab to the next would jump under the pointer. A tab longer than this scrolls.
+        TabView {
+            general.tabItem { Label("General", systemImage: "gearshape") }
+            Form { OtherMacsSection(macs: macs) }
+                .formStyle(.grouped)
+                .tabItem { Label("Other Macs", systemImage: "macbook.and.iphone") }
+            advanced.tabItem { Label("Advanced", systemImage: "slider.horizontal.3") }
         }
         .frame(width: 480, height: 540)
-        // Fork: the window in Siliconed's own materials — graphite, Silicon's switches and buttons.
-        .scrollContentBackground(.hidden)
-        .background(WaferBackground())
-        .toggleStyle(SiliconToggleStyle())
-        .buttonStyle(SiliconButtonStyle())
     }
 
     /// What one comes for: where the models are.

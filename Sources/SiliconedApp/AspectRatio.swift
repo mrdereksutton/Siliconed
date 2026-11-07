@@ -1,7 +1,8 @@
-// Fork: **the size, picked by aspect ratio and resolution.** Two cells show only the current ratio (its
-// shape and name) and the current resolution; each opens its full list when clicked, the other choices
-// staying out of sight until then. 1K is about a megapixel, 2K about four. The pair names a size in
-// `SizeTable`; a size typed by hand shows its pixels instead. An edit keeps image 1's framing, as upstream.
+// Fork: **the size, picked by aspect ratio and resolution.** Two compact pills show only the current
+// ratio (its shape and name) and the current resolution; each opens its full list when clicked, the
+// other choices staying out of sight until then. 1K is about a megapixel, 2K about four. The pair names
+// a size in `SizeTable`; a size typed by hand shows its pixels instead. An edit keeps image 1's framing,
+// as upstream.
 
 import AppKit
 import Siliconed
@@ -31,6 +32,44 @@ enum SizeTable {
     }
 }
 
+/// **The ratio and the resolution as two pills**, each opening its list only when clicked; under the
+/// ratios, a size typed by hand.
+struct SizePills: View {
+    @Bindable var app: AppState
+    @State private var choosingRatio = false
+    @State private var choosingTier = false
+
+    var body: some View {
+        let current = app.sizeCell
+        HStack(spacing: 8) {
+            Pill(isPresented: $choosingRatio) {
+                if let current {
+                    RatioShape(ratio: current.ratio, side: 13)
+                    Text(verbatim: SizeTable.ratioTitle(current)).monospacedDigit()
+                } else {
+                    Text(verbatim: "\(app.format.width) × \(app.format.height)").monospacedDigit()
+                }
+            } choices: {
+                VStack(alignment: .leading, spacing: 0) {
+                    RatioChoices(app: app) { choosingRatio = false }
+                    Divider().padding(.horizontal, 14)
+                    CustomSize(app: app, title: "Custom size") { choosingRatio = false }
+                }
+            }
+            .help(SizeTable.approximateHelp(current))
+            if let current {
+                Pill(isPresented: $choosingTier) {
+                    Image(systemName: "diamond").imageScale(.small)
+                    Text(verbatim: current.resolution.rawValue)
+                } choices: {
+                    TierChoices(app: app) { choosingTier = false }
+                }
+                .help("1K is about 1 megapixel, 2K about 4")
+            }
+        }
+    }
+}
+
 /// **The aspect ratios**, tallest to widest, each with its shape; a ratio beyond this Mac's memory or
 /// the model's side limit at the current resolution falls back to 1K, one unavailable at 1K too is greyed
 /// with its reason (`scaleUnavailable`).
@@ -57,7 +96,7 @@ struct RatioChoices: View {
                     if let why {
                         Text(verbatim: why).foregroundStyle(.secondary)
                     } else {
-                        Text(verbatim: "\(target.width) × \(target.height)").font(Silicon.readout).foregroundStyle(.secondary)
+                        Text(verbatim: "\(target.width) × \(target.height)").monospacedDigit().foregroundStyle(.secondary)
                     }
                 }
             }
@@ -87,7 +126,7 @@ struct TierChoices: View {
                     if let why {
                         Text(verbatim: why).foregroundStyle(.secondary)
                     } else {
-                        Text(verbatim: "\(cell.width) × \(cell.height)").font(Silicon.readout).foregroundStyle(.secondary)
+                        Text(verbatim: "\(cell.width) × \(cell.height)").monospacedDigit().foregroundStyle(.secondary)
                     }
                 }
             }
@@ -110,9 +149,54 @@ struct RatioShape: View {
     }
 }
 
-// MARK: - Lists
+// MARK: - Pills & Lists
 
-/// **A list of choices**: its spec-sheet title, then one row per choice.
+/// **A pill's face**: an icon and a word on a soft rounded plate, brighter under the pointer or open.
+struct PillFace<Content: View>: View {
+    var active = false
+    @ViewBuilder var content: Content
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 6) { content }
+            .font(.callout)
+            .padding(.horizontal, 11)
+            .frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color.primary.opacity(hovering || active ? 0.14 : 0.07)))
+            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Palette.hairline))
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .animation(Motion.pick(.easeOut(duration: 0.12)), value: hovering)
+    }
+}
+
+/// A pill that shows only the current choice; its list opens over it on a click.
+struct Pill<Label: View, Choices: View>: View {
+    @Binding var isPresented: Bool
+    @ViewBuilder var label: Label
+    @ViewBuilder var choices: Choices
+
+    var body: some View {
+        Button { isPresented.toggle() } label: { PillFace(active: isPresented) { label } }
+            .buttonStyle(.plain)
+            // Above the pill: the composer sits at the foot of the window.
+            .popover(isPresented: $isPresented, arrowEdge: .top) { choices }
+    }
+}
+
+/// A pill that acts at once.
+struct PillButton<Label: View>: View {
+    let action: () -> Void
+    @ViewBuilder var label: Label
+
+    var body: some View {
+        Button(action: action) { PillFace { label } }
+            .buttonStyle(.plain)
+    }
+}
+
+/// **A list of choices**: its title, then one row per choice.
 struct ChoiceList<Rows: View>: View {
     let title: LocalizedStringKey
     var minWidth: CGFloat = 170
@@ -120,10 +204,12 @@ struct ChoiceList<Rows: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            SpecCaption(title)
+            Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
                 .padding(.top, 2)
-                .padding(.bottom, 6)
+                .padding(.bottom, 4)
             rows
         }
         .padding(8)
@@ -131,7 +217,7 @@ struct ChoiceList<Rows: View>: View {
     }
 }
 
-/// A choice: what it is, and a check when it is the current one — on a blue tint; lit under the pointer.
+/// A choice: what it is, and a check when it is the current one; lit under the pointer.
 struct ChoiceRow<Label: View>: View {
     let selected: Bool
     let enabled: Bool
@@ -151,10 +237,10 @@ struct ChoiceRow<Label: View>: View {
             }
             .font(.callout)
             .padding(.horizontal, 8)
-            .padding(.vertical, 7)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(selected ? Color.accentColor.opacity(hovering ? 0.24 : 0.16)
-                               : hovering ? Silicon.cellHover : Color.clear))
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(selected ? Color.accentColor.opacity(hovering ? 0.22 : 0.14)
+                               : hovering ? Color.primary.opacity(0.08) : Color.clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

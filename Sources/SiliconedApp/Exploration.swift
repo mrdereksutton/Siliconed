@@ -238,13 +238,13 @@ struct ExplorationPanel: View {
             ScrollView {
                 form.padding(16)
             }
-            Rectangle().fill(Silicon.edge).frame(height: 1)
+            Divider()
             footer.padding(16)
         }
     }
 
     private var form: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 18) {
             section("Prompt") {
                 TextEditor(text: $app.explorePrompt)
                     .font(.system(size: 13))
@@ -252,30 +252,36 @@ struct ExplorationPanel: View {
                     .scrollIndicators(.never)
                     .padding(6)
                     .frame(minHeight: 76, maxHeight: 140)
-                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Silicon.cell))
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Silicon.edge))
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Palette.well))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Palette.hairline))
                 Text("Write {brunette|blonde|red-haired} to make a group an axis.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             if !app.exploresModels {
                 // Generate's model, chosen here too: exploring is where one tries another model.
-                section("Model") { model }
-                    .help("Generate’s model: changing it here changes it there")
+                section("Model") {
+                    Picker("Model", selection: $app.identifier) {
+                        ForEach(app.visibleReady) { card in Text(card.name).tag(card.id) }
+                    }
+                    .labelsHidden()
+                }
+                .help("Generate’s model: changing it here changes it there")
                 loras
             }
             section("Base") {
-                Text(base).font(Silicon.readout).foregroundStyle(.secondary).lineLimit(3)
+                Text(base).font(.caption).monospacedDigit().foregroundStyle(.secondary).lineLimit(3)
             }
             .help("Generate’s LoRAs, seed and images to edit: the exploration varies them")
             depth
             // Fork: the sketches' shape named as the composer names sizes, by its ratio.
             section("Format") {
-                ChipPicker(selection: $app.exploreShape, choices: ExploreShape.allCases) { shape in
-                    HStack(spacing: 5) {
-                        RatioShape(ratio: shape.ratio, side: 11)
-                        Text(verbatim: shape.ratio.description)
+                Picker("Format", selection: $app.exploreShape) {
+                    ForEach(ExploreShape.allCases) { shape in
+                        Text(verbatim: shape.ratio.description).tag(shape)
                     }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
             }
             .help("Small and fast: 512 on the short side — the models are out of their domain below")
             VStack(alignment: .leading, spacing: 14) {
@@ -287,36 +293,10 @@ struct ExplorationPanel: View {
     }
 
     private func section<Content: View>(_ title: LocalizedStringKey, @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SpecCaption(title)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.callout.weight(.semibold))
             content()
         }
-    }
-
-    /// The model, as a cell that opens the list of those installed.
-    private var model: some View {
-        Menu {
-            ForEach(app.visibleReady) { card in
-                Button { app.identifier = card.id } label: {
-                    if card.id == app.identifier { Label(card.name, systemImage: "checkmark") } else { Text(card.name) }
-                }
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Circle().fill(Color.accentColor).frame(width: 6, height: 6)
-                Text(verbatim: app.card?.name ?? "—").font(Silicon.value)
-                Spacer(minLength: 4)
-                Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 11)
-            .frame(height: 32)
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Silicon.cell))
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Silicon.edge))
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
     }
 
     /// **Where a cell stops, in one line**: « Sketch at n steps of N » — Generate's N, and the n
@@ -330,19 +310,15 @@ struct ExplorationPanel: View {
         if let e = app.exploreEvaluations {
             section("Steps") {
                 if app.chain?.denoising.sketches ?? true {
-                    HStack(spacing: 10) {
+                    Stepper(value: Binding(get: { app.exploreStop == 0 ? e.automatic : min(app.exploreStop, e.all) },
+                                           set: { app.exploreStop = $0 >= e.all ? e.all : max(1, $0) }),
+                            in: 1...e.all) {
                         Text(sketchLine(e)).font(.callout).monospacedDigit()
-                        Spacer(minLength: 8)
-                        StepperChip(value: Binding(get: { app.exploreStop == 0 ? e.automatic : min(app.exploreStop, e.all) },
-                                                   set: { app.exploreStop = $0 >= e.all ? e.all : max(1, $0) }),
-                                    range: 1...e.all)
                     }
                     .help("A sketch stops early: the later it stops, the closer to the finished image (a LoRA’s style can settle late), the longer it takes. The step count is Generate’s")
                 } else {
-                    HStack(spacing: 10) {
+                    Stepper(value: $app.steps, in: 1...50) {
                         Text(sketchLine(e)).font(.callout).monospacedDigit()
-                        Spacer(minLength: 8)
-                        StepperChip(value: $app.steps, range: 1...50)
                     }
                     .help("This model does not sketch: its cells are finished images. The step count is Generate’s (a steps axis overrides it)")
                 }
@@ -364,7 +340,7 @@ struct ExplorationPanel: View {
         VStack(alignment: .leading, spacing: 8) {
             // A trap measured by its first user: filled, this list STACKS its LoRAs on every cell —
             // comparing them is an axis's job (“LoRA to Compare”).
-            SpecCaption("LoRAs on Every Cell")
+            Text("LoRAs on Every Cell").font(.callout.weight(.semibold))
             Text("Stacked together, the same as Generate’s. To compare LoRAs, choose “LoRA to Compare” on an axis.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             ForEach($app.loras) { $slot in LoRALine(app: app, slot: $slot) }
@@ -397,24 +373,22 @@ struct ExplorationPanel: View {
                 if let t = app.exploreCost { Text(verbatim: "≈ " + Figures.duration(t)) }
                 else { Text("after one exploration") }
             }
-            .font(Silicon.readout).foregroundStyle(.secondary)
+            .font(.caption).monospacedDigit().foregroundStyle(.secondary)
             .help("Learned on this Mac, model by model at this size")
             if let why = blocker {
                 Text(why).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 8) {
                 Button { app.explore() } label: {
-                    HStack(spacing: 10) {
-                        Text("Explore")
-                        KeyCap("⌘↩")
-                    }
+                    Text("Explore").fontWeight(.semibold).frame(maxWidth: .infinity)
                 }
-                .buttonStyle(SiliconPrimaryStyle(sweeping: app.exploring, fullWidth: true))
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
                 .keyboardShortcut(.return, modifiers: .command)
                 .disabled(blocker != nil)
                 if app.exploring {
                     Button("Stop") { app.stopExploring() }
-                        .buttonStyle(SiliconButtonStyle())
+                        .controlSize(.large)
                         .help("The cells still waiting leave the queue; the running one stops")
                 }
             }
@@ -479,18 +453,17 @@ struct ExplorationCanvas: View {
             Image(systemName: "square.grid.3x3").foregroundStyle(.secondary)
             Text(run.grid.title).font(.headline).lineLimit(1).truncationMode(.middle)
             Spacer()
-            Text("\(run.entries.count) of \(run.jobs.count)").font(Silicon.readout).foregroundStyle(.secondary)
+            Text("\(run.entries.count) of \(run.jobs.count)").monospacedDigit().foregroundStyle(.secondary)
             HStack(spacing: 4) {
                 Image(systemName: "photo").imageScale(.small)
-                SiliconSlider(value: Binding(get: { Double(app.exploreCellSide) }, set: { app.exploreCellSide = CGFloat($0) }),
-                              range: Double(AppState.cellSides.lowerBound)...Double(AppState.cellSides.upperBound))
+                Slider(value: $app.exploreCellSide, in: AppState.cellSides)
                     .frame(width: 110)
+                    .controlSize(.small)
                 Image(systemName: "photo").imageScale(.large)
             }
             .foregroundStyle(.secondary)
             .help("Cell size — or pinch, ⌘+ and ⌘−")
             Button("Add Sheet to History") { app.addSheet(run) }
-                .buttonStyle(SiliconButtonStyle())
                 .disabled(run.entries.isEmpty || app.exploring)
                 .help("The sketches side by side, labelled — an image of the history, in memory like the others")
             Button { MainWindow.shared.showExploration() } label: { Image(systemName: "slider.horizontal.3") }
@@ -501,7 +474,7 @@ struct ExplorationCanvas: View {
                 .help("Back to the images — the grid stays at the head of the strip")
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
-        .siliconPanel(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .glass(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .padding(.horizontal, 16).padding(.top, 12)
     }
 

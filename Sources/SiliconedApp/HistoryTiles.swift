@@ -35,13 +35,6 @@ struct Banner: View {
                 if let id { withAnimation(Motion.pick(.default)) { reader.scrollTo(id, anchor: .center) } }
             }
             }
-            // Fork: the shown image's actions, at the end of its row — no bar under the image.
-            if let entry = app.shownEntry {
-                ImageActions(app: app, entry: entry)
-                    .fixedSize()
-                    .padding(.horizontal, 10)
-                    .transition(.opacity)
-            }
             // Short of room (Explore's column beside the canvas), the thumbnails' size steps aside
             // before the thumbnails do.
             ViewThatFits(in: .horizontal) {
@@ -52,7 +45,6 @@ struct Banner: View {
                 Color.clear.frame(width: 0, height: 0)
             }
         }
-        .animation(Motion.pick(.easeInOut(duration: 0.15)), value: app.shownEntry == nil)
         // The strip is as tall as its thumbnails, never more: the canvas keeps the rest.
         // Fork: no band of its own — the thumbnails sit on the canvas, over the composer.
         .frame(height: app.thumbnailSide + 20)
@@ -62,10 +54,10 @@ struct Banner: View {
     private var sizeControl: some View {
         VStack(alignment: .trailing, spacing: 6) {
             Text(app.history.count == 1 ? String(localized: "1 image") : String(localized: "\(app.history.count) images"))
-                .font(Silicon.readout).foregroundStyle(.secondary)
+                .font(.caption).monospacedDigit().foregroundStyle(.secondary)
             HStack(spacing: 4) {
                 Image(systemName: "photo").imageScale(.small)
-                SiliconSlider(value: $app.thumbnailSide, range: 48...140).frame(width: 80)
+                Slider(value: $app.thumbnailSide, in: 48...140).frame(width: 80).controlSize(.mini)
                 Image(systemName: "photo").imageScale(.large)
             }
             .foregroundStyle(.secondary)
@@ -94,13 +86,11 @@ private struct Thumbnail: View {
             .interpolation(.medium)
             .scaledToFill()
             .frame(width: side * min(1, l / h), height: side * min(1, h / l))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(marked ? Color.accentColor : hover ? Silicon.edgeStrong : Silicon.edge,
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(marked ? Color.accentColor : hover ? Color.secondary : Palette.hairline,
                               lineWidth: marked ? (shown ? 3 : 2) : 1))
-            // Fork: the chosen image glows in the app's blue.
-            .shadow(color: marked ? Color.accentColor.opacity(0.55) : .clear, radius: 8)
-            .opacity(marked || hover ? 1 : 0.82)
+            .opacity(marked || hover ? 1 : 0.88)
             .frame(height: side + 4)
             .contentShape(Rectangle())
             .onHover { hover = $0 }

@@ -42,14 +42,11 @@ struct Sidebar: View {
                     .padding(.top, 12)
                 ExplorationPanel(app: app)
             } else {
-                // Fork: on the Generate tab the column stays folded away (`MainView`): the composer holds
-                // every setting, one place each.
-                Color.clear
+                // Fork: on the Generate tab the column is folded away by default; shown, it holds what
+                // the composer's pills open — an edit's images, the LoRA stack, the settings (`SettingsColumn`).
+                SettingsColumn(app: app)
             }
         }
-        // Fork: the column in the window's materials.
-        .background(Silicon.panel)
-        .scrollContentBackground(.hidden)
         // A `.safetensors` or a `.gguf` dropped on the column is imported (model or LoRA).
         .dropDestination(for: URL.self) { urls, _ in
             let s = urls.filter(AppState.importable)
@@ -83,19 +80,17 @@ struct CustomSize: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SpecCaption(title)
+            Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 TextField("Size", text: $text, prompt: Text(verbatim: "832x1216"))
                     .labelsHidden()
-                    .textFieldStyle(.plain)
-                    .font(Silicon.readout)
-                    .padding(.horizontal, 8)
-                    .frame(width: 140, height: 26)
-                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Silicon.cell))
-                    .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Silicon.edge))
+                    .textFieldStyle(.roundedBorder)
+                    .monospacedDigit()
+                    .frame(width: 140)
                     .onSubmit(apply)
                 Button("Use", action: apply)
-                    .buttonStyle(SiliconButtonStyle())
                     .keyboardShortcut(.defaultAction)
             }
             if let refusal {
@@ -269,7 +264,7 @@ struct ActivityCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .siliconPanel(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .glass(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     /// **What remains to be done**: the running render first — a batch is one job, its images rendered

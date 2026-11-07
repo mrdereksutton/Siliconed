@@ -321,13 +321,9 @@ final class MainWindow: NSObject, NSWindowDelegate {
         let f = NSWindow(contentViewController: makeRoot())
         f.title = String(localized: "Siliconed")
         f.subtitle = Self.instanceName
-        // Fork: the canvas under the top bar — no title drawn (the name is the toolbar's `Wordmark`),
-        // no band, no separator. The title stays set: the Window menu and Mission Control read it.
         f.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         f.toolbarStyle = .unified
-        f.titlebarAppearsTransparent = true
-        f.titleVisibility = .hidden
-        f.titlebarSeparatorStyle = .none
+        f.titlebarSeparatorStyle = .automatic
         f.setContentSize(NSSize(width: 1480, height: 940))
         f.isReleasedWhenClosed = false
         f.delegate = self
@@ -554,11 +550,6 @@ final class MainWindow: NSObject, NSWindowDelegate {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, let w = window, event.window === w, w.attachedSheet == nil, !app.fullScreen else { return event }
-            // Fork: Esc closes the composer's open panel first, as it would a popover.
-            if event.keyCode == 53, Self.chord(event).isEmpty, app.composerPanel != nil {
-                withAnimation(Motion.pick(.easeOut(duration: 0.14))) { app.composerPanel = nil }
-                return nil
-            }
             // Esc leaves the field being typed in: the keys go back to the strip.
             if w.firstResponder is NSText {
                 guard event.keyCode == 53, Self.chord(event).isEmpty else { return event }

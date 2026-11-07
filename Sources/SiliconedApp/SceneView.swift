@@ -36,11 +36,14 @@ struct SceneView: View {
                 inProgress(job)
             } else if app.showsOriginal, let original = app.original, let selected = app.selectedImage,
                       let entry = app.selectedEntry {
-                CurtainView(app: app, a: original.image, b: selected.image, width: entry.width, height: entry.height,
-                            tags: (String(localized: "Original"), String(localized: "Edited")))
-                    .padding(28)
-            } else if !app.compared.isEmpty, app.selectedEntry != nil {
-                Group {
+                VStack(spacing: 14) {
+                    CurtainView(app: app, a: original.image, b: selected.image, width: entry.width, height: entry.height,
+                                tags: (String(localized: "Original"), String(localized: "Edited")))
+                    ImageActions(app: app, entry: entry)
+                }
+                .padding(28)
+            } else if !app.compared.isEmpty, let entry = app.selectedEntry {
+                VStack(spacing: 14) {
                     if let pair = Curtain.pair(app), Curtain.shared.preferred {
                         // The larger's size: the smaller is stretched to it, as the curtain of an enlargement shows it.
                         let big = pair.a.entry.width >= pair.b.entry.width ? pair.a.entry : pair.b.entry
@@ -49,12 +52,15 @@ struct SceneView: View {
                     } else {
                         Comparison(app: app)
                     }
+                    ImageActions(app: app, entry: entry)
                 }
                 .padding(28)
-            } else if let selected = app.selectedImage, app.selectedEntry != nil {
-                // Fork: the image alone — what is done with it is in the strip's row (`ImageActions`).
-                image(selected.image)
-                    .padding(28)
+            } else if let selected = app.selectedImage, let entry = app.selectedEntry {
+                VStack(spacing: 14) {
+                    image(selected.image)
+                    ImageActions(app: app, entry: entry)
+                }
+                .padding(28)
             } else {
                 empty
             }
@@ -108,8 +114,8 @@ struct SceneView: View {
             }
             .aspectRatio(l / h, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Silicon.edge))
-            .shadow(color: .black.opacity(0.55), radius: 28, y: 12)
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Palette.hairline))
+            .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
             .frame(maxWidth: l, maxHeight: h)
             .animation(Motion.pick(.easeInOut(duration: 0.25)), value: app.preview == nil)
             ProgressIndicator(app: app)
@@ -125,8 +131,8 @@ struct SceneView: View {
             .interpolation(.high)
             .scaledToFit()
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Silicon.edge))
-            .shadow(color: .black.opacity(0.55), radius: 28, y: 12)
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Palette.hairline))
+            .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
             .frame(maxWidth: CGFloat(cg.width), maxHeight: CGFloat(cg.height))
             .scaleEffect(zoom * pinchScale)
             .offset(x: liveOffset.width + dragOffset.width, y: liveOffset.height + dragOffset.height)
@@ -164,17 +170,16 @@ struct SceneView: View {
     // ── Nothing yet ──
 
     private var empty: some View {
-        VStack(spacing: 12) {
-            // Fork: no stock sparkles over the empty canvas; the box stays for a model not installed.
+        VStack(spacing: 10) {
             if !app.visibleReady.isEmpty, app.missing != nil {
                 Image(systemName: "shippingbox")
-                    .font(.system(size: 46, weight: .light))
+                    .font(.system(size: 44, weight: .light))
                     .foregroundStyle(.secondary)
             }
             if let absent = app.libraryBlocker {
                 // The library's disk is not there: no welcome, no « Install » — never another library.
                 Image(systemName: "externaldrive.badge.xmark")
-                    .font(.system(size: 46, weight: .light))
+                    .font(.system(size: 44, weight: .light))
                     .foregroundStyle(.secondary)
                 Text(absent).font(.title3).foregroundStyle(.secondary)
                 Text("Connect it to render. Settings can also go back to this Mac’s library.")
@@ -191,15 +196,16 @@ struct SceneView: View {
             } else if app.sidebarTab == .explore {
                 // Fork: on Explore, the form is the left column's and its button is « Explore », not ⌘↩.
                 Text("Sketch first, finish the one you like")
-                    .font(Silicon.display(34))
+                    .font(.title2.weight(.semibold))
                     .foregroundStyle(.primary)
-                Text("Choose what varies on the left, then click Explore.").font(.title3).foregroundStyle(.secondary)
+                Text("Choose what varies on the left, then click Explore.")
+                    .font(.callout).foregroundStyle(.secondary)
             } else {
-                // Fork: an invitation set as a headline, the composer under it does the rest.
                 Text("What do you want to see?")
-                    .font(Silicon.display(34))
+                    .font(.title2.weight(.semibold))
                     .foregroundStyle(.primary)
-                Text("Describe an image, then press ⌘↩").font(.title3).foregroundStyle(.secondary)
+                Text("Describe an image, then press ⌘↩")
+                    .font(.callout).foregroundStyle(.secondary)
                 if app.editingPossible {
                     Text("Drop an image here to edit it.").font(.callout).foregroundStyle(.secondary)
                 }
@@ -207,16 +213,6 @@ struct SceneView: View {
         }
         .multilineTextAlignment(.center)
         .padding()
-        // Fork: the app's mark behind the question — a wafer, faint, its rim in the sheen.
-        .background {
-            if app.libraryBlocker == nil, !app.visibleReady.isEmpty, app.familyToInstall == nil {
-                WaferMark().frame(width: 440, height: 440)
-            }
-        }
-        // Fork: the empty canvas steps back while a composer panel is open over it — a panel is never laid
-        // across the bright headline.
-        .opacity(app.composerPanel == nil ? 1 : 0.25)
-        .animation(Motion.pick(.easeOut(duration: 0.14)), value: app.composerPanel == nil)
     }
 
     private var zoomGesture: some Gesture {
@@ -290,10 +286,8 @@ private struct Comparison: View {
 
 // MARK: - What is done with the shown image
 
-/// Fork: **the shown image's actions, in the strip's row** (`Banner`) — beside the thumbnails, where the
-/// row had room, instead of a bar of their own under the image: the image keeps that height. Its prompt,
-/// seed and times are one click away (ⓘ, `Details`) and on each thumbnail's tooltip. With several
-/// marked, what is done with all of them.
+/// **Under the image: what it is, and what is done with it** — or, with several marked, what is done
+/// with all of them.
 struct ImageActions: View {
     @Bindable var app: AppState
     let entry: Entry
@@ -305,6 +299,7 @@ struct ImageActions: View {
         HStack(spacing: 12) {
             if group.count > 1 {
                 Text("\(group.count) images selected").font(.callout).monospacedDigit()
+                    .frame(minWidth: 160, alignment: .leading)
                 Divider().frame(height: 22)
                 if app.compared.count == 2 {
                     CurtainSwitch(app: app)
@@ -328,6 +323,12 @@ struct ImageActions: View {
                     .help("Keep only the image shown (Esc)")
                     .accessibilityLabel(Text("Keep Only This Image"))
             } else {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(e.settings.prompt).font(.callout).lineLimit(1).truncationMode(.tail)
+                    Text(e.legend).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: 380, alignment: .leading)
+                Divider().frame(height: 22)
                 Button { app.redo(e) } label: { Image(systemName: "arrow.clockwise") }
                     .help("Render again: same settings, same seed (⌘R)")
                     .accessibilityLabel(Text("Render Again (Same Seed)"))
@@ -363,19 +364,6 @@ struct ImageActions: View {
                                                : e.enlarged == nil ? "Compare with the original: the image edited, under a curtain"
                                                : "Compare with the original, merely stretched to this size, under a curtain")
                 }
-                // Fork: what the toolbar held — the image copied, saved, shared — beside its other actions.
-                Divider().frame(height: 22)
-                Button { app.copyImages(group) } label: { Image(systemName: "doc.on.doc") }
-                    .help("Copy the image (PNG, with its metadata)")
-                    .accessibilityLabel(Text("Copy Image"))
-                Button { app.export(group) } label: { Image(systemName: "square.and.arrow.down") }
-                    .help("Save the image (⌘S)")
-                    .accessibilityLabel(Text("Save…"))
-                ShareLink(items: group.map(app.transferable), preview: { SharePreview($0.name) }) {
-                    Image(systemName: "square.and.arrow.up")
-                }
-                .help("Share — AirDrop, Messages, Mail, Photos…")
-                .accessibilityLabel(Text("Share…"))
                 Button { details.toggle() } label: { Image(systemName: "info.circle") }
                     .help("Image details")
                     .accessibilityLabel(Text("Image details"))
@@ -388,7 +376,8 @@ struct ImageActions: View {
         .buttonStyle(.borderless)
         .imageScale(.large)
         .padding(.horizontal, 16).padding(.vertical, 8)
-        .siliconPanel(Capsule())
+        .glass(Capsule())
+        .zIndex(2)
         .animation(Motion.pick(.easeInOut(duration: 0.15)), value: group.count > 1)
     }
 }
@@ -493,16 +482,5 @@ private struct Details: View {
             Text(Figures.seconds(seconds)).monospacedDigit()
             Text(bytes > 0 ? Figures.memory(bytes) : "—").monospacedDigit().foregroundStyle(.secondary)
         }
-    }
-}
-
-extension AppState {
-    /// Fork: the image the canvas shows as chosen — what `ImageActions` acts on. None while the canvas
-    /// follows a render, crops, or shows an exploration (the same cases `SceneView` draws no image for).
-    var shownEntry: Entry? {
-        guard cropping == nil, !(showsExploration && explored != nil) else { return nil }
-        if currentJob != nil, followsRender || history.isEmpty { return nil }
-        guard let entry = selectedEntry, selectedImage != nil || !compared.isEmpty else { return nil }
-        return entry
     }
 }

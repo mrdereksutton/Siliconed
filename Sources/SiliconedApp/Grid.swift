@@ -377,59 +377,28 @@ struct AxisRow: View {
     let allowsNone: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text(verbatim: title).font(Silicon.caption).tracking(0.7).foregroundStyle(.secondary).frame(width: 14)
-                // Fork: what varies, as a cell that opens its list (Silicon's look, `Silicon.swift`).
-                Menu {
-                    if allowsNone { Button("None") { form.kind = .none } }
+                Text(verbatim: title).font(.callout.weight(.semibold)).foregroundStyle(.secondary).frame(width: 14)
+                Picker("Axis \(title)", selection: $form.kind) {
+                    if allowsNone { Text("None").tag(GridAxisForm.Kind.none) }
                     ForEach(Array(app.promptGroups.enumerated()), id: \.offset) { g, options in
-                        Button { form.kind = .prompt(g) } label: { Text(verbatim: "{" + options.joined(separator: "|") + "}") }
+                        Text(verbatim: "{" + options.joined(separator: "|") + "}").tag(GridAxisForm.Kind.prompt(g))
                     }
-                    Button("Seed") { form.kind = .seed }
-                    Button("Steps") { form.kind = .steps }
+                    Text("Seed").tag(GridAxisForm.Kind.seed)
+                    Text("Steps").tag(GridAxisForm.Kind.steps)
                     ForEach(app.loras.filter { !$0.path.isEmpty }) { slot in
-                        Button { form.kind = .lora(slot.id) } label: { Text("LoRA \(app.loraName(slot.path))") }
+                        Text("LoRA \(app.loraName(slot.path))").tag(GridAxisForm.Kind.lora(slot.id))
                     }
-                    if !app.compatibleLoras.isEmpty { Button("LoRA to Compare") { form.kind = .addedLoRA } }
-                    Button("Model") { form.kind = .model }
-                    if !app.references.isEmpty { Button("Image to Edit") { form.kind = .image } }
-                    if app.offeredSolvers.count > 1 { Button("Solver") { form.kind = .solver } }
-                } label: {
-                    HStack(spacing: 6) {
-                        kindLabel.font(Silicon.value).lineLimit(1)
-                        Spacer(minLength: 4)
-                        Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 10)
-                    .frame(height: 30)
-                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Silicon.cell))
-                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Silicon.edge))
-                    .contentShape(Rectangle())
+                    if !app.compatibleLoras.isEmpty { Text("LoRA to Compare").tag(GridAxisForm.Kind.addedLoRA) }
+                    Text("Model").tag(GridAxisForm.Kind.model)
+                    if !app.references.isEmpty { Text("Image to Edit").tag(GridAxisForm.Kind.image) }
+                    if app.offeredSolvers.count > 1 { Text("Solver").tag(GridAxisForm.Kind.solver) }
                 }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
+                .labelsHidden()
                 .help("What varies from one column (X) or row (Y) to the next")
-                .accessibilityLabel(Text("Axis \(title)"))
             }
             values.padding(.leading, 22)
-        }
-    }
-
-    /// The name of what varies, as the list names it.
-    private var kindLabel: Text {
-        switch form.kind {
-        case .none: Text("None")
-        case .prompt(let g):
-            Text(verbatim: app.promptGroups.indices.contains(g) ? "{" + app.promptGroups[g].joined(separator: "|") + "}" : "—")
-        case .seed: Text("Seed")
-        case .steps: Text("Steps")
-        case .lora(let id): Text("LoRA \(app.loraName(app.loras.first { $0.id == id }?.path ?? ""))")
-        case .addedLoRA: Text("LoRA to Compare")
-        case .model: Text("Model")
-        case .image: Text("Image to Edit")
-        case .solver: Text("Solver")
         }
     }
 
@@ -442,32 +411,39 @@ struct AxisRow: View {
                 .font(.caption).foregroundStyle(.secondary).lineLimit(2)
         case .seed:
             VStack(alignment: .leading, spacing: 8) {
-                ChipPicker(selection: $form.listSeeds, choices: [false, true]) { list in
-                    list ? Text("List") : Text("Consecutive")
+                Picker("Seeds", selection: $form.listSeeds) {
+                    Text("Consecutive").tag(false)
+                    Text("List").tag(true)
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
                 .help("The seeds that follow Generate’s seed, or the seeds you list")
                 if form.listSeeds {
                     TextField("Seeds", text: $form.seeds, prompt: Text(verbatim: "42, 7, 1000"))
-                        .labelsHidden().siliconField()
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .font(.caption.monospacedDigit())
                 } else {
-                    HStack(spacing: 10) {
+                    Stepper(value: $form.seedCount, in: 1...RenderGrid.maxCells) {
                         Text("\(form.seedCount) from the seed").font(.caption).monospacedDigit()
-                        Spacer(minLength: 8)
-                        StepperChip(value: $form.seedCount, range: 1...RenderGrid.maxCells)
                     }
                 }
             }
         case .steps:
             TextField("Steps", text: $form.steps, prompt: Text(verbatim: "4, 8, 12"))
-                .labelsHidden().siliconField()
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .font(.caption.monospacedDigit())
                 .help("Step counts, separated by commas")
         case .lora:
             TextField("Strengths", text: $form.strengths, prompt: Text(verbatim: GridAxisForm.written([0.4, 0.6, 0.8, 1])))
-                .labelsHidden().siliconField()
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .font(.caption.monospacedDigit())
                 .help("Strengths for this LoRA; the other LoRAs keep theirs")
         case .model:
             // The models ready and shown, ticked in the order they are listed; each at its own steps.
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
                 ForEach(app.visibleReady, id: \.id) { card in
                     Toggle(card.name, isOn: Binding(
                         get: { form.models.contains(card.id) },
@@ -477,12 +453,11 @@ struct AxisRow: View {
                         }))
                 }
             }
-            .toggleStyle(SiliconCheckStyle())
             .font(.caption)
             .help("Each model at its own number of steps; the LoRAs are left out, each is made for one model")
         case .solver:
             // The solvers ticked, in Generate's order: same seed, same σ, only the rule between steps.
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
                 ForEach(app.offeredSolvers, id: \.self) { solver in
                     Toggle(solver.choice, isOn: Binding(
                         get: { form.solvers.contains(solver) },
@@ -492,12 +467,11 @@ struct AxisRow: View {
                         }))
                 }
             }
-            .toggleStyle(SiliconCheckStyle())
             .font(.caption)
             .help("The same seed and steps under each solver: Euler is the one this model was distilled for")
         case .addedLoRA:
             // One LoRA per cell, added to the stack — and the cell without, to see what it changes.
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
                 Toggle("No LoRA", isOn: $form.addedNone)
                 ForEach(app.compatibleLoras) { card in
                     Toggle(card.name, isOn: Binding(
@@ -508,12 +482,12 @@ struct AxisRow: View {
                         }))
                 }
                 HStack(spacing: 8) {
-                    SiliconSlider(value: $form.addedStrength, range: app.loraStrengthRange)
-                    Text(Figures.strength(form.addedStrength)).font(Silicon.readout).frame(width: 38, alignment: .trailing)
+                    Slider(value: $form.addedStrength, in: app.loraStrengthRange)
+                        .controlSize(.small)
+                    Text(Figures.strength(form.addedStrength)).monospacedDigit().frame(width: 38, alignment: .trailing)
                 }
                 .help("The strength of each LoRA compared")
             }
-            .toggleStyle(SiliconCheckStyle())
             .font(.caption)
             .help("Each cell adds one of these LoRAs to the stack, at one strength")
         case .image:
