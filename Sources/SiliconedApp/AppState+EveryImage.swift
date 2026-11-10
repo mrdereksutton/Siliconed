@@ -64,6 +64,7 @@ final class EveryImage {
         if let folder { panel.directoryURL = folder }
         guard panel.runModal() == .OK, let url = panel.url else { return }
         folder = url
+        MainWindow.shared.local.loadSavedGalleryIfNeeded()
     }
 
     /// One writer for every image: two images of one name never race for it.

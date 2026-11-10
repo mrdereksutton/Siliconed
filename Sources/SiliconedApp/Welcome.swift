@@ -115,18 +115,13 @@ struct Welcome: View {
     }
 }
 
-/// Before the first preview: the frame of the coming image, the wheel and the current stage. No
-/// animated glint: it duplicated the wheel, and redrew the view at 30 frames/s during the computation.
+/// Before the first preview: the frame of the coming image, illuminated with a subtle latent shimmer
+/// (respecting Reduce Motion) and the current stage.
 struct Waiting: View {
     let stage: Engine.Stage?
 
     var body: some View {
-        ZStack {
-            Palette.well
-            // The stage in words only: the spinner of the render is in the progress under this frame.
-            Text(stage?.label ?? String(localized: "Preparing…"))
-                .font(.callout).foregroundStyle(.secondary)
-        }
+        LatentShimmerView(stage: stage)
     }
 }
 

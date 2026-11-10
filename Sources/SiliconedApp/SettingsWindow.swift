@@ -129,6 +129,9 @@ struct SettingsView: View {
             }
             // Fork: saved by default to Downloads › Siliconed; Incognito keeps images in memory only (`EveryImage`).
             Section {
+                Toggle(isOn: Bindable(StudioHub.shared).ambientBacklight) {
+                    SettingLabel("Ambient Backlight", "Softly illuminates the canvas background with colors sampled from the current image.")
+                }
                 Toggle(isOn: $app.incognito) {
                     SettingLabel("Incognito", "New images stay in memory until you save them. When this is off, each new image is also saved as a PNG, with its prompt, seed and model, in Downloads › Siliconed.")
                 }

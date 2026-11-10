@@ -106,7 +106,11 @@ final class AppState {
     /// leaves memory without a gesture, as upstream.
     var incognito: Bool {
         get { EveryImage.shared.folder == nil }
-        set { EveryImage.shared.folder = newValue ? nil : EveryImage.preferredFolder }
+        set {
+            EveryImage.shared.folder = newValue ? nil : EveryImage.preferredFolder
+            subjects.syncVaultForIncognito(newValue)
+            if !newValue { loadSavedGalleryIfNeeded() }
+        }
     }
     /// Fork: the left column's tab, the rack (Generate) or the exploration's controls (Explore).
     var sidebarTab: SidebarTab = .generate
@@ -317,6 +321,8 @@ final class AppState {
     var explored: GridRun?
     /// The canvas shows the exploration's grid rather than an image (`ExplorationCanvas`).
     var showsExploration = false
+    /// Whether the Masonry Gallery wall is shown instead of the single-image stage.
+    var showsGallery = false
     /// A grid cell's long side on the canvas, in points: the slider, the pinch, ⌘+ ⌘−.
     var exploreCellSide: CGFloat = 220
     /// **Where the exploration's sketches stop**: 0, where the image is readable (`Sketch`); n, after n
@@ -608,6 +614,7 @@ final class AppState {
         }
         watchVolumes()
         warm()
+        loadSavedGalleryIfNeeded()
     }
 
     // MARK: Capacity map

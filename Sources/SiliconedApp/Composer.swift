@@ -13,15 +13,39 @@ struct Composer: View {
     @Bindable var app: AppState
 
     var body: some View {
+        let hub = StudioHub.shared
         VStack(alignment: .leading, spacing: 12) {
             if app.editingPossible, !app.references.isEmpty {
                 references
             } else if let start = app.usedStart {
                 StartImageRow(app: app, start: start)
             }
+            ComposerSubjectsOverlay(app: app)
             prompt
+            if hub.prePolishPrompt != nil && !hub.isPolishing {
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .font(.caption2)
+                        .foregroundStyle(Color.accentColor)
+                    Text("Prompt polished")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let note = hub.polishNotice {
+                        Text(verbatim: "· " + note)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Button("Revert") { hub.revertPolish(on: app) }
+                        .buttonStyle(.link)
+                        .font(.caption.weight(.medium))
+                    Spacer()
+                }
+                .padding(.horizontal, 4)
+            }
             HStack(alignment: .center, spacing: 8) {
                 if app.editingPossible { AttachPill(app: app) }
+                SubjectsVaultPill(app: app)
                 ModelPill(app: app)
                 if app.references.isEmpty {
                     SizePills(app: app)
@@ -34,6 +58,7 @@ struct Composer: View {
                     }
                     .help("An edit keeps the framing of image 1: about 1 megapixel at its proportions, each side at least 512, 1024² at most")
                 }
+                StylePill(app: app)
                 if app.missing == nil, app.card != nil {
                     LoRAPill(app: app)
                     SettingsPill(app: app)
@@ -83,13 +108,15 @@ struct Composer: View {
     /// **The prompt**: as tall as its text — two lines to seven, then it scrolls. Return makes a new
     /// line; ⌘↩ renders. On its right: the clear button (⌘Z brings the prompt back) and the Prompt Lab (⌥⌘L).
     private var prompt: some View {
+        let hub = StudioHub.shared
+        let trailingPad: CGFloat = app.prompt.isEmpty ? 68 : 96
         // The text, invisible, gives the editor its height (`TextEditor` takes any height it is offered);
         // its line limit is the cap — a `frame(maxHeight:)` would grow to the height offered.
-        Text(verbatim: app.prompt + " ")
+        return Text(verbatim: app.prompt + " ")
             .font(.system(size: 15))
             .lineLimit(7)
             .padding(.leading, 5)
-            .padding(.trailing, app.prompt.isEmpty ? 34 : 58)
+            .padding(.trailing, trailingPad)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
             .opacity(0)
             .accessibilityHidden(true)
@@ -100,8 +127,8 @@ struct Composer: View {
                         .font(.system(size: 15))
                         .scrollContentBackground(.hidden)
                         .scrollIndicators(.never)
-                        // Room for the clear and Prompt Lab buttons: a line never runs under them.
-                        .contentMargins(.trailing, app.prompt.isEmpty ? 32 : 56, for: .scrollContent)
+                        // Room for the clear, Polish and Prompt Lab buttons: a line never runs under them.
+                        .contentMargins(.trailing, trailingPad - 2, for: .scrollContent)
                     if app.prompt.isEmpty {
                         Text(app.references.isEmpty ? "Describe the image…" : "Say what changes…")
                             .font(.system(size: 15))
@@ -114,7 +141,10 @@ struct Composer: View {
                 .overlay(alignment: .topTrailing) {
                     HStack(spacing: 6) {
                         if !app.prompt.isEmpty {
-                            Button { MainWindow.shared.setPrompt("", of: app, action: String(localized: "Clear Prompt")) } label: {
+                            Button {
+                                hub.prePolishPrompt = nil
+                                MainWindow.shared.setPrompt("", of: app, action: String(localized: "Clear Prompt"))
+                            } label: {
                                 Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
                                     .frame(width: 22, height: 26).contentShape(Rectangle())
                             }
@@ -122,6 +152,40 @@ struct Composer: View {
                             .help("Clear the prompt (⌘Z brings it back)")
                             .accessibilityLabel(Text("Clear Prompt"))
                         }
+
+                        Button {
+                            hub.polishPrompt(on: app)
+                        } label: {
+                            HStack(spacing: 3) {
+                                if hub.isPolishing {
+                                    ProgressView().controlSize(.mini)
+                                } else {
+                                    Image(systemName: "sparkles")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(hub.autoPolish ? .white : Color.accentColor)
+                                }
+                            }
+                            .frame(width: 26, height: 26)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(hub.autoPolish ? Color.accentColor : Color.primary.opacity(0.08))
+                            )
+                            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Palette.hairline))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(app.promptIsEmpty && !hub.isPolishing)
+                        .contextMenu {
+                            Toggle("Auto-Polish on Generate", isOn: Bindable(hub).autoPolish)
+                            if hub.prePolishPrompt != nil {
+                                Button("Revert") { hub.revertPolish(on: app) }
+                            }
+                        }
+                        .help(hub.autoPolish
+                              ? "Polish prompt now (Auto-Polish is ON — right-click to turn off)"
+                              : "Polish prompt with the local AI writer (right-click to enable Auto-Polish)")
+                        .accessibilityLabel(Text("Polish Prompt"))
+
                         Button { LabWindow.shared.show() } label: {
                             Image(systemName: "wand.and.sparkles")
                                 .font(.system(size: 12, weight: .semibold))
@@ -294,27 +358,63 @@ private struct ModelChoices: View {
     @Bindable var app: AppState
     let done: () -> Void
 
+    private func palette(for family: Family) -> [Color] {
+        switch family {
+        case .zImage: [Color(hex: 0x2563EB), Color(hex: 0x0EA5E9)]
+        case .qwenImage21: [Color(hex: 0x7C3AED), Color(hex: 0xEC4899)]
+        case .anima: [Color(hex: 0xF59E0B), Color(hex: 0xEF4444)]
+        case .krea2: [Color(hex: 0x10B981), Color(hex: 0x14B8A6)]
+        case .mossImage: [Color(hex: 0x6366F1), Color(hex: 0x8B5CF6)]
+        }
+    }
+
+    private func recentPreview(for card: ModelCard) -> CGImage? {
+        app.history.first { $0.settings.identifier == card.id }?.vignette
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ChoiceList(title: "Model", minWidth: 300) {
+            ChoiceList(title: "Model", minWidth: 340) {
                 ForEach(app.visibleCards) { card in
+                    let installed = app.readySet.contains(card.id)
                     ChoiceRow(selected: card.id == app.identifier, enabled: true) {
                         app.identifier = card.id
                         done()
                     } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            let installed = app.readySet.contains(card.id)
-                            HStack(spacing: 6) {
-                                Text(verbatim: card.name).fontWeight(.medium)
-                                    .foregroundStyle(installed ? .primary : .secondary)
-                                if !installed {
-                                    Image(systemName: "arrow.down.circle").imageScale(.small).foregroundStyle(.secondary)
-                                        .help(Text("Not installed"))
-                                        .accessibilityLabel(Text("Not installed"))
+                        HStack(spacing: 10) {
+                            ZStack {
+                                if let preview = recentPreview(for: card) {
+                                    Image(decorative: preview, scale: 1)
+                                        .resizable()
+                                        .scaledToFill()
+                                } else {
+                                    LinearGradient(
+                                        colors: palette(for: card.family),
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                    Image(systemName: Welcome.symbol(card.family))
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundStyle(.white.opacity(0.95))
                                 }
                             }
-                            if let blurb = ModelBlurb.text(card) {
-                                Text(verbatim: blurb).font(.caption).foregroundStyle(.secondary)
+                            .frame(width: 38, height: 38)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Palette.hairline))
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(verbatim: card.name).fontWeight(.semibold)
+                                        .foregroundStyle(installed ? .primary : .secondary)
+                                    if !installed {
+                                        Image(systemName: "arrow.down.circle").imageScale(.small).foregroundStyle(.secondary)
+                                            .help(Text("Not installed"))
+                                            .accessibilityLabel(Text("Not installed"))
+                                    }
+                                }
+                                if let blurb = ModelBlurb.text(card) {
+                                    Text(verbatim: blurb).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
                             }
                         }
                     }
@@ -373,7 +473,7 @@ private struct LoRAPill: View {
         } choices: {
             LoRAStack(app: app) { open = false }
                 .font(.callout)
-                .frame(width: 340, alignment: .leading)
+                .frame(width: 380, alignment: .leading)
         }
         .help("Add a LoRA to the stack (3 at most)")
     }

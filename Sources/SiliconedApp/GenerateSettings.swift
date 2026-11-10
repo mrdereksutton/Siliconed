@@ -49,17 +49,47 @@ struct LoRAChoices: View {
     let app: AppState
 
     var body: some View {
+        let hub = StudioHub.shared
         let used = Set(app.loras.map(\.path))
         let open = app.compatibleLoras.filter { !used.contains($0.path) }
         if app.canAddLoRA, !open.isEmpty {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 ForEach(open) { l in
+                    let thumb = hub.loraThumbnail(for: l.path, history: app.history)
+                    let trigger = hub.triggerWords(for: l.path)
                     ChoiceRow(selected: false, enabled: true) {
                         app.loras.append(LoRASlot(path: l.path))
                     } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "plus").font(.caption.weight(.bold)).foregroundStyle(.secondary)
-                            Text(verbatim: l.name).lineLimit(1).truncationMode(.middle)
+                        HStack(spacing: 10) {
+                            ZStack {
+                                if let thumb {
+                                    Image(nsImage: thumb)
+                                        .resizable()
+                                        .scaledToFill()
+                                } else {
+                                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                        .fill(Color.accentColor.opacity(0.14))
+                                    Image(systemName: "square.stack.3d.up.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(Color.accentColor)
+                                }
+                            }
+                            .frame(width: 32, height: 32)
+                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Palette.hairline))
+
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(verbatim: l.name).lineLimit(1).truncationMode(.middle)
+                                if !trigger.isEmpty {
+                                    Text(verbatim: trigger)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                            Spacer(minLength: 4)
+                            Image(systemName: "plus.circle.fill")
+                                .foregroundStyle(.secondary)
                         }
                     }
                     .help(l.details)
@@ -69,60 +99,131 @@ struct LoRAChoices: View {
     }
 }
 
-/// **A LoRA of the stack**: its name (a menu to swap it for another), its strength as a figure and a
-/// slider — a double click puts 0.8 back —, and its remove button.
+/// **A LoRA of the stack**: visual cover thumbnail, its name (a menu to swap it for another), its strength as a figure and a
+/// slider — a double click puts 0.8 back —, trigger words with auto-inject, and its remove button.
 struct LoRALine: View {
     let app: AppState
     @Binding var slot: LoRASlot
 
     var body: some View {
+        let hub = StudioHub.shared
         let name = app.loraCard(slot.path)?.name ?? URL(fileURLWithPath: slot.path).deletingPathExtension().lastPathComponent
         let tooltip = app.loraCard(slot.path)?.details ?? slot.path
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                if app.compatibleLoras.count > 1 {
-                    Menu {
-                        ForEach(app.compatibleLoras) { l in
-                            Button(l.name) { slot.path = l.path }.disabled(l.path == slot.path)
-                        }
-                    } label: {
-                        Text(verbatim: name).lineLimit(1).truncationMode(.middle)
+        let thumb = hub.loraThumbnail(for: slot.path, history: app.history)
+        let triggerBinding = Binding<String>(
+            get: { hub.triggerWords(for: slot.path) },
+            set: { hub.setTriggerWords($0, for: slot.path) }
+        )
+        let autoOn = hub.autoTrigger(for: slot.path)
+
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                ZStack {
+                    if let thumb {
+                        Image(nsImage: thumb)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        LinearGradient(
+                            colors: [Color.accentColor.opacity(0.32), Color.purple.opacity(0.22)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                        Image(systemName: "square.stack.3d.up.fill")
+                            .font(.callout)
+                            .foregroundStyle(.white.opacity(0.9))
                     }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden)
-                    .help(tooltip)
-                } else {
-                    Text(verbatim: name)
-                        .lineLimit(1).truncationMode(.middle)
-                        .help(tooltip)
                 }
-                Spacer(minLength: 4)
-                Text(Figures.strength(slot.strength)).monospacedDigit().foregroundStyle(.secondary)
-                    .onTapGesture(count: 2) { slot.strength = LoRASlot().strength }
-                    .help("Strength — double-click for 0.8")
-                    .accessibilityLabel(Text("Strength"))
-                    .accessibilityAddTraits(.isStaticText)
-                Button {
-                    // The id is read BEFORE: `slot` is a binding on `app.loras`, and re-reading it in
-                    // `removeAll`'s predicate accesses the array during its mutation.
-                    let id = slot.id
-                    app.loras.removeAll { $0.id == id }
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .frame(width: 20, height: 20)
-                        .contentShape(Rectangle())
+                .frame(width: 42, height: 42)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Palette.hairline))
+
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 8) {
+                        if app.compatibleLoras.count > 1 {
+                            Menu {
+                                ForEach(app.compatibleLoras) { l in
+                                    Button(l.name) { slot.path = l.path }.disabled(l.path == slot.path)
+                                }
+                            } label: {
+                                Text(verbatim: name).fontWeight(.medium).lineLimit(1).truncationMode(.middle)
+                            }
+                            .menuStyle(.borderlessButton).menuIndicator(.hidden)
+                            .help(tooltip)
+                        } else {
+                            Text(verbatim: name)
+                                .fontWeight(.medium)
+                                .lineLimit(1).truncationMode(.middle)
+                                .help(tooltip)
+                        }
+                        Spacer(minLength: 4)
+                        Text(Figures.strength(slot.strength)).monospacedDigit().foregroundStyle(.secondary)
+                            .onTapGesture(count: 2) { slot.strength = LoRASlot().strength }
+                            .help("Strength — double-click for 0.8")
+                            .accessibilityLabel(Text("Strength"))
+                            .accessibilityAddTraits(.isStaticText)
+                        Button {
+                            let id = slot.id
+                            app.loras.removeAll { $0.id == id }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .frame(width: 20, height: 20)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help("Remove this LoRA from the stack")
+                        .accessibilityLabel(Text("Remove this LoRA from the stack"))
+                    }
+                    Slider(value: $slot.strength, in: app.loraStrengthRange)
+                        .controlSize(.small)
+                        .accessibilityLabel(Text("Strength"))
                 }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
-                .help("Remove this LoRA from the stack")
-                .accessibilityLabel(Text("Remove this LoRA from the stack"))
             }
-            Slider(value: $slot.strength, in: app.loraStrengthRange)
-                .controlSize(.small)
-                .accessibilityLabel(Text("Strength"))
+
+            HStack(spacing: 6) {
+                Image(systemName: "bolt.fill")
+                    .font(.caption2)
+                    .foregroundStyle(autoOn && !triggerBinding.wrappedValue.isEmpty ? Color.accentColor : .secondary)
+                TextField("Trigger words (optional)", text: triggerBinding)
+                    .textFieldStyle(.plain)
+                    .font(.caption)
+                if !triggerBinding.wrappedValue.isEmpty {
+                    Button {
+                        hub.setAutoTrigger(!autoOn, for: slot.path)
+                    } label: {
+                        Text("Auto")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(autoOn ? .white : .secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(autoOn ? Color.accentColor : Color.primary.opacity(0.08)))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Automatically include trigger words when rendering")
+
+                    Button {
+                        let words = triggerBinding.wrappedValue
+                        guard !words.isEmpty, !app.prompt.localizedCaseInsensitiveContains(words) else { return }
+                        app.prompt = app.prompt.trimmingCharacters(in: .whitespaces).isEmpty
+                            ? words
+                            : app.prompt + ", " + words
+                    } label: {
+                        Image(systemName: "plus.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Insert trigger words into the prompt")
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(0.04)))
         }
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Palette.well))
-        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Palette.hairline))
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Palette.well))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Palette.hairline))
         .contextMenu {
             Button("Reset to 0.8") { slot.strength = LoRASlot().strength }
         }

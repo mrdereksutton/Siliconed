@@ -106,7 +106,9 @@ struct SceneView: View {
                 if let preview = app.preview {
                     Image(decorative: preview, scale: 1)
                         .resizable()
-                        .interpolation(.medium)
+                        .interpolation(.high)
+                        .blur(radius: app.totalSteps > 3 && app.currentStep <= 1 ? 4 : 0)
+                        .id(app.currentStep)
                         .transition(.opacity)
                 } else {
                     Waiting(stage: app.stage)
@@ -118,6 +120,7 @@ struct SceneView: View {
             .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
             .frame(maxWidth: l, maxHeight: h)
             .animation(Motion.pick(.easeInOut(duration: 0.25)), value: app.preview == nil)
+            .animation(Motion.pick(.easeInOut(duration: 0.26)), value: app.currentStep)
             ProgressIndicator(app: app)
         }
         .padding(28)
@@ -201,14 +204,7 @@ struct SceneView: View {
                 Text("Choose what varies on the left, then click Explore.")
                     .font(.callout).foregroundStyle(.secondary)
             } else {
-                Text("What do you want to see?")
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(.primary)
-                Text("Describe an image, then press ⌘↩")
-                    .font(.callout).foregroundStyle(.secondary)
-                if app.editingPossible {
-                    Text("Drop an image here to edit it.").font(.callout).foregroundStyle(.secondary)
-                }
+                InteractiveEmptyStage(app: app)
             }
         }
         .multilineTextAlignment(.center)
@@ -323,12 +319,19 @@ struct ImageActions: View {
                     .help("Keep only the image shown (Esc)")
                     .accessibilityLabel(Text("Keep Only This Image"))
             } else {
+                let fav = StudioHub.shared.isFavorite(e)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(e.settings.prompt).font(.callout).lineLimit(1).truncationMode(.tail)
                     Text(e.legend).font(.caption).monospacedDigit().foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: 380, alignment: .leading)
                 Divider().frame(height: 22)
+                Button { StudioHub.shared.toggleFavorite(e) } label: {
+                    Image(systemName: fav ? "star.fill" : "star")
+                        .foregroundStyle(fav ? .yellow : .primary)
+                }
+                .help(fav ? "Unfavorite" : "Favorite")
+                .accessibilityLabel(Text(fav ? "Unfavorite" : "Favorite"))
                 Button { app.redo(e) } label: { Image(systemName: "arrow.clockwise") }
                     .help("Render again: same settings, same seed (⌘R)")
                     .accessibilityLabel(Text("Render Again (Same Seed)"))

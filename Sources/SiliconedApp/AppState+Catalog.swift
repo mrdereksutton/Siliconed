@@ -79,7 +79,15 @@ extension AppState {
         let n: Int
         switch alternatives {
         case .failure(let e): return Problem(e).text
-        case .success(let a): n = a.count
+        case .success(let a):
+            n = a.count
+            if promptNamesImages {
+                for p in a.prompts {
+                    if case .failure(let f)? = rewrite(p, model: model(identifier), capacity: maxReferences, editImages: references.count) {
+                        return Problem(f).title
+                    }
+                }
+            }
         }
         if file.count >= Self.maxQueueLength { return String(localized: "The queue is full.") }
         if file.count + n > Self.maxQueueLength {

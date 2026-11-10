@@ -50,11 +50,27 @@ struct Banner: View {
         .frame(height: app.thumbnailSide + 20)
     }
 
-    /// At the strip's end: how many images, and the thumbnails' size.
+    /// At the strip's end: how many images, a shortcut to the masonry gallery, and the thumbnails' size.
     private var sizeControl: some View {
         VStack(alignment: .trailing, spacing: 6) {
-            Text(app.history.count == 1 ? String(localized: "1 image") : String(localized: "\(app.history.count) images"))
-                .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Text(app.history.count == 1 ? String(localized: "1 image") : String(localized: "\(app.history.count) images"))
+                    .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                if !app.history.isEmpty {
+                    Button {
+                        withAnimation(Motion.pick(.easeInOut(duration: 0.2))) {
+                            app.showsExploration = false
+                            app.showsGallery = true
+                        }
+                    } label: {
+                        Image(systemName: "square.grid.2x2")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Open masonry gallery")
+                    .accessibilityLabel(Text("Gallery"))
+                }
+            }
             HStack(spacing: 4) {
                 Image(systemName: "photo").imageScale(.small)
                 Slider(value: $app.thumbnailSide, in: 48...140).frame(width: 80).controlSize(.mini)
@@ -81,11 +97,21 @@ private struct Thumbnail: View {
     var body: some View {
         let side = app.thumbnailSide
         let l = Double(entry.width), h = Double(entry.height)
+        let isFav = StudioHub.shared.isFavorite(entry)
         Image(decorative: entry.vignette, scale: 1)
             .resizable()
             .interpolation(.medium)
             .scaledToFill()
             .frame(width: side * min(1, l / h), height: side * min(1, h / l))
+            .overlay(alignment: .topTrailing) {
+                if isFav {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.yellow)
+                        .shadow(color: .black.opacity(0.6), radius: 2)
+                        .padding(4)
+                }
+            }
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .strokeBorder(marked ? Color.accentColor : hover ? Color.secondary : Palette.hairline,
@@ -96,6 +122,7 @@ private struct Thumbnail: View {
             .onHover { hover = $0 }
             .onTapGesture {
                 MainWindow.shared.releaseTextFocus()
+                app.showsGallery = false
                 app.click(entry.id, modifiers: NSEvent.modifierFlags)
             }
             .draggable(app.transferable(entry)) {
@@ -149,7 +176,7 @@ private struct LiveTile: View {
         .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(following ? Palette.live : Palette.hairline, lineWidth: following ? 2.5 : 1))
         .frame(height: side + 4)
         .contentShape(Rectangle())
-        .onTapGesture { app.followsRender = true; app.showsExploration = false }
+        .onTapGesture { app.followsRender = true; app.showsExploration = false; app.showsGallery = false }
         .help("The render in progress")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("The render in progress"))
@@ -180,7 +207,7 @@ private struct ExplorationTile: View {
             .strokeBorder(app.showsExploration ? Palette.live : Palette.hairline, lineWidth: app.showsExploration ? 2.5 : 1))
         .frame(height: side + 4)
         .contentShape(Rectangle())
-        .onTapGesture { app.showsExploration = true }
+        .onTapGesture { app.showsExploration = true; app.showsGallery = false }
         .help("The exploration’s grid")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("The exploration’s grid"))
@@ -258,6 +285,8 @@ struct MenuEntry: View {
             Divider()
             Button("Remove \(group.count) Images from History", role: .destructive) { app.delete(group) }
         } else {
+            let fav = StudioHub.shared.isFavorite(entry)
+            Button(fav ? "Unfavorite" : "Favorite") { StudioHub.shared.toggleFavorite(entry) }
             Button("Save…") { app.save(entry) }
             Button("Copy Image") { app.copyImage(entry) }
             ShareLink("Share…", item: app.transferable(entry), preview: SharePreview(app.exportName(entry)))
@@ -278,6 +307,11 @@ struct MenuEntry: View {
             }
             Button(entry.grid == nil ? "Reuse These Settings" : "Reuse This Grid") { app.restoreSettings(entry) }
             if entry.grid == nil { EditButtons(app: app, entry: entry) }
+            if entry.grid == nil {
+                Button("Save as @Subject…") {
+                    StudioHub.shared.beginNamingSubject(from: .png(entry.png), app: app)
+                }
+            }
             if entry.grid == nil { Button("Open in the Prompt Lab") { LabModel.shared.load(image: entry.png); LabWindow.shared.show() } }
             Divider()
             Button("Remove from History", role: .destructive) { app.delete(entry) }

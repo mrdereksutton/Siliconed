@@ -53,11 +53,16 @@ final class SubjectLibrary {
     /// The thumbnails, by subject, picture and frame — decoded once, from a 512-px copy.
     @ObservationIgnored private var thumbnails: [String: NSImage] = [:]
     @ObservationIgnored private var sizes: [String: (width: Int, height: Int)] = [:]
+    @ObservationIgnored private let vaultRoot: URL
 
     init(library: Library) {
+        vaultRoot = library.root.appendingPathComponent("subjects-vault", isDirectory: true)
         // An earlier version kept the subjects on disk: incognito now, the folder goes — and the switch, no more a setting.
         UserDefaults.standard.removeObject(forKey: Self.retiredSwitch)
         try? FileManager.default.removeItem(at: library.root.appendingPathComponent("subjects", isDirectory: true))
+        if EveryImage.shared.folder != nil {
+            loadFromVault()
+        }
     }
 
     func subject(named name: String) -> NamedSubjects.Subject? {
@@ -186,6 +191,60 @@ final class SubjectLibrary {
         thumbnails = [:]
         sizes = [:]
         version += 1
+        if EveryImage.shared.folder != nil {
+            saveToVault()
+        }
+    }
+
+    func syncVaultForIncognito(_ incognito: Bool) {
+        if !incognito {
+            if all.isEmpty { loadFromVault() } else { saveToVault() }
+        }
+    }
+
+    private func loadFromVault() {
+        let manifestURL = vaultRoot.appendingPathComponent("manifest.json")
+        guard let data = try? Data(contentsOf: manifestURL),
+              let decoded = try? JSONDecoder().decode([NamedSubjects.Subject].self, from: data) else { return }
+        var loadedBytes: [String: Data] = [:]
+        var validSubjects: [NamedSubjects.Subject] = []
+        for s in decoded {
+            var ok = true
+            for p in s.pictures {
+                let blobURL = vaultRoot.appendingPathComponent("\(s.id)_\(p.file).dat")
+                if let b = try? Data(contentsOf: blobURL) {
+                    loadedBytes[Self.key(s, p)] = b
+                } else {
+                    ok = false
+                }
+            }
+            if ok && !s.pictures.isEmpty { validSubjects.append(s) }
+        }
+        all = validSubjects.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        bytes = loadedBytes
+        version += 1
+    }
+
+    private func saveToVault() {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: vaultRoot, withIntermediateDirectories: true)
+        guard let manifest = try? JSONEncoder().encode(all) else { return }
+        var expectedFiles: Set<String> = ["manifest.json"]
+        for s in all {
+            for p in s.pictures {
+                let name = "\(s.id)_\(p.file).dat"
+                expectedFiles.insert(name)
+                if let b = bytes[Self.key(s, p)] {
+                    try? b.write(to: vaultRoot.appendingPathComponent(name), options: .atomic)
+                }
+            }
+        }
+        try? manifest.write(to: vaultRoot.appendingPathComponent("manifest.json"), options: .atomic)
+        if let existing = try? fm.contentsOfDirectory(atPath: vaultRoot.path) {
+            for file in existing where !expectedFiles.contains(file) {
+                try? fm.removeItem(at: vaultRoot.appendingPathComponent(file))
+            }
+        }
     }
 }
 

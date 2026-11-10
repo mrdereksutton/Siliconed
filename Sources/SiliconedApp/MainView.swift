@@ -31,11 +31,12 @@ struct MainView: View {
                 columns = tab == .explore ? .all : .detailOnly
             }
             guard tab == .explore else { return }
+            app.showsGallery = false
             if app.explorePrompt.isEmpty { app.explorePrompt = app.prompt }
             app.gridDefaults()
         }
         .toolbar {
-            ToolbarItem(placement: .navigation) {
+            ToolbarItemGroup(placement: .navigation) {
                 Button {
                     withAnimation(Motion.pick(.easeInOut(duration: 0.25))) {
                         columns = columns == .detailOnly ? .all : .detailOnly
@@ -44,6 +45,17 @@ struct MainView: View {
                     Label("Show or hide the left column", systemImage: "sidebar.left")
                 }
                 .help("Show or hide the left column")
+
+                Button {
+                    withAnimation(Motion.pick(.easeInOut(duration: 0.2))) {
+                        app.showsGallery.toggle()
+                        if app.showsGallery { app.showsExploration = false }
+                    }
+                } label: {
+                    Label("Gallery", systemImage: app.showsGallery ? "rectangle.center.inset.filled" : "square.grid.2x2")
+                }
+                .disabled(app.history.isEmpty && !app.showsGallery)
+                .help(app.showsGallery ? "Return to stage" : "Open masonry gallery")
             }
             // Fork: the window's two modes, in the middle of the toolbar.
             ToolbarItem(placement: .principal) {
@@ -78,6 +90,9 @@ struct MainView: View {
         .sheet(item: $app.licenseRequest) { request in LicenseSheet(app: app, card: request.card) }
         .sheet(item: $app.hubOffer) { _ in HubSheet(app: app) }
         .sheet(isPresented: $app.diagnosticOpen) { DiagnosticSheet(app: app) }
+        .sheet(item: Bindable(StudioHub.shared).subjectDraft) { draft in
+            SubjectSheet(lab: LabModel.shared, draft: draft)
+        }
         .overlay {
             if app.fullScreen, let image = app.selectedImage?.image { FullScreen(app: app, image: image) }
         }
@@ -113,28 +128,25 @@ extension View {
     }
 }
 
-/// The canvas background: a near-black gray in dark, a light gray in light — neutral, so that
-/// the image alone carries the color.
-private let canvasBackground = Color(nsColor: NSColor(name: nil) { appearance in
-    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        ? NSColor(white: 0.075, alpha: 1) : NSColor(white: 0.9, alpha: 1)
-})
-
 // MARK: - The canvas
 
 private struct GraphCanvas: View {
     @Bindable var app: AppState
 
     var body: some View {
+        let showingGallery = app.showsGallery && !app.history.isEmpty
         VStack(spacing: 0) {
             if app.showsExploration, let run = app.explored {
                 ExplorationCanvas(app: app, run: run)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if showingGallery {
+                MasonryGalleryView(app: app)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 SceneView(app: app)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            if !app.history.isEmpty || app.explored != nil {
+            if (!app.history.isEmpty || app.explored != nil) && !showingGallery {
                 // Fork: the strip in the composer's column, its thumbnails over the prompt.
                 Banner(app: app)
                     .frame(maxWidth: 920)
@@ -154,7 +166,7 @@ private struct GraphCanvas: View {
                 .animation(Motion.pick(.easeInOut(duration: 0.2)), value: app.activityShows)
             }
         }
-        .background(canvasBackground)
+        .background { AmbientBackdropView(app: app) }
         .overlay(alignment: .top) {
             if let toast = app.toast {
                 Text(toast)

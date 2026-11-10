@@ -34,9 +34,19 @@ extension AppState {
     /// The starting image the next render reads: the one carried, where the model starts from one.
     var usedStart: ReferenceImage? { startsFromImage ? startImage : nil }
 
-    /// The images the next render encodes: the edit's references, or the starting image — what its memory need counts
+    /// How many pictures cited `@subjects` add when the chosen model reads images.
+    var citedSubjectPicturesCount: Int {
+        guard promptNamesImages, !NamedSubjects.mentions(in: prompt).isEmpty else { return 0 }
+        let cap = maxReferences
+        if case .success(let r)? = rewrite(prompt, model: model(identifier), capacity: cap, editImages: references.count) {
+            return r.placed.count
+        }
+        return 0
+    }
+
+    /// The images the next render encodes: the edit's references, cited subjects, or the starting image — what its memory need counts
     /// (`MemoryNeed.Request.references`: a start at the render's format).
-    var sentImages: Int { references.count + (usedStart == nil ? 0 : 1) }
+    var sentImages: Int { references.count + citedSubjectPicturesCount + (usedStart == nil ? 0 : 1) }
 
     /// **The steps the strength leaves to the render**, of all those of the schedule — the plain words under the slider.
     /// `nil` without a starting image, or before the model is read.

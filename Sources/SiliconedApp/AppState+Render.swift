@@ -15,21 +15,43 @@ extension AppState {
     /// size — with edit images, `outputFormat` would derive another one from image 1.
     func render(imposedSeed: UInt64? = nil, imposedFormat: RecommendedFormat? = nil) {
         guard canRender else { return }
+        showsGallery = false
         followsRender = true
+        let hub = StudioHub.shared
+        if imposedSeed == nil, hub.autoPolish, !hub.isPolishing, prompt.count < 200 {
+            let lab = LabModel.shared
+            lab.refresh()
+            if lab.pause(rendering: busy) == nil, !lab.isWriting {
+                hub.polishPrompt(on: self) { [weak self] in
+                    self?.enqueueFromForm(imposedSeed: nil, imposedFormat: imposedFormat)
+                }
+                return
+            }
+        }
+        enqueueFromForm(imposedSeed: imposedSeed, imposedFormat: imposedFormat)
+    }
+
+    private func enqueueFromForm(imposedSeed: UInt64?, imposedFormat: RecommendedFormat?) {
+        guard canRender else { return }
         // Everything that reads the state is taken here: the job no longer depends on the form.
         let firstNumber = imposedSeed ?? (fixedSeed ? seed : UInt64.random(in: 0...UInt64(UInt32.max)))
         let format = imposedFormat ?? outputFormat
         guard let prompts = try? alternatives.get().prompts else { return }
+        let activeLoras = loras.filter { !$0.path.isEmpty }
+        let currentModel = model(identifier)
+        let cap = promptNamesImages ? maxReferences : 0
         // **One job per alternative, all at the same seeds**: a series compares the prompts, so
         // nothing else may differ. Each keeps the batch. Its history images carry the expanded prompt.
         enqueue(prompts.map { expanded in
-            var settings = RenderSettings(identifier: identifier, modelName: card?.name ?? identifier, prompt: expanded,
-                                          format: format, steps: steps, loras: loras.filter { !$0.path.isEmpty },
+            let decorated = StudioHub.shared.decoratedPrompt(expanded, loras: activeLoras)
+            var settings = RenderSettings(identifier: identifier, modelName: card?.name ?? identifier, prompt: decorated,
+                                          format: format, steps: steps, loras: activeLoras,
                                           references: references.count, variations: variations, detail: effectiveDetail,
                                           solver: effectiveSolver)
-            let used = references, start = usedStart
+            let start = usedStart
             if start != nil { settings.strength = startStrength }
-            let plan = expectedPlan(steps: steps, format: format, withLoRA: loras.contains { !$0.path.isEmpty } || !plainSampling,
+            let used = namedJob(decorated, settings: &settings, references: references, model: currentModel, capacity: cap)
+            let plan = expectedPlan(steps: steps, format: format, withLoRA: !activeLoras.isEmpty || !plainSampling,
                                     references: used.count, strength: settings.strength)
             var job = Job(ordinal: nextJobNumber(), settings: settings,
                           seeds: (0..<max(1, batch)).map { firstNumber &+ UInt64($0) },
