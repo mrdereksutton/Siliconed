@@ -86,7 +86,7 @@ extension Library {
                          encoder: Self.size(map(encoderMap(f))) + otherEncoder
                             + (f.writerHead.map { Self.size(map($0)) } ?? 0),
                          dit: Self.size(dit) + Self.size(adapterPath(fromMap: dit)) + otherDiT
-                            + (f == .qwenImage21 ? Family.supersededQwenImage21Maps.reduce(0) { $0 + Self.size(map($1)) } : 0),
+                            + f.supersededMaps.reduce(0) { $0 + Self.size(map($1)) },
                          variant: own ? variant(of: f) : nil,
                          isReady: i.isReady(f))
         }
@@ -345,19 +345,17 @@ extension Library {
 
     static func exists(_ path: String) -> Bool { FileManager.default.fileExists(atPath: path) }
 
-    /// The size of a file, or of a whole folder; 0 if it does not exist.
-    static func size(_ path: String) -> Int {
-        let fm = FileManager.default
-        var folder: ObjCBool = false
-        guard fm.fileExists(atPath: path, isDirectory: &folder) else { return 0 }
-        guard folder.boolValue else { return (try? fm.attributesOfItem(atPath: path)[.size] as? Int) ?? 0 }
-        var total = 0
-        let e = fm.enumerator(at: URL(fileURLWithPath: path), includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey])
-        while let u = e?.nextObject() as? URL {
-            let v = try? u.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
-            if v?.isRegularFile == true { total += v?.fileSize ?? 0 }
+    /// The size of a file, or of a whole folder; 0 if it does not exist. Through links, like a file
+    /// alone (`fileSize`): a linked map weighs what it points to, a linked folder what it holds
+    /// (`regularFiles(under:)`) — and a file reached twice in a folder counts once.
+    package static func size(_ path: String) -> Int {
+        var info = stat()
+        guard stat(path, &info) == 0 else { return 0 }
+        guard info.st_mode & S_IFMT == S_IFDIR else { return Int(info.st_size) }
+        var counted = Set<[Int]>()
+        return regularFiles(under: path).reduce(0) {
+            counted.insert([Int($1.info.st_dev), Int($1.info.st_ino)]).inserted ? $0 + Int($1.info.st_size) : $0
         }
-        return total
     }
 }
 
@@ -372,32 +370,31 @@ extension Family {
     /// **What a family occupies once installed in `variant`**, in bytes — to state the price before
     /// downloading. Standard: measured on the maps (bf16, as published). Compact: the components are
     /// the Standard's; the maps measured as installed: Z-Image's DiT from
-    /// unsloth's GGUF, its encoder from Disty0's; Qwen-Image-2.1's DiT from Comfy-Org's int8 convrot,
-    /// its encoder from unsloth's; Anima's DiT from vanes430's GGUF Q8_0 (Q4_K_M for the Light), with
-    /// the Standard's encoder; Krea 2's DiT and encoder from Comfy-Org's int8 convrot, its Light's DiT
-    /// from vantagewithai's GGUF Q4_K_M; MOSS-Image's DiT and encoder from Comfy-Org's int8 convrot. An installation needs more while forging: the sources, about as
+    /// Comfy-Org's int8 convrot (our SQ 4-bit for the Light), its encoder from Disty0's; Qwen-Image-2.1's DiT
+    /// from Comfy-Org's int8 convrot, its encoder from unsloth's; Anima's DiT from Bedovyy's int8 convrot (our SQ 4-bit
+    /// for the Light), with the Standard's encoder; Krea 2's DiT and encoder from Comfy-Org's int8 convrot, its Light's DiT
+    /// our SQ 4-bit; MOSS-Image's DiT and encoder from Comfy-Org's int8 convrot. An installation needs more while forging: the sources, about as
     /// large as the map, then thrown away (`spaceNeeded`).
     package func installedSize(_ variant: Variant) -> (dit: Int, encoder: Int, components: Int) {
         if variant == .light {
-            // The DiT maps measured as installed; the encoder is the Compact's.
+            // Our SQ 4-bit maps measured as forged; the encoder is the Compact's.
             switch self {
-            case .zImage: return (5_039_636_480, installedSize(.compact).encoder, installedSize(.standard).components)
-            case .qwenImage21: return (4_167_073_792, installedSize(.compact).encoder, installedSize(.standard).components)
-            // vanes430's Q4_K_M: the map, 1 307 197 440 B, and its text adapter in fp32, 538 671 696 B.
-            case .anima: return (1_845_869_136, installedSize(.compact).encoder, installedSize(.standard).components)
-            // vantagewithai's Q4_K_M, blocks kept; Krea's two easter-egg tensors left out.
-            case .krea2: return (7_436_943_360, installedSize(.compact).encoder, installedSize(.standard).components)
+            case .zImage: return (5_008_080_896, installedSize(.compact).encoder, installedSize(.standard).components)
+            case .qwenImage21: return (4_386_865_152, installedSize(.compact).encoder, installedSize(.standard).components)
+            // The map, 1 414 447 104 B, and the publisher's text adapter, bf16 as published, 269 344 384 B.
+            case .anima: return (1_683_791_488, installedSize(.standard).encoder, installedSize(.standard).components)
+            case .krea2: return (7_570_931_712, installedSize(.compact).encoder, installedSize(.standard).components)
             case .mossImage: return installedSize(.standard)   // no Light: `Family.variants`
             }
         }
         if variant == .compact {
             switch self {
-            case .zImage: return (7_247_331_328, 4_317_841_408, installedSize(.standard).components)
+            // Comfy-Org's int8 convrot: 6 199 296 000 B (its fp32 tensors bf16 values, written in bf16 but the two embedders).
+            case .zImage: return (6_199_296_000, 4_317_841_408, installedSize(.standard).components)
             case .qwenImage21: return (7_257_833_472, 9_355_759_616, installedSize(.standard).components)
-            // vanes430's Q8_0: the map, 2 098 118 656 B, and its text adapter, 538 671 696 B — 8-bit in the
-            // source, fp32 here (the conditioner reads no 8-bit), twice the Standard's bf16 one. The
-            // encoder is the Standard's.
-            case .anima: return (2_636_790_352, installedSize(.standard).encoder, installedSize(.standard).components)
+            // Bedovyy's int8 convrot: the map, 2 384 199 680 B, and its text adapter, bf16 as published (269 344 384 B, the
+            // Standard's). The encoder is the Standard's.
+            case .anima: return (2_653_544_064, installedSize(.standard).encoder, installedSize(.standard).components)
             // Comfy-Org's int8 convrot, the DiT's Linears kept 8-bit; the encoder's embedding table
             // in fp32 (a rotated table cannot be read by rows).
             case .krea2: return (14_138_179_584, 5_096_919_040, installedSize(.standard).components)

@@ -50,6 +50,60 @@ final class MemoryNeedTests: XCTestCase {
 
     // ── the formula is the allocation ─────────────────────────────────────────────────────────
 
+    /// A map linked into the store weighs what it points to, alone or in a folder: read on the link,
+    /// a few dozen bytes made the need wrong and a render was refused.
+    func testAFileReachedByALinkWeighsItsFile() throws {
+        let file = root.appendingPathComponent("map.bin").path
+        try Data(count: 4_096).write(to: URL(fileURLWithPath: file))
+        let folder = root.appendingPathComponent("store")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let link = folder.appendingPathComponent("linked.bin").path
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: file)
+        XCTAssertEqual(Library.fileSize(link), 4_096)
+        XCTAssertEqual(MemoryNeed.InstalledFiles.size(link), 4_096)
+        XCTAssertEqual(Library.size(link), 4_096)
+        XCTAssertEqual(Library.size(folder.path), 4_096)
+        XCTAssertNil(Library.fileSize(root.appendingPathComponent("absent").path))
+    }
+
+    /// **A broken link is a file absent** — no size, the same stamp, the need's « unknown » —, and a
+    /// folder weighs each file it reaches once: a linked folder what it holds, a link beside its
+    /// target nothing more.
+    func testABrokenLinkIsAnAbsentFileAndAFolderCountsEachFileOnce() throws {
+        let fm = FileManager.default
+        let store = root.appendingPathComponent("store")
+        try fm.createDirectory(at: store.appendingPathComponent("composants"), withIntermediateDirectories: true)
+        let file = store.appendingPathComponent("map.silicon").path
+        try Data(count: 4_096).write(to: URL(fileURLWithPath: file))
+        try Data(count: 100).write(to: store.appendingPathComponent("composants/vae.safetensors"))
+        let absent = root.appendingPathComponent("absent").path
+        let broken = store.appendingPathComponent("broken.silicon").path
+        try fm.createSymbolicLink(atPath: broken, withDestinationPath: absent)
+        XCTAssertNil(Library.fileSize(broken))
+        XCTAssertEqual(MemoryNeed.InstalledFiles.size(broken), MemoryNeed.InstalledFiles.size(absent))
+        XCTAssertEqual(MemoryNeed.InstalledFiles(paths: [broken]).stamps, MemoryNeed.InstalledFiles(paths: [absent]).stamps)
+        XCTAssertEqual(Library.size(broken), 0)
+        XCTAssertEqual(Library.regularFiles(under: store.path).map(\.path).filter { $0.hasSuffix("broken.silicon") }, [])
+
+        let linked = store.appendingPathComponent("again.silicon").path
+        try fm.createSymbolicLink(atPath: linked, withDestinationPath: file)
+        XCTAssertEqual(Library.fileSize(linked), Library.fileSize(file))
+        XCTAssertEqual(Library.size(store.path), 4_196, "the map once, though reached twice")
+
+        // A store that is a link, and a folder linked inside a store: walked as folders.
+        let linkedStore = root.appendingPathComponent("linked-store").path
+        try fm.createSymbolicLink(atPath: linkedStore, withDestinationPath: store.path)
+        XCTAssertEqual(Library.size(linkedStore), 4_196)
+        let other = root.appendingPathComponent("other/store")
+        try fm.createDirectory(at: other, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: other.appendingPathComponent("composants").path,
+                                  withDestinationPath: store.appendingPathComponent("composants").path)
+        XCTAssertEqual(Library.size(other.path), 100)
+        // A link back to a parent is walked once.
+        try fm.createSymbolicLink(atPath: store.appendingPathComponent("composants/up").path, withDestinationPath: store.path)
+        XCTAssertEqual(Library.size(store.path), 4_196)
+    }
+
     func testTheEncoderArenaIsTheFormula() throws {
         let artifact = try Artifact(path: try map(tinyEncoder))
         let config = try TextEncoder.Config(header: artifact.header)
@@ -432,5 +486,21 @@ final class MemoryNeedTests: XCTestCase {
         let each = Date().timeIntervalSince(started) / Double(hot.count)
         XCTAssertEqual(cold, hot)
         XCTAssertLessThan(each, 0.005, String(format: "a need: %.2f ms", each * 1000))
+    }
+
+    /// The decoding carries the denoiser's Neural Engine surfaces (released late by Core ML), exactly the denoising's term; with no
+    /// Neural Engine term in the denoising, the need is unchanged.
+    func testDecodingCarriesTheDenoisersSurfaces() {
+        let surfaces = NeuralEngine.bytes(products: [(512, 3840, 3840)])
+        XCTAssertGreaterThan(surfaces, 0)
+        let decoder = MemoryNeed.Term("decoder", 1000)
+        func need(_ terms: [MemoryNeed.Term]) -> MemoryNeed {
+            MemoryNeed(phases: [.init(kind: .denoising, terms: terms), .init(kind: .decoding, terms: [decoder])], crossing: 0, base: 0)
+        }
+        let with = need([.init(MemoryNeed.ditSurfacesTerm, surfaces), .init("other", 5)]).carryingSurfaces()
+        XCTAssertEqual(with.need(of: .decoding), 1000 + surfaces)
+        XCTAssertEqual(with.need(of: .denoising), surfaces + 5)
+        let without = need([.init("other", 5)])
+        XCTAssertEqual(without.carryingSurfaces(), without)
     }
 }

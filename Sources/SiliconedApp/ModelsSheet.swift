@@ -159,7 +159,7 @@ struct ModelManagement: View {
                     .help("A model (.safetensors or .gguf) or a LoRA (.safetensors), as published on Civitai")
             }
             Button("Done") { shutDown() }
-                .keyboardShortcut(.defaultAction)
+                .keyboardShortcut(.defaultAction).tint(Palette.control)
         }
         .padding(16)
         .background(.bar)
@@ -243,12 +243,12 @@ struct ModelManagement: View {
                 Spacer()
                 Button("Cancel") { app.installOffer = nil }
                 Button("Accept and Install") { app.acceptAndInstall(p.family, variant: offer.variant, baseDiT: offer.baseDiT) }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.prominent)
                     .disabled(!app.libraryManageable || tooBig)
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.07)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(Palette.live.opacity(0.07)))
     }
 
     private func familyRow(_ p: Library.Occupancy.FamilyPart) -> some View {
@@ -288,6 +288,11 @@ struct ModelManagement: View {
         if installed {
             Button("Use") { app.identifier = card.id; shutDown() }
                 .disabled(app.identifier == card.id)
+        } else if let old = app.outdatedVariant(of: p.family) {
+            // A version this release gave new weights (the welcome says it only while no other model is ready).
+            Button("Update…") { app.offerInstall(p.family, variant: old) }
+                .disabled(!app.libraryManageable || app.installOffer?.family == p.family)
+                .help(String(localized: "Shows the license and the space it takes; nothing is downloaded before you accept"))
         } else {
             Button(p.present ? "Finish Installing…" : "Install…") { app.offerInstall(p.family) }
                 .disabled(!app.libraryManageable || app.installOffer?.family == p.family)
@@ -322,6 +327,7 @@ struct ModelManagement: View {
                 : String(localized: "\(card.licenseName) · license not accepted yet: asked at the first render")
         }
         if p.isReady { return String(localized: "Encoder and VAE only — enough to render with an imported model") }
+        if let old = app.outdatedVariant(of: p.family) { return String(localized: "Your \(VersionChoice.name(old)) takes new weights") }
         if p.present { return String(localized: "Incomplete installation — it will resume where it stopped") }
         return String(localized: "≈ \(Figures.disk(toDownload(p))) once installed · \(card.licenseName)")
     }
@@ -443,7 +449,7 @@ struct VersionChoice: View {
                     }.tag(v)
                 }
             }
-            .pickerStyle(.radioGroup)
+            .pickerStyle(.radioGroup).tint(Palette.control)
             .labelsHidden()
             Text(Self.summary(variant, family))
                 .font(.caption).foregroundStyle(.secondary)
@@ -467,7 +473,7 @@ struct VersionChoice: View {
         case (.standard, _): String(localized: "The publisher’s weights, as published.")
         case (.compact, .anima): String(localized: "Smaller on disk: the image model in 8 bits, the publisher’s text encoder; images slightly different.")
         case (.compact, _): String(localized: "Smaller on disk; images slightly different, about as fast.")
-        case (.light, .anima): String(localized: "The smallest on disk: the image model in 4 to 6 bits, the publisher’s text encoder; another set of weights, so an image may come out composed differently.")
+        case (.light, .anima): String(localized: "The smallest on disk: the image model in 4 to 8 bits, the publisher’s text encoder; another set of weights, so an image may come out composed differently.")
         case (.light, _): String(localized: "The smallest on disk, made for Macs with 8 GB; another set of weights, so an image may come out composed differently.")
         }
     }
@@ -476,24 +482,24 @@ struct VersionChoice: View {
     static func details(_ v: Variant, _ f: Family) -> String {
         switch (v, f) {
         case (.compact, .zImage):
-            String(localized: "8-bit weights published by third parties: the image model from unsloth (GGUF Q8_0), the text encoder from Disty0 (SDNQ int8). Tokenizer and VAE are the publisher’s.")
+            String(localized: "8-bit weights published by third parties: the image model from Comfy-Org (int8 convrot), the text encoder from Disty0 (SDNQ int8). Tokenizer and VAE are the publisher’s.")
         case (.compact, .qwenImage21):
             String(localized: "8-bit weights published by third parties: the image model from Comfy-Org (int8 convrot), the text encoder from unsloth (int8 convrot). Processor and VAE are the publisher’s.")
         case (.light, .zImage):
-            String(localized: "The image model in 4 to 6 bits, published by unsloth (GGUF Q4_K_M); the Compact’s 8-bit text encoder, from Disty0 (SDNQ int8). Tokenizer and VAE are the publisher’s.")
+            String(localized: "The image model in 4 to 8 bits, quantized by Siliconed (SQ); the Compact’s 8-bit text encoder, from Disty0 (SDNQ int8). Tokenizer and VAE are the publisher’s.")
         case (.light, .qwenImage21):
-            String(localized: "The image model in 4 to 8 bits, published by unsloth (GGUF Q4_K_M); the Compact’s 8-bit text encoder, from unsloth (int8 convrot). Processor and VAE are the publisher’s.")
+            String(localized: "The image model in 4 to 8 bits, quantized by Siliconed (SQ); the Compact’s 8-bit text encoder, from unsloth (int8 convrot). Processor and VAE are the publisher’s.")
         case (.compact, .anima):
-            String(localized: "The image model in 8 bits, published by vanes430 (GGUF Q8_0). The text encoder (bf16), tokenizers and VAE are the publisher’s.")
+            String(localized: "The image model in 8 bits, published by Bedovyy (int8 convrot). The text encoder (bf16), tokenizers and VAE are the publisher’s.")
         case (.light, .anima):
-            String(localized: "The image model in 4 to 6 bits, published by vanes430 (GGUF Q4_K_M). The text encoder (bf16), tokenizers and VAE are the publisher’s.")
+            String(localized: "The image model in 4 to 8 bits, quantized by Siliconed (SQ). The text encoder (bf16), tokenizers and VAE are the publisher’s.")
         // Krea's own repository is gated: every byte comes from copies proven equal to its files.
         case (.standard, .krea2):
             String(localized: "The image model and the text encoder in the publisher’s precision (bf16), downloaded from Comfy-Org’s copy; the VAE and the tokenizer from Qwen’s. Each is the publisher’s file, value for value.")
         case (.compact, .krea2):
             String(localized: "8-bit weights published by Comfy-Org: the image model and the text encoder (int8 convrot). VAE and tokenizer as in the Standard version.")
         case (.light, .krea2):
-            String(localized: "The image model in 4 to 5 bits, published by vantagewithai (GGUF Q4_K_M); the Compact’s 8-bit text encoder, from Comfy-Org (int8 convrot). VAE and tokenizer as in the Standard version.")
+            String(localized: "The image model in 4 to 8 bits, quantized by Siliconed (SQ); the Compact’s 8-bit text encoder, from Comfy-Org (int8 convrot). VAE and tokenizer as in the Standard version.")
         // The 8 steps are the community's LoRA, applied beside the weights in fp32 — never merged into the bf16 ones.
         case (.standard, .mossImage):
             String(localized: "The image model and the text encoder in the publisher’s precision (bf16); the 8-step LoRA from lodestones, in fp32. VAE and tokenizer are the publisher’s.")

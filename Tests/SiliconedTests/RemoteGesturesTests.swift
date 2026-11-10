@@ -9,18 +9,98 @@ final class RemoteGesturesTests: XCTestCase {
         return nil
     }
 
+    // ── The Prompt Lab ─────────────────────────────────────────────────────────────────────
+
+    /// `lab`: what it holds, fold or unfold it, images in, a role by its word, an image out — numbered from 1.
+    func testTheLabReadsItsGesturesAndItsRoles() {
+        XCTAssertEqual(parse("lab", []), .lab(.status))
+        XCTAssertEqual(parse("lab", ["open"]), .lab(.unfold))
+        XCTAssertEqual(parse("lab", ["close"]), .lab(.fold))
+        XCTAssertEqual(parse("lab", ["detach"]), .lab(.detach))
+        XCTAssertEqual(parse("lab", ["attach"]), .lab(.attach))
+        XCTAssertEqual(parse("lab", ["add", "a.jpg", "i7"]), .lab(.add(["a.jpg", "i7"])))
+        XCTAssertEqual(parse("lab", ["role", "2", "reference"]), .lab(.role(image: 2, .reference)))
+        XCTAssertEqual(parse("lab", ["role", "1", "none"]), .lab(.role(image: 1, .neutral)))
+        XCTAssertEqual(parse("lab", ["role", "1", "Start"]), .lab(.role(image: 1, .start)))
+        XCTAssertEqual(parse("lab", ["remove", "3"]), .lab(.remove(image: 3)))
+        // Each role's word reads back as itself.
+        for role in LabInputs.Role.allCases {
+            XCTAssertEqual(GestureOrder.LabAction.role(named: GestureOrder.LabAction.name(role)), role)
+        }
+        XCTAssertEqual(GestureOrder.parse("lab", ["role", "0", "edited"]), .failure(.badValue("image", "0")))
+        XCTAssertEqual(GestureOrder.parse("lab", ["role", "1", "neutral"]), .failure(.badValue("role", "neutral")))
+        XCTAssertEqual(GestureOrder.parse("lab", ["remove", "x"]), .failure(.badValue("image", "x")))
+        for arguments in [["add"], ["open", "now"], ["role", "1"], ["remove"], ["fold"]] {
+            XCTAssertEqual(GestureOrder.parse("lab", arguments), .failure(.usage(GestureOrder.usage("lab"))), "\(arguments)")
+        }
+        XCTAssertEqual(GestureOrder.parse("lab", ["--yes"]), .failure(.unknownFlag("--yes")))
+    }
+
+    /// `lab rewrite` and `lab describe N`: the bar's two buttons, answered at once or, with `--wait`, once written — `--wait` belongs
+    /// to them alone.
+    func testTheLabWritesInItsText() {
+        XCTAssertEqual(parse("lab", ["rewrite"]), .lab(.rewrite(wait: false)))
+        XCTAssertEqual(parse("lab", ["rewrite", "--wait"]), .lab(.rewrite(wait: true)))
+        XCTAssertEqual(parse("lab", ["--wait", "rewrite"]), .lab(.rewrite(wait: true)))
+        XCTAssertEqual(parse("lab", ["describe", "2"]), .lab(.describe(image: 2, wait: false)))
+        XCTAssertEqual(parse("lab", ["describe", "1", "--wait"]), .lab(.describe(image: 1, wait: true)))
+        XCTAssertEqual(GestureOrder.parse("lab", ["describe", "0"]), .failure(.badValue("image", "0")))
+        XCTAssertEqual(GestureOrder.parse("lab", ["describe", "i7"]), .failure(.badValue("image", "i7")))
+        for arguments in [["rewrite", "a cat"], ["describe"], ["describe", "1", "2"], ["open", "--wait"], ["--wait"], ["add", "a.jpg", "--wait"]] {
+            XCTAssertEqual(GestureOrder.parse("lab", arguments), .failure(.usage(GestureOrder.usage("lab"))), "\(arguments)")
+        }
+        XCTAssertEqual(GestureOrder.parse("lab", ["rewrite", "--for", "krea2"]), .failure(.unknownFlag("--for")))
+    }
+
+    // ── The Settings window ────────────────────────────────────────────────────────────────
+
+    /// `settings [PANE]`, and `settings lab [rewrite|describe] [--for ID]`: Prompt Lab on one instruction, a menu not named left alone.
+    func testSettingsOpensOnAPaneOrAnInstruction() {
+        XCTAssertEqual(parse("settings", []), .settings(.show(nil)))
+        for pane in SettingsPane.allCases { XCTAssertEqual(parse("settings", [pane.rawValue]), .settings(.show(pane))) }
+        XCTAssertEqual(parse("settings", ["Macs"]), .settings(.show(.macs)))
+        XCTAssertEqual(parse("settings", ["lab", "rewrite", "--for", "krea2"]), .settings(.instruction(.rewrite, target: "krea2")))
+        XCTAssertEqual(parse("settings", ["lab", "describe"]), .settings(.instruction(.describe, target: nil)))
+        XCTAssertEqual(parse("settings", ["lab", "--for", "anima"]), .settings(.instruction(nil, target: "anima")))
+        XCTAssertEqual(SettingsPane.allCases.map(\.rawValue), ["general", "macs", "lab", "advanced"])
+        XCTAssertEqual(GestureOrder.parse("settings", ["prompt-lab"]), .failure(.badValue("pane", "prompt-lab")))
+        XCTAssertEqual(GestureOrder.parse("settings", ["lab", "vary"]), .failure(.badValue("gesture", "vary")))
+        let line = GestureOrder.usage("settings")
+        for arguments in [["general", "rewrite"], ["macs", "--for", "krea2"], ["--for", "krea2"], ["lab", "rewrite", "now"]] {
+            XCTAssertEqual(GestureOrder.parse("settings", arguments), .failure(.usage(line)), "\(arguments)")
+        }
+        XCTAssertEqual(GestureOrder.parse("settings", ["lab", "--for"]), .failure(.flagWithoutValue("--for")))
+        XCTAssertEqual(GestureOrder.parse("settings", ["--wait"]), .failure(.unknownFlag("--wait")))
+        XCTAssertTrue(GestureOrder.verbs.contains("settings"))
+    }
+
+    // ── A knob's bubble, the rack's scroll ─────────────────────────────────────────────────
+
+    /// `bracket KNOB` opens a knob's bubble by its word, `bracket lora NAME` one LoRA's, `bracket close` closes it; `rack top|dit`.
+    func testBracketNamesAKnobAndRackAPlace() {
+        for (word, knob) in [("seed", GestureOrder.BracketKnob.seeds), ("detail", .detail), ("Solver", .solver), ("start", .start),
+                             ("loras", .compareLoRAs)] {
+            XCTAssertEqual(parse("bracket", [word]), .bracket(.open(knob)), word)
+        }
+        XCTAssertEqual(parse("bracket", ["lora", "incase"]), .bracket(.open(.lora("incase"))))
+        XCTAssertEqual(parse("bracket", ["close"]), .bracket(.close))
+        XCTAssertEqual(GestureOrder.parse("bracket", ["steps"]), .failure(.badValue("knob", "steps")))
+        let line = GestureOrder.usage("bracket")
+        for arguments in [[], ["lora"], ["detail", "solver"], ["close", "now"], ["lora", "a", "b"]] {
+            XCTAssertEqual(GestureOrder.parse("bracket", arguments), .failure(.usage(line)), "\(arguments)")
+        }
+        XCTAssertEqual(parse("rack", ["top"]), .rack(.top))
+        XCTAssertEqual(parse("rack", ["DiT"]), .rack(.dit))
+        XCTAssertEqual(GestureOrder.parse("rack", ["vae"]), .failure(.badValue("place", "vae")))
+        XCTAssertEqual(GestureOrder.parse("rack", []), .failure(.usage(GestureOrder.usage("rack"))))
+        XCTAssertTrue(GestureOrder.verbs.isSuperset(of: ["bracket", "rack"]))
+    }
+
     // ── Naming a cell ──────────────────────────────────────────────────────────────────────
 
-    func testACellIsAGridAndARankOrItsJob() {
-        XCTAssertEqual(CellName("g2c3"), .cell(grid: 2, index: 3))
-        XCTAssertEqual(CellName("g12c0"), .cell(grid: 12, index: 0))
-        XCTAssertEqual(CellName("t5"), .job(5))
+    func testACellIsAGridAndARank() {
         XCTAssertEqual(CellName.name(grid: 2, cell: 3), "g2c3")
-        // The names of other things, and half-written ones, name no cell.
-        for word in ["g2", "g2c", "gc3", "c3", "i7", "g2c3c4", "g-1c0", "g2c-1", "", "5", "t", "tx"] { XCTAssertNil(CellName(word), word) }
-        XCTAssertEqual(parse("finish", ["g2c3"]), .finish(.cell(grid: 2, index: 3)))
-        XCTAssertEqual(parse("finish", ["t9"]), .finish(.job(9)))
-        XCTAssertEqual(GestureOrder.parse("finish", ["i7"]), .failure(.badValue("cell", "i7")))
+        XCTAssertFalse(GestureOrder.verbs.contains("finish"), "a cell is a finished image: nothing left to finish")
         XCTAssertEqual(parse("sheet", ["g2"]), .sheet(grid: 2))
         XCTAssertEqual(GestureOrder.parse("sheet", ["t2"]), .failure(.badValue("grid", "t2")))
     }

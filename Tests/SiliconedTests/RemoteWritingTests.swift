@@ -62,6 +62,26 @@ final class RemoteWritingTests: XCTestCase {
         XCTAssertEqual(failure(.rewrite, ["a", "--for", "x", "--for", "y"]), .usage(WriterOrder.usage(.rewrite)))
     }
 
+    /// **`instructions`**: the list alone, or one family's; one gesture shown, set, read from a file or restored — a change
+    /// names its gesture, one change at a time.
+    func testInstructionsListsShowsAndChangesOne() throws {
+        typealias O = InstructionOrder
+        XCTAssertEqual(try O.parse([]).get(), O())
+        XCTAssertEqual(try O.parse(["--for", "krea2"]).get(), O(gesture: nil, target: "krea2", change: nil))
+        XCTAssertEqual(try O.parse(["rewrite", "--for", "anima"]).get(), O(gesture: .rewrite, target: "anima", change: nil))
+        XCTAssertEqual(try O.parse(["describe", "--set", "Mine."]).get().change, .set("Mine."))
+        XCTAssertEqual(try O.parse(["--file", "mine.txt", "rewrite"]).get(), O(gesture: .rewrite, target: nil, change: .file("mine.txt")))
+        XCTAssertEqual(try O.parse(["rewrite", "--restore", "--for", "z-image"]).get().change, .restore)
+        XCTAssertEqual(try O.parse(["rewrite", "--set", ""]).get().change, .set(""))
+
+        XCTAssertEqual(O.parse(["--restore"]), .failure(.usage(O.usage)), "a change names its gesture")
+        XCTAssertEqual(O.parse(["rewrite", "--set", "a", "--restore"]), .failure(.usage(O.usage)))
+        XCTAssertEqual(O.parse(["rewrite", "describe"]), .failure(.usage(O.usage)))
+        XCTAssertEqual(O.parse(["caption"]), .failure(.usage(O.usage)))
+        XCTAssertEqual(O.parse(["rewrite", "--set"]), .failure(.flagWithoutValue("--set")))
+        XCTAssertEqual(O.parse(["rewrite", "--reset"]), .failure(.unknownFlag("--reset")))
+    }
+
     func testDescribeTakesAnImageNameOrAPath() {
         XCTAssertEqual(try WriterOrder.parse(.describe, ["i7"]).get().subject, "i7")
         XCTAssertEqual(try WriterOrder.parse(.describe, ["photo.jpg", "--for", "z-image"]).get(),
@@ -105,12 +125,13 @@ final class RemoteWritingTests: XCTestCase {
         guard case .failure(.usage) = SetOrder.parse(["save-images", "on", "~/Pictures"]) else { return XCTFail() }
     }
 
-    /// The four options of Settings › Advanced › Beta, no more: a fifth has to be added here, in the app's `AppState.beta`
+    /// The five options of Settings › Advanced › Beta, no more: a sixth has to be added here, in the app's `AppState.beta`
     /// (a `switch` the compiler checks) and in the help.
-    func testTheBetaOptionsAreTheSettingsFour() {
-        XCTAssertEqual(BetaOption.allCases.map(\.rawValue), ["more-solvers", "faster-rendering", "size-scales", "negative-lora"])
-        XCTAssertEqual(BetaOption.allCases.map(\.key), ["more_solvers", "faster_rendering", "size_scales", "negative_lora"])
-        XCTAssertEqual(BetaOption.names, "more-solvers, faster-rendering, size-scales, negative-lora")
+    func testTheBetaOptionsAreTheSettingsFive() {
+        XCTAssertEqual(BetaOption.allCases.map(\.rawValue), ["more-solvers", "steps", "faster-rendering", "size-scales", "negative-lora"])
+        XCTAssertEqual(BetaOption.allCases.map(\.key), ["more_solvers", "steps", "faster_rendering", "size_scales", "negative_lora"])
+        XCTAssertEqual(BetaOption.names, "more-solvers, steps, faster-rendering, size-scales, negative-lora")
+        XCTAssertEqual(BetaOption(argument: "choose-steps"), .steps)
     }
 
     /// The Neural Engine is offered or not by the map, whichever the version: `set neural-engine` refuses on the same rule as the switch.

@@ -169,8 +169,24 @@ package final class GEMM {
     /// The products may take their activation rounded to bf16 (`BFloatKernels`): the
     /// library compiled. Which products do is the plan's to say.
     package let bf16Activations: Bool
+    /// The products on a published int8 weight may take their activation quantized to int8 (W8A8, `QuantizedKernels`): the library
+    /// compiled. Which products do is the plan's to say.
+    package let int8Activations: Bool
+    /// Products that went through the W8A8 path in this process: a check says what ran.
+    package static let quantizedProducts = Mutex<Int>(0)
     /// Products that went through the bf16 activation path in this process: a check says what ran.
     package static let roundedProducts = Mutex<Int>(0)
+    /// ... of which read the operand its producer had already rounded (`WeightProducts.RoundedOperand`): no pass of their own.
+    package static let producerRounded = Mutex<Int>(0)
+    /// Operands rounded by their producer whose fp32 it did not write, no reader reading it (`RoundedOperand.writesFP32`).
+    package static let fp32Unwritten = Mutex<Int>(0)
+    /// The W8A8 activation passes encoded (`quantize_rows`, one per chunk of rows) in this process.
+    package static let quantizePasses = Mutex<Int>(0)
+    /// W8A8 products that read an operand already quantized (`WeightProducts.RoundedOperand`): by its producer, or by the product
+    /// before on the same operand — no pass of their own.
+    package static let prequantizedProducts = Mutex<Int>(0)
+    /// Operands their producer quantized as it wrote them (`ElementwiseGPU.normScale`'s `norm_scale_quantized`).
+    package static let producerQuantized = Mutex<Int>(0)
     /// Products that read a published int8 weight as it is (`gemm_int8`, `WeightProducts.linear`) in this process: a check
     /// says the route it judged was the one taken.
     package static let int8Products = Mutex<Int>(0)
@@ -196,12 +212,14 @@ package final class GEMM {
         let r = plan.resources
         if r.amx { conductor = Conductor(queue: queue) }
         if r.usesTensor {
-            tensor = TensorGEMM(device: device, queue: queue, roundingActivations: r.roundedActivations)
+            tensor = TensorGEMM(device: device, queue: queue, roundingActivations: r.roundedActivations,
+                                quantizingActivations: r.quantizedActivations)
             // The tile each matmul2d kernel runs is the map's (`MatmulTile`); none measured: the standard ones.
             for (kernel, tile) in plan.model?.tiles ?? [:] { tensor?.tiles.use(tile, for: kernel) }
             for (kernel, tile) in plan.model?.thinTiles ?? [:] { tensor?.tiles.use(tile, for: kernel, thin: true) }
         }
         self.bf16Activations = tensor?.roundsActivations == true
+        self.int8Activations = tensor?.quantizesActivations == true && r.int8Weights
         tensorBF16 = tensor != nil && r.bf16Weights
         tensorInt8 = tensor != nil && r.int8Weights
         tensorQ8 = tensor?.readsBlocks == true && r.q8Weights
@@ -234,8 +252,19 @@ package final class GEMM {
             throw Failure.unalignedBuffer(name)
         }
         buffer.label = name
+        MetalWraps.track(buffer)
         buffers[key] = buffer
         return buffer
+    }
+
+    /// **A pointer anywhere inside an arena slice, seen from the GPU**: the wrapper of the page it lies on (`wrap`), and its offset in
+    /// bytes there. Every slice starts on a page and the arena is rounded to one, so the pages around `bytes` are the arena's
+    /// (`Arena.slice`): a RoPE table read from a row that is not a page's first (Qwen's `first`, Z-Image's caption block).
+    package func region(_ pointer: UnsafeRawPointer, bytes: Int, name: String) throws -> (buffer: MTLBuffer, offset: Int) {
+        let address = Int(bitPattern: pointer), page = Arena.alignment
+        let base = address / page * page
+        let buffer = try wrap(UnsafeMutableRawPointer(bitPattern: base)!, bytes: address - base + bytes, name: name)
+        return (buffer, address - base)
     }
 
     /// **The plan's answer for a product** of this GEMM's phase: what `WeightProducts` and `linear` read.
@@ -364,10 +393,10 @@ package final class GEMM {
 
     /// **The same on an activation rounded to bf16** (`bf16Activations`, which the caller checked): `A`
     /// rounded by chunks of `rounding.rows` rows into the reserve's tail, `wb` the staged weight.
-    package func linear(a: MTLBuffer, rounding: TensorGEMM.Rounding, bf16 wb: MTLBuffer, c: MTLBuffer, m: Int, k: Int,
-                        n: Int, weightIsTransposed: Bool = false) -> Double {
-        let elapsed = tensor!.linear(a: a, rounding: rounding, w: wb, c: c, m: m, k: k, n: n,
-                                     weightIsTransposed: weightIsTransposed)
+    package func linear(a: MTLBuffer, rounding: TensorGEMM.Rounding, bf16 wb: MTLBuffer, weightOffset: Int = 0, c: MTLBuffer, m: Int,
+                        k: Int, n: Int, weightIsTransposed: Bool = false, rounded: Bool = false) -> Double {
+        let elapsed = tensor!.linear(a: a, rounding: rounding, w: wb, wOffset: weightOffset, c: c, m: m, k: k, n: n,
+                                     weightIsTransposed: weightIsTransposed, operandRounded: rounded)
         let key = "\(m)×\(k)×\(n)\(weightIsTransposed ? "ᵀ" : "")◐"
         record(key, elapsed)
         Self.roundedProducts.withLock { $0 += 1 }
@@ -433,6 +462,7 @@ package final class GEMM {
         // Heights that are not a multiple of 64: the body here, the tail through the tier
         // (`rowQuantum`) — the body's prefixes of `x`, `mid` and `c` are its own rows.
         let (body, tail) = GEMM.rowSplit(m)
+        if tail > 0, queue.stream.isOn { return loraQueued(x: x, down: down, mid: mid, up: up, c: c, body: body, tail: tail, k: k, r: r, n: n) }
         if tail > 0 {
             return lora(x: x, down: down, mid: mid, up: up, c: c, m: body, k: k, r: r, n: n)
                 + padded(first: body, rows: tail)
@@ -440,11 +470,34 @@ package final class GEMM {
         let commands = queue.checkedCommandBuffer()
         encoder(Shape(m: m, k: k, n: r, transposed: true), into: commands, x, down, mid)
         encoder(Shape(m: m, k: r, n: n, transposed: true, accumulates: true), into: commands, mid, up, c)
-        commands.commit()
-        commands.waitUntilCompleted()
-        let elapsed = Attention.verdict(commands, what: "LoRA \(m)×\(k)×\(r)→\(n)")
+        let elapsed = commands.commitSettled(label: "lora GPU", what: "LoRA \(m)×\(k)×\(r)→\(n)")
         let key = "lora \(m)×\(k)×\(r)→\(n)"
         record(key, elapsed)
+        return elapsed
+    }
+
+    /// **The same stack on the stream** (`GPUStream.isOn`): the body and the tier's tail in one command buffer, the tail's rows of `x`
+    /// and `c` copied to the tier and `c`'s back by blits on the GPU — where the waited path copies them on the CPU, which would read
+    /// rows the queued work has not written yet. The same products on the same operands at the same heights: the same bits.
+    private func loraQueued(x: MTLBuffer, down: MTLBuffer, mid: MTLBuffer, up: MTLBuffer, c: MTLBuffer,
+                            body: Int, tail: Int, k: Int, r: Int, n: Int) -> Double {
+        let l = GEMM.submittedRows
+        let (px, pc, pm) = (tiers.a(l * k), tiers.c(l * n), tiers.mid(l * r))
+        let commands = queue.checkedCommandBuffer()
+        encoder(Shape(m: body, k: k, n: r, transposed: true), into: commands, x, down, mid)
+        encoder(Shape(m: body, k: r, n: n, transposed: true, accumulates: true), into: commands, mid, up, c)
+        guard let into = commands.makeBlitCommandEncoder() else { fatalError("Metal refused a blit encoder") }
+        into.copy(from: x, sourceOffset: body * k * 4, to: px, destinationOffset: 0, size: tail * k * 4)
+        into.copy(from: c, sourceOffset: body * n * 4, to: pc, destinationOffset: 0, size: tail * n * 4)
+        into.endEncoding()
+        encoder(Shape(m: l, k: k, n: r, transposed: true), into: commands, px, down, pm)
+        encoder(Shape(m: l, k: r, n: n, transposed: true, accumulates: true), into: commands, pm, up, pc)
+        guard let back = commands.makeBlitCommandEncoder() else { fatalError("Metal refused a blit encoder") }
+        back.copy(from: pc, sourceOffset: 0, to: c, destinationOffset: body * n * 4, size: tail * n * 4)
+        back.endEncoding()
+        let m = body + tail
+        let elapsed = commands.commitSettled(label: "lora GPU", what: "LoRA \(m)×\(k)×\(r)→\(n), queued")
+        record("lora \(m)×\(k)×\(r)→\(n)", elapsed)
         return elapsed
     }
 
@@ -643,6 +696,7 @@ package final class GEMM {
         guard let fresh = device.makeBuffer(bytesNoCopy: c.contents(), length: c.length,
                                             options: .storageModeShared, deallocator: nil) else { return c }
         fresh.label = c.label
+        MetalWraps.track(fresh)
         let key = UInt(bitPattern: c.contents())
         if buffers[key] === c { buffers[key] = fresh }
         return fresh

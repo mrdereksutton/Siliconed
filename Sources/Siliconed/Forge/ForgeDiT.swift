@@ -45,13 +45,16 @@ package enum ForgeDiT {
             var l = ["naming recognized: \(naming)",
                      "dtypes read: " + dtypesSource.sorted { $0.key < $1.key }.map { "\($0.key) ×\($0.value)" }.joined(separator: ", ")]
             if !quantizedFormats.isEmpty {
-                l.append((quantizedFormats.keys.allSatisfy { $0.hasSuffix("Q8_0") || !$0.hasPrefix("GGUF") } ? "8-bit weights read: " : "quantized weights read: ") + quantizedFormats.sorted { $0.key < $1.key }.map { "\($0.key) ×\($0.value)" }
+                // Our own 4-bit map (SQ: 4, 5 and 8 bits by layer) is not a GGUF: its packed tensors are said by their name.
+                let isSQ = quantizedFormats.keys.contains { $0.hasPrefix("Siliconed SQ") }
+                l.append((isSQ ? "SQ weights read: " : quantizedFormats.keys.allSatisfy { $0.hasSuffix("Q8_0") || !$0.hasPrefix("GGUF") } ? "8-bit weights read: " : "quantized weights read: ") + quantizedFormats.sorted { $0.key < $1.key }.map { "\($0.key) ×\($0.value)" }
                     .joined(separator: ", "))
                 if kept8bit > 0 || keptPacked == 0 {
                     l.append("8-bit kept as published (bytes and scales copied, rows moved or transposed only): \(kept8bit) tensors")
                 }
                 if keptPacked > 0 {
-                    l.append("GGUF 4–6-bit kept as published (blocks copied whole, rows moved only): \(keptPacked) tensors")
+                    l.append(isSQ ? "SQ 4–5-bit kept as published (rows with their group bytes and fp32 row scale, copied whole): \(keptPacked) tensors"
+                                  : "GGUF 4–6-bit kept as published (blocks copied whole, rows moved only): \(keptPacked) tensors")
                 }
             }
             if !dequantized.isEmpty {
@@ -391,6 +394,8 @@ package enum ForgeDiT {
                 // A packed type's blocks keep their published rows: the map says `[K, N]`, the bytes
                 // stay `[N][K/b]` (`Artifact.DType.q4_k`).
                 if packed != nil { return .init(values: t.values, scale: [], absMax: measuring ? t.absMax() : 0) }
+                // SQ likewise (`Artifact.DType.sq4`): its rows as the quantizer wrote them, its fp32 scale per row after them.
+                if t.kind.sqBits != nil { return .init(values: t.values, scale: t.scale, absMax: measuring ? t.absMax() : 0) }
                 let values = tr ? t.transposedValues() : t.values
                 // convrot: the rotation mixes a group's inputs, so its largest |w| is only known
                 // dequantized — done on the map's `[K, N]` bytes just transposed, not on a second copy.
@@ -400,7 +405,7 @@ package enum ForgeDiT {
             // ComfyUI's convrot: `q` and its scale as published, the rotation said in the entry
             // (`Artifact.Rotation`); the engine undoes it when it widens (`Widen.dequantizeRotated`).
             t.rotation = q.rotation
-            return (t, packed != nil ? .keptPacked : .kept8bit)
+            return (t, packed != nil || q.kind.sqBits != nil ? .keptPacked : .kept8bit)
         }
 
         // ── Everything else goes through fp32, where every published value fits exactly ──

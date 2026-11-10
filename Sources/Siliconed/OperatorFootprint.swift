@@ -43,8 +43,9 @@ package enum OperatorFootprint {
 
     /// **The process's footprint now** (`phys_footprint`, `Arena.processFootprint`): what a render about
     /// to start finds already held — the app's or the command line's own. Read from this process alone,
-    /// never from the kernel's state of the others.
-    package static func processBase() -> Int { Arena.processFootprint() }
+    /// never from the kernel's state of the others. **Less the text encoder kept** (`KeptEncoder.heldBytes`): a plan charges it
+    /// itself, or gives it back before its first computation.
+    package static func processBase() -> Int { max(0, Arena.processFootprint() - KeptEncoder.heldBytes) }
 
     /// **The frameworks a render runs on, brought up before its base is read** — once per process: the
     /// Metal device and a queue, and MPSGraph's own start (one graph of one addition, run). What they
@@ -54,12 +55,15 @@ package enum OperatorFootprint {
     /// carried it uncharged into every phase after. Brought up first, the base reads it.
     /// The same work a render did anyway, moved before it: no time added.
     /// Under a plan with the ANE, Core ML's too (`NeuralEngine.bringUp`).
+    /// The queue dies with the bring-up, never kept: the Metal driver holds its command-buffer memory
+    /// (tens of MB) while any queue that ever submitted lives, and gives it back at once when the last
+    /// one goes — a queue kept here would leave a released model's share to the idle trim, a second later.
     package static func bringUp() {
         _ = frameworks
         if EngineSettings.effective.plan.usesANE { _ = NeuralEngine.bringUp }
     }
 
-    private static let frameworks: (MTLDevice, MTLCommandQueue)? = {
+    private static let frameworks: MTLDevice? = {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { return nil }
         autoreleasepool {
             let graph = MPSGraph()
@@ -70,6 +74,6 @@ package enum OperatorFootprint {
                               targetTensors: [y], targetOperations: nil)
             }
         }
-        return (device, queue)
+        return device
     }()
 }

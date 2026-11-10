@@ -54,15 +54,20 @@ package enum RenderLoop {
     }
 
     /// **The render's request, as the catalogue sees it**: the family and the version it ran with, its pixels, the
-    /// half-grid evaluations it did (`Render.spectral`), its evaluations as the steps (a sketch or an img2img did fewer),
+    /// half-grid evaluations it did (`Render.spectral`), its evaluations as the steps (an img2img did fewer),
     /// the text encoder left out (the ledger is of the denoising). `nil` for a model that is not one of the five families.
-    package static func request(of render: Engine.Render, variant: Variant) -> CapacityClasses.Request? {
+    ///
+    /// `weightFormat`: the format the installed DiT map holds (`Artifact.weightFormat(header:)`); the classes follow it, not the
+    /// version's name (our 4-bit Light is int8 products). `nil`: the version's own.
+    package static func request(of render: Engine.Render, variant: Variant, weightFormat: CapacityClasses.WeightFormat? = nil)
+        -> CapacityClasses.Request? {
         guard let family = Family(rawValue: render.model) else { return nil }
         return CapacityClasses.Request(family: family, variant: variant, width: render.image.width, height: render.image.height,
                                        fasterRendering: render.spectral > 0,
                                        promptTokens: CapacityClasses.promptTokens(family, renderTokens: render.tokens),
                                        steps: render.evaluations, includesEncoder: false,
-                                       halfSteps: render.spectral > 0 ? render.spectral : nil, loraRank: render.loraRank)
+                                       halfSteps: render.spectral > 0 ? render.spectral : nil, loraRank: render.loraRank,
+                                       ditFormat: weightFormat)
     }
 
     /// **The prediction, class by class**, for the denoising of `request` under `plan`: the assignment the plan gives each class, timed by
@@ -106,7 +111,7 @@ package enum RenderLoop {
         /// The routes the executions took, the one with the most seconds first.
         package var routes: [String]
         package var executions: Int
-        /// Wall seconds of the render's executions; 0 for a class the render did not run.
+        /// Wall seconds of the render's executions (an attention's with the QK-norm and RoPE before it); 0 for a class the render did not run.
         package var measured: Double
         package var predictedRoute: String?
         package var predictedExecutions: Int
@@ -160,6 +165,8 @@ package enum RenderLoop {
 
     private struct Item {
         var routes: [String: (executions: Int, seconds: Double)] = [:]
+        /// The QK-norm and RoPE's seconds before the class's attentions (`ProductLedger.pass`): measured, no route, no execution.
+        var pass = 0.0
         var predicted: [Predicted] = []
     }
 
@@ -177,6 +184,7 @@ package enum RenderLoop {
         for t in tallies {
             let (shape, x) = shape(of: t.work)
             var item = items[shape]?[x] ?? Item()
+            if t.route == ProductLedger.passRoute { item.pass += t.seconds; items[shape, default: [:]][x] = item; continue }
             let kept = item.routes[t.route] ?? (0, 0)
             item.routes[t.route] = (kept.executions + t.executions, kept.seconds + t.seconds)
             items[shape, default: [:]][x] = item
@@ -199,7 +207,9 @@ package enum RenderLoop {
             for cluster in clusters {
                 var routes: [String: (executions: Int, seconds: Double)] = [:]
                 var parts: [Predicted] = []
+                var pass = 0.0
                 for x in cluster {
+                    pass += heights[x]!.pass
                     for (route, v) in heights[x]!.routes {
                         let kept = routes[route] ?? (0, 0)
                         routes[route] = (kept.executions + v.executions, kept.seconds + v.seconds)
@@ -208,7 +218,7 @@ package enum RenderLoop {
                 }
                 // The class is named by the member that weighs most, prediction and measure together.
                 func weight(_ x: Int) -> Double {
-                    heights[x]!.routes.values.reduce(0) { $0 + $1.seconds } + heights[x]!.predicted.reduce(0) { $0 + $1.seconds }
+                    heights[x]!.routes.values.reduce(0) { $0 + $1.seconds } + heights[x]!.pass + heights[x]!.predicted.reduce(0) { $0 + $1.seconds }
                 }
                 let heaviest = cluster.max { (weight($0), $1) < (weight($1), $0) }!
                 let id: String
@@ -221,7 +231,7 @@ package enum RenderLoop {
                 let main = parts.max { ($0.seconds, $1.route) < ($1.seconds, $0.route) }
                 rows.append(Row(id: id, isAttention: shape.weight == nil, routes: ordered.map(\.key),
                                 executions: routes.values.reduce(0) { $0 + $1.executions },
-                                measured: routes.values.reduce(0) { $0 + $1.seconds },
+                                measured: routes.values.reduce(0) { $0 + $1.seconds } + pass,
                                 predictedRoute: main?.route,
                                 predictedExecutions: parts.reduce(0) { $0 + $1.executions },
                                 predicted: parts.isEmpty ? nil : parts.reduce(0) { $0 + $1.seconds }))

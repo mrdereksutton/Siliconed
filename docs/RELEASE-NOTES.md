@@ -2,6 +2,87 @@ English · [Français](RELEASE-NOTES.fr.md)
 
 # Siliconed — release notes
 
+## 0.21
+
+### Faster on large Macs
+
+- **The denoiser runs as one stream of GPU work**, for the five models: a block's work is queued on the GPU without a wait between operations, the Neural Engine's rows beside it, and where the memory budget holds the model's weights they are read in place instead of streamed. The capacity map measures that pairing as a render runs it. Render times on the reference machine: [Numbers](ENGINE.md#numbers).
+- **The Compacts compute in int8 × int8 (W8A8)** on the GPU's tensor units where this Mac's measure finds it faster, the way their publishers compute them: the activation rotated and quantized to int8 per row by the operation that makes it, the weights read in place. Checked against ComfyUI's own recipe on the published integers (`siliconed check <model> dit --variant compact --int8-activations`).
+- **The decoders run in bf16** where the map finds it faster, and the end of each phase waits only for what Metal still holds.
+
+### The app
+
+- **A ✕ on the history's thumbnails**: hover one, click the ✕, and that image leaves the history; ⌘Z brings it back.
+- **The Prompt Lab in a window of its own**: a button in its header detaches the unfolded plate into a window as large as you make it, its text growing with it; closing the window folds the lab back to its line under the image (`silicontrol lab detach`, `lab attach`).
+- **Choose Steps**, a Beta option (Settings › Advanced › Beta), off by default: on, the denoiser's box offers the step count, for a LoRA distilled to fewer steps (Krea 2 at 4); off, every render takes the model's own count again.
+- **The Prompt Lab opens folded while no model is installed**, so that the models to download are what is seen; it unfolds when the first one is ready.
+- **After the update**, a model whose weights changed in 0.21 (the Compacts of Z-Image and Anima, every Light) no longer renders until it takes them: the welcome says which, with the version you had chosen, and offers **Update…**; so does the Models window when another model is ready.
+
+### The Lights, in our own 4 bits
+
+- **The Lights of Z-Image, Qwen-Image-2.1, Anima and Krea 2 are now our own 4-bit (SQ)**, in place of the third-party GGUF Q4_K_M: more faithful to the publisher's model than the Q4_K_M it replaces, at about the Compact's speed and with less memory. One file per family, published on Hugging Face (`gwenn-ha-dev/…-Siliconed-SQ4`). An installed Light takes the new weights at its next installation, which removes the old ones (the image model weighs 5.0 GB for Z-Image, 4.4 GB for Qwen-Image-2.1, 1.7 GB for Anima, 7.6 GB for Krea 2).
+
+### The Compacts of Z-Image and Anima
+
+- **Z-Image's and Anima's Compacts are now int8 convrot**, like Qwen-Image-2.1's: Z-Image's image model from Comfy-Org, Anima's from Bedovyy, in place of unsloth's and vanes430's GGUF Q8_0. Their text encoders do not change, and both are checked against diffusers (`siliconed check`). An installed Compact takes its new image model at its next installation (6.2 GB for Z-Image, 2.6 GB for Anima), which removes the old one.
+
+## 0.20
+
+### The Prompt Lab, under the image
+
+- **The Prompt Lab is a bar under the image** instead of a window of its own. Folded, it is one line: the images that go, the text, ✦ Rewrite, the time the render will take and **Generate**. Unfolded (a click on the text, View › Show Prompt Lab or ⌥⌘L; Esc folds it), it is a glass plate over the image, its edges fading, the image keeping its size; a click on the image folds it. The window opens with it unfolded. Folded, its line starts nothing: a click there only unfolds it.
+- **One text, one set of images**: the Prompt Lab's text is the rack's prompt and its images are the rack's inputs, each with its role. Nothing to carry any more: Carry to the Rack and Use the Rack's Prompt are gone. The subjects the text cites (`@alice`) are translated when the render is queued; the PNG keeps the typed text and what the model read.
+- **Generate where the idea is written**: at the end of the folded line, and at the foot of the unfolded plate with what the render costs (size, memory, renders, time). What stops it is said there, with the largest size this Mac renders when the memory is short, and so are the images the render will not read.
+- **Roles**: under Qwen-Image-2.1 an image takes the next place (the image to edit, then the references); under Z-Image, Anima, Krea 2 and MOSS-Image it comes in without a role, with Describe and Start From This Image. A change of model never gives a role nor turns one into another: a role the model lacks stays, without effect, and works again back on the model that has it. A starting image's strength is set on its tile only.
+- **What is greyed does not go**: under a model that reads no image, a subject's `@name` is greyed in the text and left out of what the model reads (any other `@` stays text: Anima's artists); under any model, so is a mention of an image the render does not carry (`image 3` with two images). The typed text keeps them, and the pointer on them says why.
+- **Describe and Rewrite** scroll as they write and keep the end of what they add in sight; the hand can scroll back at any time.
+
+### The rack and the history
+
+- **The rack reads the Prompt Lab**: two small read-only ports on top, Text and Images (or Starting Image), each above the encoder it feeds, its wire dropping straight; a click on either unfolds the Prompt Lab. Its foot keeps the queue, this Mac's measure and what went wrong.
+- **The chain in small**: scrolled down to the denoiser's settings, a band at the top of the rack shows the chain, the stage at work lit, each stage's time under it; a click brings the boxes back.
+- **Steps** show in the denoiser's box only off the model's recipe (a PNG's settings reused, `silicontrol add --steps`), with a ✕ back to the 8 it is distilled for.
+- **LoRA cards**: one Add (this model's LoRAs, then Import…), and a card per LoRA: a box to turn it off without losing it, its strength as a slider or a typed figure, its trigger words as a button that puts them at the head of the prompt; right-click to replace it, reset it to 0.8 or remove it.
+- **The history is a column on the right**: Send to the Prompt Lab and Edit with Qwen-Image-2.1 on a render's menu. An image dropped on the canvas goes to the Prompt Lab, and Reuse These Settings is on its tile's menu: a PNG Siliconed wrote no longer changes the rack by itself.
+- **Render Again (Same Seed) keeps the image's size**: an edit made at a typed size came back at its first image's proportions.
+
+### Series, by bracketing
+
+- **A yellow ± at the right of whatever can vary**: the seed (on the Seed line: a batch of three is three seeds, s, s+1, s+2), a LoRA's strength, the starting image's strength, the solver, the Detail, and the text. Empty, it offers; full, it varies. Its bubble (or Bracket… on a right-click) holds the values as chips, a cross on each, a + and a step and a count that redo them; three values around the current one to begin with (a LoRA ±0.2, a start ±15 points, three seeds). **Compare LoRAs…** on the LoRA stack puts a LoRA per cell, beside the image without.
+- **Vary This Word…** on a word or a selection: the group is drawn as a chip in the text (« teal · coral red · mustard yellow »), braces typed by hand become one; a click on it opens its bubble.
+- **Generate renders the whole series as finished images**, at their number of steps, each into the history as it ends; the canvas shows the grid while it renders and until an image is chosen, and **Add Sheet to History** makes one image of it. Two axes at most, columns and rows: a line per axis beside Generate says what varies, its ✕ brings that setting back to one value, ⇄ exchanges columns and rows, and the button counts what it will render (« Generate 9 Images »).
+- **Sketches, Finish This Image and the exploration panel are gone**: a series is only finished images. Each cell is the image a render alone would give, checked to the bit (a 3 × 3 of words and seeds, and a batch of three seeds, against the same renders made one by one).
+
+### Your writer's instructions
+
+- **Settings › Prompt Lab shows the ten instructions** the writer follows (Rewrite and Describe, for each of the five models), whole, in English, as they are sent. Edit one and yours is sent instead of ours, for that model and that gesture only; Restore brings ours back; one left untouched follows ours from one version to the next. The Prompt Lab's bar says « Your Instruction » beside the model's name, and a click there opens it.
+
+### The Icon chart, and Settings
+
+- **The window takes the icon's colours**: at night an indigo with a mint glow for what runs, by day a pearl with an indigo ink; the wires in peach, rose and sky at equal lightness, a series in yellow, a refusal in red. The system's blue is gone from the window: segments, boxes and links in the chart's indigo, the caret in peach and the selection in a faint indigo in the prompt and in the writer's instructions.
+- **Settings redrawn**: icon tabs, General · Macs · Prompt Lab · Advanced, one row per setting with its name, one line and the whole sentence on hover. Macs holds this Mac — its chip, its memory, its measure in a few words — and the Macs it borrows; General says where the library is, what it weighs and what is left on its disk.
+
+### This Mac's measure
+
+- **Its sheet asks for a Mac at rest** beside Start, when you open it yourself; the first render still starts it by itself, as the command line does. A finished measure applies even when the settings were read before it.
+- **It says its own length better**: the thin products' tiles are chosen on two rounds instead of three (the same plans on the maps of three Macs), and the time it announces now counts its tile trials and its checks of a busy Mac. Maps took 1.7 to 2.1 times what they announced; a Mac slow enough to pass the five-minute ceiling now measures at a lighter tier instead.
+
+### Libraries made of links
+
+- **A library whose store, maps or components are symbolic links** is weighed through them (a linked folder weighed nothing), moved with the files they reach (a move carried none of them, then removed the links from the old place) and copied by the working copy. Removing anything still removes the link, never its target.
+
+### silicontrol
+
+- **`silicontrol lab`**: what the Prompt Lab holds, folded or unfolded; open and close it, add an image, give it a role, remove it; **`lab rewrite`** and **`lab describe N`** press its buttons, the text written in the field with its marks. The rack's LoRAs say whether they are on.
+- **`silicontrol settings [general|macs|lab|advanced]`** opens Settings on a tab, and `settings lab rewrite --for ID` on one instruction; **`silicontrol instructions`** reads, sets and restores them.
+- **`silicontrol grid --no-sheet`** renders a grid as Generate renders a series; `grid` hands its axes to the window's series. `grid --sketch` and `finish` are gone with the sketches.
+
+### Checks
+
+- **Anima's DiT and its 8-step trajectory are checked at 1536²** against diffusers, in full precision and on the half-precision paths (`siliconed check anima`); their goldens are written on request (`anima.py --size 1536`).
+
+- **The same image as 0.19** for the same settings and seed, checked to the bit on a Z-Image render, a Z-Image start from an image and a Qwen-Image-2.1 edit with a subject and two images.
+
 ## 0.19
 
 ### Start from an image (img2img)
@@ -341,7 +422,7 @@ English · [Français](RELEASE-NOTES.fr.md)
   finest details move. Every figure: [The Neural Engine](ENGINE.md#the-neural-engine).
 - **Eight bits against eight bits**: Z-Image Compact at 1024², with Faster Rendering and the Neural
   Engine (both by default), renders in 81.1–83.2 s; Draw Things' default 8-bit `q8p`, 135.0–144.2 s
-  on the same Mac ([Next to Draw Things](ENGINE.md#next-to-draw-things)).
+  on the same Mac.
 - **This Mac is measured again** before the first render after the update, about a minute, as after
   every version: the measure now includes the Neural Engine, on each model's own products.
 - **The remote control**: `silicontrol add --ane` or `--no-ane`, like a click on the tag;

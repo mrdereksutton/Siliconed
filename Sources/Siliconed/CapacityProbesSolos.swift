@@ -9,11 +9,12 @@ import MetalPerformanceShadersGraph
 extension Diagnostic.CapacityProbes.Context {
     // MARK: Solos
 
-    enum Probe: String, CaseIterable { case gpu_fp32, amx_fp32, ane_fp16, ane_int8, gpu_bf16, gpu_bf16act, gpu_int8, gpu_q8, gpu_int8act, gpu_q8act, gpu_q4kact
+    enum Probe: String, CaseIterable { case gpu_fp32, amx_fp32, ane_fp16, ane_int8, gpu_bf16, gpu_bf16act, gpu_int8, gpu_q8, gpu_int8act, gpu_int8x8, gpu_q8act, gpu_q4kact
         var kernel: Kernel {
             switch self {
             case .gpu_q4kact: return Kernel(.gpu, .q4kact)
             case .gpu_int8act: return Kernel(.gpu, .int8act)
+            case .gpu_int8x8: return Kernel(.gpu, .int8x8)
             case .gpu_q8act: return Kernel(.gpu, .q8act)
             case .gpu_fp32: return Kernel(.gpu, .fp32)
             case .amx_fp32: return Kernel(.amx, .fp32)
@@ -98,16 +99,17 @@ extension Diagnostic.CapacityProbes.Context {
         return chosen
     }
 
-    /// **The tiles of a `matmul2d` kernel** (`MatmulTile`): every candidate, judged, then timed in three alternated rounds — on the largest solo
-    /// product for the wide tile (a render's height; the middle one, 1.5 ms on an M5 Pro, ran 30 % apart between two maps), over the thin shapes
-    /// (`Sizes.thin`) for the thin one —, each shape on its fast side (the least of the rounds, as the map reads every disturbed figure), the
-    /// shapes summed, and `MatmulTile.choose`. The chosen tiles run the kernel's lines and its products, and go in the report with every
+    /// **The tiles of a `matmul2d` kernel** (`MatmulTile`): every candidate, judged, then timed in alternated rounds — three over the wide
+    /// products for the wide tile (`Sizes.wide`: the largest solo, a long `k`, a long `n`, at a render's height; the middle solo, 1.5 ms on
+    /// an M5 Pro, ran 30 % apart between two maps), two over the thin
+    /// shapes (`Sizes.thin`) for the thin one (`MatmulTile.rounds(thin:)`) —, each shape on its fast side (the least of the rounds, as the map
+    /// reads every disturbed figure), the shapes summed, and `MatmulTile.choose`. The chosen tiles run the kernel's lines and its products, and go in the report with every
     /// candidate's solos.
     func chooseTiles(_ probe: Probe, _ m: inout Fit.Measurements) {
         let kernel = probe.kernel
         guard MatmulTile.kernels.contains(kernel), !skipped.contains(kernel), !sizes.solo.isEmpty,
               let tensor = (probe == .gpu_int8 ? both : alone).tensor else { return }
-        let candidates = MatmulTile.candidates(for: kernel), standard = MatmulTile.standard(for: kernel)
+        let standard = MatmulTile.standard(for: kernel)
         // Each candidate's seconds per shape, round by round (`every[tile][shape]`), the candidates alternated within a round.
         func run(_ tiles: [MatmulTile], _ shapes: [Sizes.Shape], thin: Bool, rounds: Int,
                  into every: inout [MatmulTile: [Int: [Double]]], refused: inout Set<MatmulTile>) {
@@ -136,9 +138,10 @@ extension Diagnostic.CapacityProbes.Context {
             return (seconds.filter { $0.value > 0 }, rounds)
         }
         func decide(_ shapes: [Sizes.Shape], thin: Bool) -> MatmulTile {
+            let candidates = MatmulTile.candidates(for: kernel, thin: thin)
             let margin = thin ? MatmulTile.thinMargin : MatmulTile.margin
             var every: [MatmulTile: [Int: [Double]]] = [:], refused: Set<MatmulTile> = []
-            run(candidates, shapes, thin: thin, rounds: MatmulTile.rounds, into: &every, refused: &refused)
+            run(candidates, shapes, thin: thin, rounds: MatmulTile.rounds(thin: thin), into: &every, refused: &refused)
             var measured = summed(every, refused: refused, shapes: shapes.count)
             // A candidate whose rounds fall on both sides of the margin is measured again beside the fastest, alternated: the answer is
             // the rounds', not one round's. All the doubtful ones in the same rounds, so that each round of the fastest pairs with each.
@@ -155,7 +158,7 @@ extension Diagnostic.CapacityProbes.Context {
             tensor.tiles.use(chosen, for: kernel, thin: thin)
             return chosen
         }
-        let wide = decide([sizes.solo[sizes.solo.count - 1]], thin: false)
+        let wide = decide(sizes.tileShapes(kernel).wide, thin: false)
         m.tiles = (m.tiles ?? [:]).merging([kernel.description: wide.description]) { $1 }
         let thinShapes = sizes.thin.filter { CapacityModel.isThin(rows: $0.m, k: $0.k, n: $0.n) }
         if !thinShapes.isEmpty {
@@ -171,7 +174,7 @@ extension Diagnostic.CapacityProbes.Context {
     func thinSolos(_ m: inout Fit.Measurements) {
         guard !sizes.thin.isEmpty else { return }
         var kept: [Fit.Measurements.Solo] = []
-        for probe in [Probe.gpu_fp32, .amx_fp32, .ane_fp16, .gpu_bf16, .gpu_bf16act, .gpu_int8, .gpu_q8, .gpu_int8act, .gpu_q8act] {
+        for probe in [Probe.gpu_fp32, .amx_fp32, .ane_fp16, .gpu_bf16, .gpu_bf16act, .gpu_int8, .gpu_q8, .gpu_int8act, .gpu_int8x8, .gpu_q8act] {
             for (rows, k, n) in sizes.thin.map({ ($0.m, $0.k, $0.n) }) {
                 if probe == .ane_fp16, rows < NeuralEngine.rowUnit { continue }
                 guard let s = solo(probe, m: rows, k: k, n: n) else { continue }
@@ -220,14 +223,16 @@ extension Diagnostic.CapacityProbes.Context {
             restoreB()
             run = { _ = self.alone.linear(a: self.aloneB.a, bf16: self.bf16, c: self.aloneB.c, m: m, k: k, n: n, weightIsTransposed: true); return true }
         case .gpu_bf16act:
-            guard alone.bf16Activations, let plan = WeightProducts.roundingPlan(k: k, n: n, capacity: k * n) else { return nil }
+            // The weight read in place, as a render reads it from the map (`WeightProducts`, `inPlace`): the whole reserve to the rounded
+            // operand, so that a render's height is one chunk, as in a render. Staged in the reserve's head, the weight left it `n` rows: the
+            // probe ran 4 096 rows as 3 072 + 1 024, two passes and two products — a tile chosen there lost 25 % on a render's
+            // long `k` (6/11/2026: 128 × 64 against 128 × 128 in Z order, 17.9 against 14.1 ms on 4 096 × 12 288 × 3 072).
+            guard alone.bf16Activations, let plan = WeightProducts.roundingPlan(k: k, n: n, capacity: k * n, weightInReserve: false)
+            else { return nil }
             truthKind = .rounded
-            staged = { [self] in
-                Widen.copyBfloat16(source: operands.bf16.base, destination: operands.b.base, count: k * n)
-                dirty = max(dirty, k * n)
-            }
+            staged = { [self] in dirty = max(dirty, (min(m, plan.rows) * k + 1) / 2) }
             run = {
-                _ = self.alone.linear(a: self.aloneB.a, rounding: (self.aloneB.b, plan.offset, plan.rows), bf16: self.aloneB.b,
+                _ = self.alone.linear(a: self.aloneB.a, rounding: (self.aloneB.b, plan.offset, plan.rows), bf16: self.bf16,
                                       c: self.aloneB.c, m: m, k: k, n: n, weightIsTransposed: true)
                 return true
             }
@@ -252,6 +257,17 @@ extension Diagnostic.CapacityProbes.Context {
                 dirty = max(dirty, k * n)
             }
             run = { WeightProducts.int8Product(gemm: gemm, plan: plan, reserve: buffers.b, a: buffers.a, c: buffers.c, m: m, k: k, n: n).status == 0 }
+        case .gpu_int8x8:
+            // W8A8 (`QuantizedKernels`): the integers staged as an int8 product's, the activation rotated and quantized by the route
+            // itself, judged against the exact product of its own codes (`Diagnostic.exactQuantizedRows`) at the fp32 bar — the codes are
+            // the CPU's to the bit, the sums exact in int32, one rounding in the epilogue.
+            guard alone.int8Activations, alone.tensor?.quantized?.simdgroups(k: k) != nil, (k * n) % 2 == 0, k % Diagnostic.int8Group == 0,
+                  let plan = WeightProducts.int8Plan(k: k, n: n, capacity: k * n, perColumn: false, group: Diagnostic.int8Group,
+                                                     amxColumns: 0, quantized: true) else { return nil }
+            truthKind = .quantizedInt8
+            staged = { [self] in stageInt8(plan, k: k, n: n) }
+            run = { WeightProducts.int8Product(gemm: self.alone, plan: plan, reserve: self.aloneB.b, a: self.aloneB.a, c: self.aloneB.c,
+                                               m: m, k: k, n: n).status == 0 }
         case .gpu_q4kact:
             // Q4_K's blocks as a map stores them, in the reserve's head; the route's own function on them (`TensorGEMM.linear(a:kquant:…)`).
             guard alone.bf16Activations, alone.tensor?.readsKQuants == true,
@@ -450,6 +466,21 @@ extension Diagnostic.CapacityProbes.Context {
            let timed = try? TiledAttention(device: bench.device, queue: bench.queue, heads: h, sequence: short, headDim: d, precision: .fp16, tile: forms[tiles16] ?? nil) {
             _ = guarded("gpu wake") { () -> Bool? in wake(&measurements, busy: busy, timed: timed, sequence: short, buffers: buffers); return true }
         }
+        // The QK-norm and RoPE on either side (`CapacityProbesWake.swift`), last: it rotates Q and K in place. The GPU's calls each after
+        // the tier's longest attention, as a render's follow its products: the half-precision kernel where it runs, the graph otherwise.
+        var busy: (() -> Void)?
+        if let long = sizes.attention.max() {
+            if !skipped.contains(tiles16), !measurements.wrong.contains(tiles16.description),
+               let t = try? TiledAttention(device: bench.device, queue: bench.queue, heads: h, sequence: long, headDim: d, precision: .fp16, tile: forms[tiles16] ?? nil) {
+                busy = { _ = t.run(q: buffers.q, k: buffers.k, v: buffers.v, into: buffers.out) }
+            } else {
+                let graph = Attention(device: bench.device, queue: bench.queue, heads: h, sequence: long, headDim: d)
+                busy = { _ = graph.run(q: buffers.q, k: buffers.k, v: buffers.v, into: buffers.out) }
+            }
+        }
+        normRope(&measurements, sequences: sizes.attention, q: pages.q, k: pages.k, buffers: (buffers.q, buffers.k), busy: busy)
+        // The decoders' convolution in both formats (`CapacityProbesConvolution.swift`).
+        convolution(&measurements)
     }
 
     /// **The attention as a set of two engines**: the system graph on the GPU's heads beside the CPU's, at the heads the two solo lines

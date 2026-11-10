@@ -101,7 +101,17 @@ private struct AppCommands: Commands {
             Button("Copy as Terminal Command") { app.copyCommand() }
         }
         CommandGroup(after: .toolbar) {
-            // On the exploration's grid, the cells' size; otherwise the image's zoom.
+            // The bar under the image shows or hides, like a sidebar: a part of the window, not a window (4/11).
+            // By its character, never its key code: the same letter on an AZERTY keyboard. Free in the menus.
+            Button(LabModel.shared.unfolded ? "Hide Prompt Lab" : "Show Prompt Lab") {
+                if app.sidebarTab == .generate && !LabModel.shared.unfolded {
+                    LabModel.shared.detached = true
+                }
+                LabModel.shared.toggle()
+            }
+                .keyboardShortcut("l", modifiers: [.command, .option])
+            Divider()
+            // On a series' grid, the cells' size; otherwise the image's zoom.
             Button("Zoom In") {
                 if app.showsExploration { app.exploreCellSide = AppState.clampedCellSide(app.exploreCellSide * 1.25) }
                 else { app.zoom = min(app.zoom * 1.5, 8) }
@@ -120,16 +130,20 @@ private struct AppCommands: Commands {
             Divider()
         }
         CommandMenu("Render") {
-            // ⌘↩ is also « Explore » in the exploration's panel and « Rewrite » in the Lab: while one of
-            // them is the key window the menu item steps aside, so that the key reaches that window's button.
-            Button("Generate") { app.render() }
+            // ⌘↩ is also a sheet's or a panel's own button: while another window is key the menu item steps
+            // aside, so that the key reaches that window's button.
+            // Something stops the render: ⌘↩ unfolds the Prompt Lab, where the reason is said, instead of doing nothing.
+            Button("Generate") {
+                if app.canRender {
+                    app.render()
+                } else if app.sidebarTab != .generate {
+                    LabModel.shared.unfold()
+                }
+            }
                 .keyboardShortcut(.return)
-                // Fork: on the Explore tab, ⌘↩ is the tab's « Explore ».
-                .disabled(!window.carrier.mainIsKey || app.sidebarTab == .explore)
+                .disabled(!window.carrier.mainIsKey)
             Button("Render Again (Same Seed)") { app.selectedEntry.map(app.redo) }
                 .keyboardShortcut("r")
-            Button("Exploration") { window.showExploration() }
-                .keyboardShortcut("g", modifiers: [.command, .option])
             Divider()
             Button("Stop Render") { app.cancel() }
                 .keyboardShortcut(".")
@@ -146,7 +160,7 @@ private struct AppCommands: Commands {
                     }
                 }
                 if window.otherMacs.pairings == nil {
-                    Button("Other Macs…") { SettingsWindow.shared.show(window.local) }
+                    Button("Other Macs…") { SettingsWindow.shared.show(window.local, pane: .macs) }
                 }
             }
         }
@@ -184,9 +198,6 @@ private struct AppCommands: Commands {
             Button("Show Siliconed") { window.show() }
             Button("Statistics") { window.toggleStatistics() }
                 .keyboardShortcut("i", modifiers: [.command, .option])
-            // By its character, never its key code: the same letter on an AZERTY keyboard. Free in the menus.
-            Button("Prompt Lab") { LabWindow.shared.show() }
-                .keyboardShortcut("l", modifiers: [.command, .option])
         }
     }
 }
@@ -270,8 +281,6 @@ final class MainWindow: NSObject, NSWindowDelegate {
     static let shared = MainWindow()
 
     private var window: NSWindow?
-    /// The exploration's panel (`Exploration.swift`), kept once opened.
-    var explorationPanel: NSPanel?
     /// **The state shown**: this Mac's, or another Mac's mirror (`compute(on:)`) — every window and
     /// menu reads it here, so that the switch moves them all.
     var app: AppState { carrier.mirror ?? local }
@@ -322,8 +331,10 @@ final class MainWindow: NSObject, NSWindowDelegate {
         f.title = String(localized: "Siliconed")
         f.subtitle = Self.instanceName
         f.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-        f.toolbarStyle = .unified
-        f.titlebarSeparatorStyle = .automatic
+        f.titlebarAppearsTransparent = true
+        f.titleVisibility = .hidden
+        f.titlebarSeparatorStyle = .none
+        f.backgroundColor = Palette.canvasInk
         f.setContentSize(NSSize(width: 1480, height: 940))
         f.isReleasedWhenClosed = false
         f.delegate = self
@@ -340,21 +351,24 @@ final class MainWindow: NSObject, NSWindowDelegate {
         // (`Welcome`, MainView.swift) — no sheet thrown at the user before they have seen the window.
     }
 
+    func refreshChrome() {
+        window?.backgroundColor = Palette.canvasInk
+        statistics?.backgroundColor = Palette.columnInk
+    }
+
     /// Two instances on one Mac (`SILICONED_ROOT`, the remote Mac's test): each window says which it is.
     static var instanceName: String {
         ProcessInfo.processInfo.environment["SILICONED_ROOT"].map { _ in shared.otherMacs.name } ?? ""
     }
 
     /// One host for the window's life: the switch changes the state it shows (`Shown`), never the
-    /// host — a new `contentViewController` rebuilt SwiftUI's toolbar half-bridged (short, its items
-    /// on the left, seen on macOS 27, 28/10/2026).
+    /// host — custom Studio Header replaces stock macOS `NSToolbar` chrome.
     private func makeRoot() -> NSHostingController<Shown> {
         let host = NSHostingController(rootView: Shown(carrier: carrier, local: local) { [weak self] in
             self?.toggleStatistics()
         })
         host.sizingOptions = []
-        // SwiftUI's toolbar (`.toolbar`) becomes the window's.
-        host.sceneBridgingOptions = [.toolbars]
+        host.sceneBridgingOptions = []
         return host
     }
 
@@ -382,7 +396,6 @@ final class MainWindow: NSObject, NSWindowDelegate {
             carrier.showing = nil
         }
         statistics?.close(); statistics = nil
-        explorationPanel?.close(); explorationPanel = nil
         guard let window else { return }
         window.subtitle = mac.map { String(localized: "Computing on “\($0.name)”") } ?? Self.instanceName
         app.undoManager = window.undoManager
@@ -537,7 +550,7 @@ final class MainWindow: NSObject, NSWindowDelegate {
     /// **The keys of the strip**, as in Photos and the Finder — only when nothing is being typed (the
     /// prompt, a seed, a size; Esc leaves the field) and no sheet is open: ← → walk along it (⇧ marks the run), Home and
     /// End go to its ends, Space shows the image full screen, ⌫ removes from the history (⌘Z
-    /// undoes), ⌘A marks every image, Esc leaves only the one shown.
+    /// undoes), ⌘A marks every image, Esc leaves only the one shown — or, with nothing to leave, folds the Prompt Lab.
     private var keyMonitor: Any?
 
     /// The modifiers that make a shortcut: Caps Lock, the numeric pad and the function flag are states
@@ -550,10 +563,14 @@ final class MainWindow: NSObject, NSWindowDelegate {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, let w = window, event.window === w, w.attachedSheet == nil, !app.fullScreen else { return event }
-            // Esc leaves the field being typed in: the keys go back to the strip.
+            // Esc leaves the field being typed in: the keys go back to the strip. The Prompt Lab's field folds its bar
+            // with it, the text kept (4/11) — its list of subjects, shown, is closed first, by the field.
             if w.firstResponder is NSText {
                 guard event.keyCode == 53, Self.chord(event).isEmpty else { return event }
+                let field = w.firstResponder as? PromptTextView
+                if field?.listShown?() == true { return event }
                 w.makeFirstResponder(nil)
+                if field != nil, LabModel.shared.unfolded { LabModel.shared.fold() }
                 return nil
             }
             if app.cropping != nil { return cropKey(event) ? nil : event }
@@ -609,8 +626,10 @@ final class MainWindow: NSObject, NSWindowDelegate {
             app.delete(app.targets)
         case 53 where mods.isEmpty:                                                     // Esc
             if app.showsOriginal { app.comparesOriginal = false; return true }
-            guard app.marked.count > 1 else { return false }
-            app.unmark()
+            if app.marked.count > 1 { app.unmark(); return true }
+            // Nothing else to leave: the bar, unfolded over the image, folds — not the detached one, which is not over it.
+            guard LabModel.shared.unfolded, !LabModel.shared.detached else { return false }
+            LabModel.shared.fold()
         // ⌘A by its character, not its key code: code 0 is A on a QWERTY keyboard but Q on an AZERTY
         // one — read as a position, it took ⌘Q from the menu.
         case _ where mods == .command && event.charactersIgnoringModifiers?.lowercased() == "a": app.markAll()
@@ -774,7 +793,7 @@ enum DockTile {
             NSBezierPath(roundedRect: track, xRadius: radius, yRadius: radius).fill()
             let inner = track.insetBy(dx: 2, dy: 2)
             let done = NSRect(x: inner.minX, y: inner.minY, width: max(inner.height, inner.width * min(1, max(0, fraction))), height: inner.height)
-            NSColor.controlAccentColor.setFill()
+            Palette.liveInk.setFill()
             NSBezierPath(roundedRect: done, xRadius: done.height / 2, yRadius: done.height / 2).fill()
         }
     }

@@ -1,52 +1,57 @@
-// **The window's left column: the rack, and under it what the click costs**.
-//
-//     the rack     the chain top to bottom, each module with its settings (`Rack.swift`)
-//     ─────────
-//     the cost before the click (memory and time), « Generate », the queue, what went wrong
-//
-// No form beside the rack: a setting lives in the box of the stage that reads it. No mask, no setting
-// between two steps: what is set is taken whole at the click (`Job`), and changing it afterwards
-// prepares the next render.
-//
-// **« Explore » stands beside « Generate »** (`Exploration.swift`): the same intention — make images
-// from this chain —, many small ones instead of one; not a setting, so not in the rack's header with
-// « Models… ». The cost line above counts only what « Generate » makes.
-// The queue scrolls past a few rows, so that the footer never pushes the rack out of the column.
-//
-// Fork: the column now holds the Explore form; on the Generate tab it is folded away — the composer
-// at the foot of the canvas has the prompt and every setting (`Composer`) — and the footer became a
-// card over the composer (`ActivityCard`).
+// **The window's left column: the rack, and under it what the chain is doing** — plus the Studio
+// composer's reference strip and floating activity card when the rack is folded away.
 
 import AppKit
+import ImageIO
 import Siliconed
 import SwiftUI
+import UniformTypeIdentifiers
 
-/// Fork: the window's two modes, switched in the toolbar (`MainView`): Generate (the composer at the
-/// foot of the canvas) and Explore (its form in the left column).
+/// The window's primary workspaces, switched in `StudioHeaderBar`:
+/// `.generate` (Studio canvas + bottom `Composer`) and `.explore` (Signal-Chain Rack + Series bracketing).
 enum SidebarTab: Hashable { case generate, explore }
 
 struct Sidebar: View {
     @Bindable var app: AppState
+    @State private var chainAway = false
 
     var body: some View {
+        let _ = StudioHub.shared.theme
         VStack(spacing: 0) {
-            if app.sidebarTab == .explore {
-                // Fork: Explore is a mode of the window, no longer a floating panel (`MainWindow.showExploration`).
-                Text("A grid of quick 512 px sketches that vary one or two settings: seeds, steps, a LoRA’s strength, models or {a|b} choices in the prompt. Double-click the one you like to finish it.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    // No `fixedSize(vertical:)` here: held at its ideal height, the text made the column
-                    // taller than the window and pushed the panel's top out of sight.
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 12)
-                ExplorationPanel(app: app)
-            } else {
-                // Fork: on the Generate tab the column is folded away by default; shown, it holds what
-                // the composer's pills open — an edit's images, the LoRA stack, the settings (`SettingsColumn`).
-                SettingsColumn(app: app)
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    RackView(app: app, chainAway: $chainAway)
+                }
+                .scrollIndicators(.automatic)
+                // Once the chain's boxes have scrolled away (setting the DiT, its LoRAs), the chain stays in sight in small,
+                // lit as they are; a click scrolls back to them (`RackMiniChain.swift`).
+                .overlay(alignment: .top) {
+                    if chainAway {
+                        Button { withAnimation(Motion.pick(.easeOut(duration: 0.3))) { proxy.scrollTo(RackView.top, anchor: .top) } } label: {
+                            MiniChain(app: app)
+                                .padding(.vertical, 8)
+                                .frame(maxWidth: .infinity)
+                                .background(Palette.column)
+                                .overlay(alignment: .bottom) { Rectangle().fill(Palette.hairline).frame(height: 1) }
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("The chain, while the rack scrolls: a click brings its boxes back")
+                        .transition(.opacity)
+                    }
+                }
+                .animation(Motion.pick(.easeOut(duration: 0.2)), value: chainAway)
+                // `silicontrol rack top|dit`: the scroll the hand would make.
+                .onChange(of: app.rackScroll?.count) {
+                    guard let place = app.rackScroll?.place else { return }
+                    withAnimation(Motion.pick(.easeOut(duration: 0.3))) {
+                        proxy.scrollTo(place == .top ? RackView.top : RackView.dit, anchor: .top)
+                    }
+                }
             }
+            Footer(app: app)
         }
+        .background(Palette.column)
         // A `.safetensors` or a `.gguf` dropped on the column is imported (model or LoRA).
         .dropDestination(for: URL.self) { urls, _ in
             let s = urls.filter(AppState.importable)
@@ -58,12 +63,85 @@ struct Sidebar: View {
 }
 
 extension AppState {
-    /// Fork: the activity card only when it has something to say — renders waiting, a problem, an
-    /// installation, a copy, a line from the journal or the settings. The running render alone is the
-    /// canvas's (its progress under the coming image).
+    /// The floating Studio activity card shows only when it has something to say while the Rack is closed.
     var activityShows: Bool {
-        !file.isEmpty || (othersQueued > 0 && mirror != nil) || copying != nil || forgeInProgress != nil
+        if case .running = diagnostic { return true }
+        return !file.isEmpty || (othersQueued > 0 && mirror != nil) || copying != nil || forgeInProgress != nil
             || problem != nil || journalLine != nil || !settingsLines.isEmpty
+    }
+
+    // MARK: Studio Composer Input Helpers (bridged onto v0.21 `AppState.inputs`)
+
+    func chooseReferences() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = true
+        panel.prompt = String(localized: "Add")
+        guard panel.runModal() == .OK else { return }
+        addReferences(panel.urls)
+    }
+
+    func addReferences(_ urls: [URL]) {
+        for url in urls {
+            guard canAddReference, nextReferenceRefusal() == nil else { break }
+            guard let image = read(url) else { continue }
+            let role: LabInputs.Role = editInputs.isEmpty ? .edited : .reference
+            addInput(image, role: role)
+        }
+    }
+
+    func addReference(png data: Data) {
+        guard canAddReference, nextReferenceRefusal() == nil,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let cg = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
+        let thumb = FinishedImage.reduce(cg, side: 240) ?? cg
+        let image = ReferenceImage(
+            source: .bytes(data),
+            vignette: NSImage(cgImage: thumb, size: .zero),
+            name: String(localized: "pasted image"),
+            width: cg.width,
+            height: cg.height
+        )
+        let role: LabInputs.Role = editInputs.isEmpty ? .edited : .reference
+        addInput(image, bytes: data, role: role)
+    }
+
+    func removeReference(_ id: ReferenceImage.ID) {
+        guard let i = inputIndex(shown: id) else { return }
+        let wasEdited = inputs[i].role == .edited
+        removeInput(inputs[i].id)
+        if wasEdited, let nextRef = inputs.firstIndex(where: { $0.role == .reference }) {
+            inputs[nextRef].role = .edited
+        }
+    }
+
+    func moveReference(_ id: ReferenceImage.ID, to destination: Int) {
+        var current = editInputs.map(\.shown)
+        guard let from = current.firstIndex(where: { $0.id == id }) else { return }
+        let to = min(max(0, destination), current.count - 1)
+        guard from != to else { return }
+        let moved = current.remove(at: from)
+        current.insert(moved, at: to)
+        setEditImages(current)
+    }
+
+    func moveReference(_ id: ReferenceImage.ID, by delta: Int) {
+        let current = editInputs.map(\.shown)
+        guard let from = current.firstIndex(where: { $0.id == id }) else { return }
+        moveReference(id, to: from + delta)
+    }
+
+    func chooseStartReplacement() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.prompt = String(localized: "Choose")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        replaceStart(with: url)
+    }
+
+    func replaceStart(with url: URL) {
+        guard let image = startImage(file: url) else { return }
+        carryStart(image)
     }
 }
 
@@ -71,8 +149,6 @@ extension AppState {
 struct CustomSize: View {
     let app: AppState
     var title: LocalizedStringKey = "Size"
-    /// Fork: what closes the list it sits in, once the size is taken (the composer's panel); a popover
-    /// closes itself.
     var done: (() -> Void)? = nil
     @State private var text = ""
     @State private var refusal: Problem?
@@ -92,12 +168,12 @@ struct CustomSize: View {
                     .onSubmit(apply)
                 Button("Use", action: apply)
                     .keyboardShortcut(.defaultAction)
+                    .tint(Palette.control)
             }
             if let refusal {
                 Text(refusal.title).font(.caption).foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                // The chosen model's rules: never a step it would refuse (Qwen-Image-2.1 32, Anima 2048 px).
                 Text("Width × height: each side from 512 to \(String(app.formatMaximumSide)) and a multiple of \(String(app.formatMultiple)).")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -115,9 +191,8 @@ struct CustomSize: View {
     }
 }
 
-/// **A reference's thumbnail**: its number (the one the prompt says), the image, and on hover a
-/// button to remove it. Dragged onto another thumbnail, it takes that one's place; its menu moves,
-/// replaces or removes it.
+/// **A reference's thumbnail** in the Studio Composer: its number (the one the prompt says), the image,
+/// and on hover a button to crop or remove it. Cited `@subjects` appear alongside edit images with an `@` badge.
 struct ReferenceThumbnail: View {
     static let side: CGFloat = 60
     let app: AppState
@@ -127,32 +202,33 @@ struct ReferenceThumbnail: View {
     @State private var hover = false
     @State private var target = false
 
-    /// What a thumbnail carries when dragged: its id, tagged so that no other text matches.
     private static let prefix = "siliconed-reference:"
+
+    private var isDirectInput: Bool { app.inputIndex(shown: reference.id) != nil }
 
     var body: some View {
         VStack(spacing: 3) {
             Image(nsImage: reference.vignette).resizable().scaledToFill()
                 .frame(width: Self.side, height: Self.side)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(target ? Color.accentColor : Palette.hairline,
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(target ? Palette.live : Palette.hairline,
                                   lineWidth: target ? 2 : 1))
                 .overlay(alignment: .topLeading) {
                     Text(verbatim: "\(number)")
                         .font(.caption2.weight(.bold)).monospacedDigit()
-                        .foregroundStyle(.white)
+                        .foregroundStyle(number == 1 ? Palette.onLive : .white)
                         .frame(width: 18, height: 18)
-                        .background(Circle().fill(number == 1 ? Color.accentColor : Color.black.opacity(0.6)))
+                        .background(Circle().fill(number == 1 ? Palette.live : Color.black.opacity(0.65)))
                         .padding(4)
                 }
                 .overlay(alignment: .bottomTrailing) {
-                    if hover, app.cropRefusal(width: reference.width, height: reference.height) == nil {
+                    if isDirectInput, hover, app.cropRefusal(width: reference.width, height: reference.height) == nil {
                         Button { app.beginCrop(reference) } label: {
                             Image(systemName: "crop").font(.caption2.weight(.semibold))
                                 .foregroundStyle(.white)
                                 .frame(width: 18, height: 18)
-                                .background(Circle().fill(Color.black.opacity(0.6)))
+                                .background(Circle().fill(Color.black.opacity(0.65)))
                         }
                         .buttonStyle(.plain)
                         .padding(4)
@@ -161,7 +237,7 @@ struct ReferenceThumbnail: View {
                     }
                 }
                 .overlay(alignment: .topTrailing) {
-                    if hover {
+                    if isDirectInput, hover {
                         Button { app.removeReference(reference.id) } label: {
                             Image(systemName: "xmark.circle.fill").symbolRenderingMode(.palette)
                                 .foregroundStyle(.white, .black.opacity(0.6))
@@ -173,51 +249,98 @@ struct ReferenceThumbnail: View {
                         .accessibilityLabel(Text("Remove"))
                     }
                 }
-            Text(number == 1 ? String(localized: "edited") : String(localized: "image \(number)"))
-                .font(.caption2).foregroundStyle(number == 1 ? .primary : .secondary)
+            Text(isDirectInput
+                 ? (number == 1 ? String(localized: "edited") : String(localized: "image \(number)"))
+                 : reference.name)
+                .font(.caption2)
+                .foregroundStyle(number == 1 || !isDirectInput ? .primary : .secondary)
+                .lineLimit(1)
+                .frame(maxWidth: Self.side + 8)
         }
         .onHover { hover = $0 }
         .help(Text(verbatim: "\(reference.name) · \(reference.width) × \(reference.height)"))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(verbatim: "\(number). \(reference.name)"))
-        .accessibilityAction(named: Text("Remove")) { app.removeReference(reference.id) }
         .draggable(Self.prefix + reference.id.uuidString) {
             Image(nsImage: reference.vignette).resizable().scaledToFit().frame(width: 48, height: 48)
         }
         .dropDestination(for: String.self) { items, _ in
-            guard let item = items.first, item.hasPrefix(Self.prefix),
+            guard isDirectInput,
+                  let item = items.first, item.hasPrefix(Self.prefix),
                   let id = UUID(uuidString: String(item.dropFirst(Self.prefix.count))),
-                  app.references.contains(where: { $0.id == id }) else { return false }
+                  app.inputIndex(shown: id) != nil else { return false }
             app.moveReference(id, to: number - 1)
             return true
-        } isTargeted: { target = $0 }
+        } isTargeted: { target = $0 && isDirectInput }
         .contextMenu {
-            if number > 1 {
-                Button("Make It Image 1") { app.moveReference(reference.id, to: 0) }
-                Button("Move Left") { app.moveReference(reference.id, by: -1) }
+            if isDirectInput {
+                let editCount = app.editInputs.count
+                if number > 1 {
+                    Button("Make It Image 1") { app.moveReference(reference.id, to: 0) }
+                    Button("Move Left") { app.moveReference(reference.id, by: -1) }
+                }
+                if number < editCount {
+                    Button("Move Right") { app.moveReference(reference.id, by: 1) }
+                }
+                Divider()
+                Button("Crop…") { app.beginCrop(reference) }
+                    .disabled(app.cropRefusal(width: reference.width, height: reference.height) != nil)
+                Button("Replace…") { app.replaceReference(reference.id) }
+                Button("Remove", role: .destructive) { app.removeReference(reference.id) }
             }
-            if !last { Button("Move Right") { app.moveReference(reference.id, by: 1) } }
-            Divider()
-            Button("Crop…") { app.beginCrop(reference) }
-                .disabled(app.cropRefusal(width: reference.width, height: reference.height) != nil)
-            Button("Replace…") { app.replaceReference(reference.id) }
-            Button("Remove", role: .destructive) { app.removeReference(reference.id) }
         }
     }
 }
 
-// MARK: - Over the composer: the queue, what goes on, what went wrong
+// MARK: - Under the rack & over the composer: the queue, what goes on, what went wrong
 
-/// Fork: **upstream's footer, as a card over the composer** — the cost, what stops « Generate » and
-/// « Generate » itself are the composer's (`Composer`); this card keeps the renders that wait, the
-/// installations and copies in progress, and what went wrong.
+/// **Under the rack** when the Signal-Chain sidebar is visible.
+struct Footer: View {
+    @Bindable var app: AppState
+
+    private var speaks: Bool {
+        if case .running = app.diagnostic { return true }
+        return app.busy || app.othersQueued > 0 || app.copying != nil || app.forgeInProgress != nil || app.problem != nil
+            || app.journalLine != nil || !app.settingsLines.isEmpty
+    }
+
+    var body: some View {
+        if speaks {
+            ActivityStatusContents(app: app, showsRunningJob: true)
+                .padding(14)
+                .background(Palette.column)
+                .overlay(alignment: .top) { Divider() }
+        }
+    }
+}
+
+/// **Over the Studio Composer** when the Rack sidebar is folded away.
 struct ActivityCard: View {
     @Bindable var app: AppState
 
     var body: some View {
+        ActivityStatusContents(app: app, showsRunningJob: !app.file.isEmpty)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .studioCard(cornerRadius: 18)
+    }
+}
+
+private struct ActivityStatusContents: View {
+    @Bindable var app: AppState
+    let showsRunningJob: Bool
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if !app.file.isEmpty { queue }
-            // In a mirror: the other Mac busy with renders that are not this Mac's — why this one waits.
+            if case let .running(done, total, line) = app.diagnostic {
+                Text(app.settingsRead ? "The diagnostic is running: renders wait for it."
+                                      : "Siliconed measures this Mac before its first render — about a minute.")
+                    .font(.callout)
+                Text(verbatim: "\(line) · \(done + 1)/\(total)").font(.caption).foregroundStyle(.secondary)
+            }
+            if showsRunningJob ? app.busy : !app.file.isEmpty {
+                queue
+            }
             if app.othersQueued > 0, let mirror = app.mirror {
                 Label(app.othersSeconds.map { s in
                     String(localized: "Renders for others on “\(mirror.macName)”: \(app.othersQueued), about \(Duration.seconds(s).formatted(.units(allowed: [.minutes, .seconds], width: .abbreviated)))")
@@ -225,7 +348,6 @@ struct ActivityCard: View {
                       systemImage: "person.2")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            // The models being copied from the library's disk to this Mac (`AppState+Place.swift`).
             if let c = app.copying {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(c.title).font(.callout).lineLimit(2)
@@ -240,7 +362,7 @@ struct ActivityCard: View {
                         Text(title).font(.callout).lineLimit(2)
                         Spacer()
                         Button("Stop") { app.cancelForge() }
-                            .buttonStyle(.link).font(.caption)
+                            .buttonStyle(.chartLink).font(.caption)
                             .help("Stops the installation: the files already downloaded are kept, the one in progress will start over")
                     }
                     if let line = app.forgeLine {
@@ -262,14 +384,8 @@ struct ActivityCard: View {
                     .help(raw)
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glass(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
-    /// **What remains to be done**: the running render first — a batch is one job, its images rendered
-    /// one after the other, so an empty wait list said nothing of the images still to come —,
-    /// then the renders that wait, in order; each can be removed, or everything stops.
     private var queue: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let job = app.currentJob { running(job) }
@@ -279,10 +395,8 @@ struct ActivityCard: View {
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Palette.well))
     }
 
-    /// The running render: where its batch is, the time left, and a stop that leaves the queue going.
     private func running(_ job: Job) -> some View {
         HStack(spacing: 8) {
-            // Still, not a spinner: the one under the image is the render's only one.
             Image(systemName: "play.fill").font(.system(size: 8, weight: .bold))
                 .foregroundStyle(Palette.live).frame(width: 14)
             VStack(alignment: .leading, spacing: 1) {
@@ -299,10 +413,12 @@ struct ActivityCard: View {
                         .font(.caption2).monospacedDigit().foregroundStyle(.secondary)
                 }
             }
-            Button { app.cancel() } label: { Image(systemName: "stop.circle.fill").foregroundStyle(.secondary).frame(width: 24, height: 24).contentShape(Rectangle()) }
-                .buttonStyle(.borderless)
-                .help("Stop (⌘.)")
-                .accessibilityLabel(Text("Stop"))
+            Button { app.cancel() } label: {
+                Image(systemName: "stop.circle.fill").foregroundStyle(.secondary).frame(width: 24, height: 24).contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .help("Stop (⌘.)")
+            .accessibilityLabel(Text("Stop"))
         }
         .frame(height: Self.rowHeight)
     }
@@ -314,12 +430,9 @@ struct ActivityCard: View {
                     .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 Spacer()
                 Button("Stop All", role: .destructive) { app.stopAll() }
-                    .buttonStyle(.link).font(.caption)
+                    .buttonStyle(.chartLink).font(.caption)
                     .help("Clear the queue and stop the current render")
             }
-            // **The queue scrolls past a few rows**: grown with each job, it pushed the footer above the
-            // window's height and the rack's scroll view, squeezed to nothing, could not be scrolled back.
-            // A fixed height, not one measured: a scroll view in this footer takes what it is offered.
             if app.file.count > Self.visibleRows {
                 ScrollView(.vertical) { rows }
                     .frame(height: (CGFloat(Self.visibleRows) + 0.5) * (Self.rowHeight + Self.rowSpacing))
@@ -346,10 +459,12 @@ struct ActivityCard: View {
                     if let e = app.estimation(job) {
                         Text(verbatim: "≈ " + Figures.duration(e)).font(.caption2).monospacedDigit().foregroundStyle(.secondary)
                     }
-                    Button { app.remove(job) } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary).frame(width: 24, height: 24).contentShape(Rectangle()) }
-                        .buttonStyle(.borderless)
-                        .help("Remove from the queue")
-                        .accessibilityLabel(Text("Remove from the queue"))
+                    Button { app.remove(job) } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary).frame(width: 24, height: 24).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Remove from the queue")
+                    .accessibilityLabel(Text("Remove from the queue"))
                 }
                 .frame(height: Self.rowHeight)
             }

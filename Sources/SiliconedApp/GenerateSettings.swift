@@ -68,10 +68,10 @@ struct LoRAChoices: View {
                                         .scaledToFill()
                                 } else {
                                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                        .fill(Color.accentColor.opacity(0.14))
+                                        .fill(Palette.live.opacity(0.14))
                                     Image(systemName: "square.stack.3d.up.fill")
                                         .font(.caption)
-                                        .foregroundStyle(Color.accentColor)
+                                        .foregroundStyle(Palette.live)
                                 }
                             }
                             .frame(width: 32, height: 32)
@@ -125,7 +125,7 @@ struct LoRALine: View {
                             .scaledToFill()
                     } else {
                         LinearGradient(
-                            colors: [Color.accentColor.opacity(0.32), Color.purple.opacity(0.22)],
+                            colors: [Palette.live.opacity(0.32), Palette.control.opacity(0.24)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -184,7 +184,7 @@ struct LoRALine: View {
             HStack(spacing: 6) {
                 Image(systemName: "bolt.fill")
                     .font(.caption2)
-                    .foregroundStyle(autoOn && !triggerBinding.wrappedValue.isEmpty ? Color.accentColor : .secondary)
+                    .foregroundStyle(autoOn && !triggerBinding.wrappedValue.isEmpty ? Palette.live : .secondary)
                 TextField("Trigger words (optional)", text: triggerBinding)
                     .textFieldStyle(.plain)
                     .font(.caption)
@@ -194,10 +194,10 @@ struct LoRALine: View {
                     } label: {
                         Text("Auto")
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(autoOn ? .white : .secondary)
+                            .foregroundStyle(autoOn ? Palette.onLive : .secondary)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Capsule().fill(autoOn ? Color.accentColor : Color.primary.opacity(0.08)))
+                            .background(Capsule().fill(autoOn ? Palette.live : Color.primary.opacity(0.08)))
                     }
                     .buttonStyle(.plain)
                     .help("Automatically include trigger words when rendering")
@@ -324,33 +324,5 @@ struct RenderOptions: View {
                 .help("Remove the variation: the seed’s own image")
                 .accessibilityLabel(Text("Remove the variation: the seed’s own image"))
         }
-    }
-}
-
-/// **The left column on the Generate tab**, when one shows it: an edit's images (or a starting image),
-/// the LoRA stack and the settings, each on its own plate — the same views the composer's popovers hold.
-struct SettingsColumn: View {
-    @Bindable var app: AppState
-
-    var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 12) {
-                if app.editingPossible {
-                    ImagesNode(app: app)
-                } else if app.usedStart != nil {
-                    StartImageNode(app: app)
-                }
-                if app.missing == nil, app.card != nil {
-                    LoRAStack(app: app)
-                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.well))
-                    RenderOptions(app: app)
-                        .padding(.horizontal, 12).padding(.vertical, 4)
-                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.well))
-                }
-            }
-            .font(.callout)
-            .padding(14)
-        }
-        .scrollIndicators(.automatic)
     }
 }

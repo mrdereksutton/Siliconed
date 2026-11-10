@@ -24,7 +24,7 @@ package struct QwenImage21TextModule: ImageTextModule {
         context.timings.tokenizer = Date().timeIntervalSince(begin)
         context.footprints.tokenizer = Arena.processFootprint()
         try context.check()
-        let artifact = try Artifact(path: map)
+        let artifact = try KeptEncoder.artifact(map)
         let encoder = try Qwen3VLEncoder(artifact: artifact, tokenizer: tokenizer)
         encoder.cancellation = context.cancellation
         // Its own autorelease pool: the attention's autoreleased tensor data would otherwise keep
@@ -43,6 +43,8 @@ package struct QwenImage21TextModule: ImageTextModule {
 /// prefill per render. The user's LoRAs, if any, apply to the Turbo's map itself. See `QwenImage21Pipeline`.
 package struct QwenImage21DenoisingModule: DenoisingModule {
     package var map: String
+    /// The map the plan may make resident beside the text (`MapWarmup`); the denoising opens it through `MapWarmup.open`.
+    package var inPlaceMap: String? { map }
     package var scheduler: QwenImage21Pipeline.Scheduler
     /// `output_resolution`: the references' area (`R²`), and the edit format's.
     package var resolution: Int
@@ -107,8 +109,6 @@ package struct QwenImage21DenoisingModule: DenoisingModule {
 
     /// Its pipeline has no img2img: the image encoder serves the references only.
     package var acceptsStartImage: Bool { false }
-    /// Its noise leaves in the last two evaluations: an early x̂₀ is blurred and grainy (`Sketch`).
-    package var sketches: Bool { false }
     /// Every `Solver`: its sampler walks them all (`SolverWalk`), Euler in its own loop.
     package var solvers: [Solver] { Solver.allCases }
 
@@ -136,7 +136,7 @@ package struct QwenImage21DenoisingModule: DenoisingModule {
             throw Chain.Failure.incompatibleText(output: text.format, entry: entry)
         }
         try check(steps: steps, startImage: start > 0)
-        var sampler = QwenImage21Sampler(artifact: try Artifact(path: map), lora: lora)
+        var sampler = QwenImage21Sampler(artifact: try MapWarmup.open(map), lora: lora)
         sampler.accelerators = context.accelerators
         sampler.cancellation = context.cancellation
         sampler.storage = storage

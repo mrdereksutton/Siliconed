@@ -1,4 +1,4 @@
-// The history strip: banner, thumbnails, live and exploration tiles and their buttons.
+// The Studio filmstrip: horizontal history thumbnails, live & series tiles, and context menus.
 // Split from `MainView.swift`.
 
 import AppKit
@@ -6,48 +6,48 @@ import Siliconed
 import SwiftUI
 import UniformTypeIdentifiers
 
-// MARK: - The history
+// MARK: - The history filmstrip
 
+/// **The history, as a horizontal Studio filmstrip above the Composer**: the newest on the left,
+/// the series' tile and the render under way first; at its trailing end, how many images, a shortcut
+/// to the Masonry Gallery, and the thumbnails' size.
 struct Banner: View {
     @Bindable var app: AppState
 
     var body: some View {
+        let _ = StudioHub.shared.theme
         HStack(spacing: 0) {
             ScrollViewReader { reader in
-            ScrollView(.horizontal) {
-                LazyHStack(spacing: 8) {
-                    if let run = app.explored { ExplorationTile(app: app, run: run) }
-                    // An exploration's cell shows its own preview in the grid: no second tile for it.
-                    if let job = app.currentJob, app.explored?.jobs.contains(job.ordinal) != true {
-                        LiveTile(app: app, job: job)
+                ScrollView(.horizontal) {
+                    LazyHStack(spacing: 8) {
+                        if let run = app.explored { ExplorationTile(app: app, run: run) }
+                        // A series' cell shows its own preview in the grid: no second tile for it.
+                        if let job = app.currentJob, app.explored?.jobs.contains(job.ordinal) != true {
+                            LiveTile(app: app, job: job)
+                        }
+                        ForEach(app.history) { entry in
+                            Thumbnail(app: app, entry: entry,
+                                      marked: app.isMarked(entry.id) && !(app.inProgress && app.followsRender),
+                                      shown: entry.id == app.selectedEntry?.id && app.marked.count > 1)
+                                .id(entry.id)
+                        }
                     }
-                    ForEach(app.history) { entry in
-                        Thumbnail(app: app, entry: entry,
-                                  marked: app.isMarked(entry.id) && !(app.inProgress && app.followsRender),
-                                  shown: entry.id == app.selectedEntry?.id && app.marked.count > 1)
-                            .id(entry.id)
-                    }
+                    .padding(.horizontal, 8)
                 }
-                .padding(.horizontal, 16)
+                .scrollIndicators(.never)
+                .onChange(of: app.selection) { _, id in
+                    if let id { withAnimation(Motion.pick(.default)) { reader.scrollTo(id, anchor: .center) } }
+                }
             }
-            .scrollIndicators(.never)
-            .onChange(of: app.selection) { _, id in
-                if let id { withAnimation(Motion.pick(.default)) { reader.scrollTo(id, anchor: .center) } }
-            }
-            }
-            // Short of room (Explore's column beside the canvas), the thumbnails' size steps aside
-            // before the thumbnails do.
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 0) {
-                    Divider()
+                    Divider().frame(height: max(28, app.thumbnailSide * 0.55))
                     sizeControl
                 }
                 Color.clear.frame(width: 0, height: 0)
             }
         }
-        // The strip is as tall as its thumbnails, never more: the canvas keeps the rest.
-        // Fork: no band of its own — the thumbnails sit on the canvas, over the composer.
-        .frame(height: app.thumbnailSide + 20)
+        .frame(height: app.thumbnailSide + 18)
     }
 
     /// At the strip's end: how many images, a shortcut to the masonry gallery, and the thumbnails' size.
@@ -65,6 +65,7 @@ struct Banner: View {
                     } label: {
                         Image(systemName: "square.grid.2x2")
                             .font(.caption.weight(.semibold))
+                            .foregroundStyle(Palette.live)
                     }
                     .buttonStyle(.borderless)
                     .help("Open masonry gallery")
@@ -73,19 +74,23 @@ struct Banner: View {
             }
             HStack(spacing: 4) {
                 Image(systemName: "photo").imageScale(.small)
-                Slider(value: $app.thumbnailSide, in: 48...140).frame(width: 80).controlSize(.mini)
+                Slider(value: $app.thumbnailSide, in: 48...140)
+                    .frame(width: 80)
+                    .controlSize(.mini)
+                    .tint(Palette.control)
                 Image(systemName: "photo").imageScale(.large)
             }
             .foregroundStyle(.secondary)
             .help("Thumbnail size")
+            .accessibilityLabel(Text("Thumbnail size"))
         }
-        .padding(.horizontal, 14)
-        .fixedSize(horizontal: true, vertical: false)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
     }
 }
 
 /// **A history image in the strip**: a click shows it, ⌘-click and ⇧-click mark several (`AppState.click`),
-/// a drag carries its PNG out — to the Finder, a message, another app. Marked, it wears the accent edge;
+/// a drag carries its PNG out — to the Finder, a message, another app. Marked, it wears `Palette.live`;
 /// among several marked, the one shown wears it thicker.
 private struct Thumbnail: View {
     let app: AppState
@@ -103,20 +108,32 @@ private struct Thumbnail: View {
             .interpolation(.medium)
             .scaledToFill()
             .frame(width: side * min(1, l / h), height: side * min(1, h / l))
-            .overlay(alignment: .topTrailing) {
+            .overlay(alignment: .topLeading) {
                 if isFav {
                     Image(systemName: "star.fill")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(.yellow)
-                        .shadow(color: .black.opacity(0.6), radius: 2)
+                        .shadow(color: .black.opacity(0.65), radius: 2)
                         .padding(4)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(marked ? Color.accentColor : hover ? Color.secondary : Palette.hairline,
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(marked ? Palette.live : hover ? Color.white.opacity(0.45) : Palette.hairline,
                               lineWidth: marked ? (shown ? 3 : 2) : 1))
             .opacity(marked || hover ? 1 : 0.88)
+            // **The ✕ of the hovered tile** (issue 16): acts on this image alone; ⌘Z brings it back.
+            .overlay(alignment: .topTrailing) {
+                if hover {
+                    Button { app.delete(entry) } label: {
+                        Image(systemName: "xmark.circle.fill").symbolRenderingMode(.palette)
+                            .foregroundStyle(.white, .black.opacity(0.6))
+                    }
+                    .buttonStyle(.plain).padding(3)
+                    .help("Remove from History (⌘Z brings it back)")
+                    .accessibilityLabel(Text("Remove from History"))
+                }
+            }
             .frame(height: side + 4)
             .contentShape(Rectangle())
             .onHover { hover = $0 }
@@ -161,7 +178,6 @@ private struct LiveTile: View {
             .padding(3)
         }
         .frame(width: side * min(1, l / h), height: side * min(1, h / l))
-        // A batch is one job and its bar counts the whole batch: the image it is at, said on the tile.
         .overlay(alignment: .topTrailing) {
             if app.batchSize > 1 {
                 Text(verbatim: "\(app.batchImage + 1)/\(app.batchSize)")
@@ -172,8 +188,9 @@ private struct LiveTile: View {
                     .padding(4)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 5))
-        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(following ? Palette.live : Palette.hairline, lineWidth: following ? 2.5 : 1))
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+            .strokeBorder(following ? Palette.live : Palette.hairline, lineWidth: following ? 2.5 : 1))
         .frame(height: side + 4)
         .contentShape(Rectangle())
         .onTapGesture { app.followsRender = true; app.showsExploration = false; app.showsGallery = false }
@@ -185,7 +202,7 @@ private struct LiveTile: View {
     }
 }
 
-/// **The exploration, at the head of the strip**: its grid in small, how far it is; a click brings the
+/// **The series, at the head of the strip**: its grid in small, how far it is; a click brings the
 /// grid back to the canvas.
 private struct ExplorationTile: View {
     let app: AppState
@@ -202,15 +219,15 @@ private struct ExplorationTile: View {
                 .padding(4)
         }
         .frame(width: side, height: side)
-        .clipShape(RoundedRectangle(cornerRadius: 5))
-        .overlay(RoundedRectangle(cornerRadius: 5)
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
             .strokeBorder(app.showsExploration ? Palette.live : Palette.hairline, lineWidth: app.showsExploration ? 2.5 : 1))
         .frame(height: side + 4)
         .contentShape(Rectangle())
         .onTapGesture { app.showsExploration = true; app.showsGallery = false }
-        .help("The exploration’s grid")
+        .help("The series’ grid")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("The exploration’s grid"))
+        .accessibilityLabel(Text("The series’ grid"))
         .accessibilityValue(Text(verbatim: "\(run.entries.count)/\(run.jobs.count)"))
         .accessibilityAddTraits(.isButton)
     }
@@ -257,7 +274,7 @@ private struct EditButtons: View {
 
     var body: some View {
         if app.editingPossible {
-            Button("Edit This Image") { app.placeReference(entry) }
+            Button("Edit with \(app.card?.name ?? "")") { app.placeReference(entry) }
         } else if app.editors.count == 1, let model = app.editors.first {
             Button("Edit with \(model.name)") { app.edit(entry, with: model.id) }
         } else if !app.editors.isEmpty {
@@ -293,15 +310,15 @@ struct MenuEntry: View {
             Button("Full Screen") { app.show(entry.id); app.fullScreen = true }
             Divider()
             Button(app.busy ? "Render Again (Same Seed), Queued" : "Render Again (Same Seed)") { app.redo(entry) }
-            if entry.grid == nil, entry.sketch == nil {
+            if entry.grid == nil {
                 Menu("Variations") { VariationButtons(app: app, entry: entry) }
                     .disabled(!app.canVary(entry))
             }
-            if entry.grid == nil, entry.sketch == nil {
+            if entry.grid == nil {
                 Button("Enlarge ×4") { app.enlarge(entry) }
                     .disabled(app.enlargeRefusal(entry) != nil)
             }
-            if entry.grid == nil, entry.sketch == nil {
+            if entry.grid == nil {
                 Button("Crop…") { app.beginCrop(entry) }
                     .disabled(app.cropRefusal(entry) != nil)
             }
@@ -312,7 +329,14 @@ struct MenuEntry: View {
                     StudioHub.shared.beginNamingSubject(from: .png(entry.png), app: app)
                 }
             }
-            if entry.grid == nil { Button("Open in the Prompt Lab") { LabModel.shared.load(image: entry.png); LabWindow.shared.show() } }
+            if entry.grid == nil {
+                Button("Send to the Prompt Lab") {
+                    LabModel.shared.send(entry)
+                    if app.sidebarTab == .generate {
+                        LabWindow.shared.openStudio()
+                    }
+                }
+            }
             Divider()
             Button("Remove from History", role: .destructive) { app.delete(entry) }
         }

@@ -65,6 +65,8 @@ extension MemoryPlan {
         guard let render = current else {
             return decide(fraction > 0 ? (Tail(fraction: fraction, streamed: true).released(layers: layers), true) : (layers, false), "")
         }
+        // Read in place, the map is charged whole (`MemoryPlan.choose`): never streamed.
+        if render.request.mapInPlace { return decide((layers, false), " (the whole map read in place, charged in B)") }
         let mapBytes = artifact.tensors.values.reduce(0) { $0 + $1.bytes }
         let plan = released(spans: spans, mapBytes: mapBytes, ceiling: render.ceiling,
                             streamed: render.denoisingStreamed, cached: render.denoisingCached, fraction: fraction)
@@ -74,21 +76,24 @@ extension MemoryPlan {
         return decide(plan, why)
     }
 
-    /// **The text encoder's buffers**, as it starts: the plan's. Outside a render, the reference (4).
+    /// **The text encoder's buffers**, as it starts: the plan's. Outside a render, the reference (4). None for an encoder kept
+    /// (`KeptEncoder`): its layers are in the process's pages, nothing is streamed.
     package static func encoderSlots(artifact: Artifact, layerBlocks: [[String]]) -> Int {
         guard let render = current else { return encoderSlots }
+        if render.request.encoderKept { return 0 }
         let block = layerBlocks.map { artifact.span(of: $0) }.max() ?? 0
         note(String(format: "text encoder %d buffer(s) of %.0f MB", render.request.encoderSlots, Double(block) / 1e6))
         return render.request.encoderSlots
     }
 
     /// **A decoder's band**, as it starts decoding: the plan's — the measured size (FLUX's 2²³ elements,
-    /// Qwen's 2¹⁸ pixels), or the smallest proved one on a plan that could not hold it. Never larger:
-    /// 2²⁴ costs 140 MB more for the same time. Outside a render, `standard` — the static a check may
-    /// have set.
-    package static func decoderBand(standard: Int, minimum: Int, unit: String) -> Int {
+    /// Qwen's 2¹⁸ pixels), the smallest proved one on a plan that could not hold it, or `wide` where the plan
+    /// holds that (`Request.wideBands`: Flux's 2²⁵, Z-Image's decoder — the same bits). Outside a render, `standard` — the static a
+    /// check may have set.
+    package static func decoderBand(standard: Int, minimum: Int, wide: Int? = nil, unit: String) -> Int {
         guard let render = current else { return standard }
-        let band = render.request.minimumBands ? min(standard, minimum) : standard
+        let band = render.request.minimumBands ? min(standard, minimum)
+            : render.request.wideBands ? max(standard, wide ?? standard) : standard
         note("decoder bands of 2^\(band.trailingZeroBitCount) \(unit)")
         return band
     }

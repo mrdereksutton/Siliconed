@@ -194,15 +194,51 @@ package struct Int8Route {
         if EngineSettings.effective.plan.resources.int8Weights { return nil }
         if let named = ProcessInfo.processInfo.environment["SILICONED_PLAN"], !named.isEmpty,
            let forced = CapacityPlan.forcing(named: named + ",int8") { return forced }
+        // Under `--neural-engine`, the ANE's rows of a shared product read the integers too (`aneint8`): a render's map may give the
+        // ANE a published int8 weight's rows beside the GPU's int8 kernel, and without it every product shared on a large model is on
+        // the widened weight — Krea 2's 224 int8 linears on an M5 Pro, where the route was then never crossed.
         return .forcing(neuralEngine: invocation.neuralEngine, bf16Activations: invocation.bf16Activations,
                         tiles16: invocation.fp16Attention, tilesbf16: invocation.bf16Attention,
-                        fused: invocation.bf16Attention || invocation.fp16Attention, int8: true)
+                        fused: invocation.bf16Attention || invocation.fp16Attention, aneInt8: invocation.neuralEngine, int8: true)
     }
 
     /// The products that read the published integers since the route was taken: none fails, the route was not crossed.
     package func account(_ report: Report) {
         let read = GEMM.int8Products.withLock { $0 } - before
         report.add(Judge.holds("gemm_int8", read > 0, note: "\(read) products on the published integers"))
+    }
+}
+
+/// **`--int8-activations`: the W8A8 route of a Compact** — an int8 activation (rotated by the weight's Hadamard blocks, quantized per
+/// row) times the published int8 weight, int32 sums, times both scales. Permitted on a weight published in 8 bits only;
+/// judged against the quant's author's own recipe, ComfyUI's `int8_linear` (`HalfPrecisionReference(w8a8:)`), at the fp64
+/// witness, + 25 %.
+package enum W8A8Run {
+    /// The engine's int8 × int8 route (`gpu/int8x8`), designated before anything reads the engine's settings — with the invocation's
+    /// other half-precision flags, as `HalfPrecisionRun.enable` designates its plan, which this one replaces: every denoiser product on a
+    /// published int8 weight the route takes, the rest as those flags say.
+    package static func enable(neuralEngine: Bool, bf16Activations: Bool, bf16Attention: Bool, fp16Attention: Bool) throws {
+        do {
+            try EngineSettings.designate(plan: .forcing(neuralEngine: neuralEngine, bf16Activations: bf16Activations,
+                                                        tiles16: fp16Attention, tilesbf16: bf16Attention,
+                                                        fused: bf16Attention || fp16Attention, int8Activations: true))
+        } catch {
+            throw UsageError("--int8-activations: the engine's settings were read before it")
+        }
+        before = (GEMM.quantizedProducts.withLock { $0 }, GEMM.int8Products.withLock { $0 })
+    }
+
+    nonisolated(unsafe) private static var before = (quantized: 0, int8: 0)
+
+    /// How many products ran int8 × int8 since `enable` (`GEMM.quantizedProducts`), of those on the published integers
+    /// (`GEMM.int8Products`): every one, as ComfyUI quantizes every int8 layer, else the route was not crossed whole. None: skipped,
+    /// since what would be judged is another route against the W8A8 bar.
+    package static func account(_ report: Report) throws {
+        let products = GEMM.quantizedProducts.withLock { $0 } - before.quantized, int8 = GEMM.int8Products.withLock { $0 } - before.int8
+        guard products > 0 else {
+            throw Skip("--int8-activations: no product ran int8 × int8 (no int8 weight, or no Metal 4 int8 tensor kernels on this GPU)")
+        }
+        report.add(Judge.holds("int8 × int8", products == int8, note: "\(products) of the \(int8) products on the integers on an int8 activation"))
     }
 }
 
@@ -250,9 +286,9 @@ package enum FP16AttentionRun {
 }
 
 package enum BF16ActivationRun {
-    /// How many products rounded their activation, and how many read a published 8-bit weight (a Compact's or a Light's: under
-    /// `--bf16-activations` they are read as published on the rounded activation, `gpu/int8act` or `gpu/q8act`, and a Light's Q4_K and
-    /// Q5_K blocks `gpu/q4kact` (its Q6_K widened) — a rounded activation
+    /// How many products rounded their activation, and how many read a published 8-bit weight (a Compact's int8, or a Light's SQ
+    /// linears, integers with a row scale: under `--bf16-activations` they are read as published on the rounded activation,
+    /// `gpu/int8act`; a GGUF's blocks, `gpu/q8act` / `gpu/q4kact` — a rounded activation
     /// has no widened route). None rounded (no Metal 4, a refused compiler): skipped, since what would be judged is the fp32 path against
     /// a looser bar.
     package static func account(_ report: Report) throws {
@@ -285,6 +321,29 @@ package struct HalfPrecisionReference {
         tensors = found
     }
 
+    /// The W8A8 reference beside `file` (`goldens-X` → `witness-w8a8-X`): a Compact's evaluation as ComfyUI computes it by default,
+    /// each int8 layer an int8 activation (rotated, quantized per row) times the published integers, the rest in bf16
+    /// (`tools/oracle/z-image.py w8a8 --variant compact`). `nil` when absent.
+    package init?(w8a8 goldens: Goldens, file: String) {
+        guard let found = goldens.optional(file.replacingOccurrences(of: "goldens-", with: "witness-w8a8-")) else { return nil }
+        tensors = found
+    }
+
     /// The bf16 reference's values at `name`, if it holds that boundary.
     package func values(_ name: String) -> [Float]? { tensors.float32(name).map(Array.init) }
+}
+
+/// **Invariant 3 for a decoder in bf16** (`VAEPrecision`): the bar is the reference decoded in bf16 on the golden's latent, beside it
+/// as `witness-bf16-X` (`goldens-X` renamed) — required when the decoder computes in bf16 (the fp32 rule would fail it for what it is,
+/// not for a fault), `nil` when it computes in fp32. `published`: the decoder's published format (each decoder's `publishedInBF16`).
+package enum DecoderReference {
+    package static func image(_ goldens: Goldens, file: String, publishedInBF16 published: Bool, script: String) throws -> [Float]? {
+        guard VAEPrecision.half(plan: EngineSettings.effective.plan, publishedInBF16: published) else { return nil }
+        let name = file.replacingOccurrences(of: "goldens-", with: "witness-bf16-")
+        guard let reference = goldens.optional(name), let image = reference.float32("image") else {
+            throw Skip("the decoder computes in bf16 and \(name) is missing — \(script)")
+        }
+        print("the decoder computes in bf16: judged against \(name) at the fp64 witness, + 25 %")
+        return Array(image)
+    }
 }

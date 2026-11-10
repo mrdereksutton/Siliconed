@@ -8,19 +8,30 @@
     z-image.py trajectory --size 512      the 8-step sampler and its image  -> goldens-trajectory-<size>
     z-image.py vae --size 768x512         the decoder on a rectangle        -> goldens-vae-<size>
     z-image.py vae-witness --size 768x512 the same decoding in float64      -> witness-vae-f64-<size>
+    z-image.py vae-bf16 --size 768x512    the same decoding in bfloat16     -> witness-bf16-vae-<size>
     z-image.py img2img --size 512         img2img at strength 0.6: the picture encoded, the start, the truncated
                                           sampler (steps 3-7)              -> goldens-img2img-<size>
     z-image.py all                        every stage at every size the check reads (not `bf16`)
     z-image.py dit|bf16|witness --variant compact|light   the same, for the Compact's or the Light's published
-                                          DiT, dequantized by its publisher's code (`quantized.py`)
+                                          DiT: the Compact's by its publisher's code, the Light's (our SQ file) by `quantized.sq_decode`
+    z-image.py w8a8 --size 512 --variant compact   the Compact's evaluation as ComfyUI computes it by default: bf16,
+                                          every int8 layer an int8 activation times the int8 weight
+                                                                           -> witness-w8a8-dit-compact-<size>
 
 `bf16` is the bar of a half-precision path (the ANE's fp16 products); `all` leaves it out
-because it is costly and only that path reads it.
+because it is costly and only that path reads it. `vae-bf16` is the decoder's bar in bf16, read by `check z-image vae`
+when the decoder computes in bf16; `all` writes it after the decoder's witness.
 
 With `--variant`, `dit` reads the inputs of the Standard's `goldens-dit-<size>` (same latent, same conditioning, same
 sigma) and runs the same reference DiT with the variant's published weights, dequantized to float32; it writes
 `goldens-dit-<variant>-<size>`. `bf16` and `witness` take the variant the same way. `siliconed check z-image dit
 --variant X` judges the engine on the variant's map against them.
+
+`w8a8` is the bar of a W8A8 path (`check z-image dit --variant compact --int8-activations`): the bf16 bar's diffusers in
+bf16 on the Standard's inputs, each of the 270 linears the Compact publishes in int8 (202 published tensors, `qkv` split
+in three) computed by comfy_kitchen's own `int8_linear` on the published integers — the activation rotated by the
+Hadamard blocks of 256 in bf16, quantized to int8 per row, the integer product exact (`quantized.Int8Products`, where
+the recipe is cited line by line). The engine's W8A8 route is judged against it at the fp64 witness, + 25 %.
 
 `text --long` reads `common.LONG_PROMPT` (past 512 tokens) with the sequence length raised to match; no
 other stage reads it.
@@ -151,7 +162,7 @@ def build_dit(root: Path, dtype: torch.dtype = torch.float32, variant: str | Non
     """The reference `ZImageTransformer2DModel`, on `meta`, with the blocks streamed.
 
     The 11.6 M parameters outside the blocks (embedders, final layer) stay resident. With a `variant`, the
-    weights are the Compact's or the Light's published file, dequantized by its publisher's code
+    weights are the Compact's or the Light's published file, dequantized by its publisher's code (the Light's: decoded by `quantized.sq_decode`)
     (`quantized.Variant`); only `transformer/config.json` is read from `root`."""
     from diffusers import ZImageTransformer2DModel
     directory = root / "transformer"
@@ -273,6 +284,30 @@ def bf16(goldens: Path, size: str, variant: str | None = None) -> None:
     common.write_golden(goldens, quantized.stem(f"witness-bf16-dit-{name}", variant), rec.tensors, {
         "resolution": name, "dtype": "bfloat16", "device": "cpu", "inputs": f"goldens-dit-{name}",
         "config": config, **({"weights": model.published.describe()} if variant else {})}, summary_extra=True)
+
+
+def w8a8(goldens: Path, size: str, variant: str) -> None:
+    """The `bf16` evaluation of the Compact with ComfyUI's default int8 products in place of its int8 layers
+    (`quantized.Int8Products`): the bar of the engine's W8A8 route. Inputs: the Standard's dit golden, as `bf16` reads
+    them. Writes `witness-w8a8-dit-compact-<size>`, the bf16 bar's keys, widened to float32 (exact)."""
+    if variant != "compact":
+        raise SystemExit("w8a8: the Compact only (--variant compact): its int8 convrot is what ComfyUI computes in W8A8")
+    _, _, name = common.parse_size(size)
+    golden = common.read_golden(goldens, f"goldens-dit-{name}", f"z-image.py dit --size {name}")
+    half = torch.bfloat16
+    model, config = build_dit(configuration(), half, variant)
+    products = quantized.Int8Products(model, model.published)
+    rec = Recorder()
+    probe_dit(model, rec)
+    latent, caps, sigma = (golden[k].to(half) for k in ("in_latent", "in_caps", "in_sigma"))
+    rec.tensors["in_latent"], rec.tensors["in_caps"], rec.tensors["in_sigma"] = (
+        t.to(torch.float32) for t in (latent, caps, sigma))
+    out = model(x=[latent], t=sigma, cap_feats=[caps], return_dict=False)
+    rec.keep("model_out", out[0] if isinstance(out, (tuple, list)) else out)
+    assert products.calls == len(products.layers), (products.calls, len(products.layers))
+    common.write_golden(goldens, quantized.stem(f"witness-w8a8-dit-{name}", variant), rec.tensors, {
+        "resolution": name, "dtype": "bfloat16", "device": "cpu", "inputs": f"goldens-dit-{name}",
+        "int8": products.describe(), "config": config, "weights": model.published.describe()}, summary_extra=True)
 
 
 # ===================================================================================== witness
@@ -505,6 +540,30 @@ def vae_witness(goldens: Path, size: str) -> None:
         "oracle_fp32_vs_witness": {"worst_plane": worst, "median_plane": median, "plane": plane, "psnr_db": psnr}})
 
 
+def vae_bf16(goldens: Path, size: str) -> None:
+    """**The decoder in bfloat16, as the pipeline runs it with `torch_dtype=torch.bfloat16`** on `goldens-vae-<size>`'s
+    latent: `latents.to(vae.dtype)`, then `/ scaling_factor + shift_factor` and `vae.decode`, every weight and activation
+    bf16 (`pipeline_z_image.py`). The bar of the engine's bf16 decoder (invariant 3): no further from the fp64 witness than
+    this, + 25 %. Its convolutions on bf16 operands with fp32 sums (`common.bf16_convolutions_in_fp32`). Process-wide patches:
+    call it in a process that does nothing else."""
+    from diffusers import AutoencoderKL
+    _, _, name = common.parse_size(size)
+    common.bf16_convolutions_in_fp32()
+    decoded = common.read_golden(goldens, f"goldens-vae-{name}", f"z-image.py vae --size {name}")
+    exact = common.read_golden(goldens, f"witness-vae-f64-{name}", f"z-image.py vae-witness --size {name}")["image"]
+    decoder = AutoencoderKL.from_pretrained(str(common.snapshot(REPOSITORY, ["vae"]) / "vae"),
+                                            torch_dtype=torch.bfloat16).eval()
+    latent = decoded["latent"][None].to(torch.bfloat16)
+    with torch.no_grad():
+        image = decoder.decode(latent / decoder.config.scaling_factor + decoder.config.shift_factor,
+                               return_dict=False)[0][0].float()
+    worst, median, plane = common.per_plane(image, exact)
+    print(f"  decoder {name}: bf16 vs fp64 - worst plane {worst:.3e} (plane {plane}), median {median:.3e}")
+    common.write_golden(goldens, f"witness-bf16-vae-{name}", {"image": image}, {
+        "inputs": [f"goldens-vae-{name}"], "dtype": "bfloat16", "device": "cpu",
+        "bf16_vs_witness": {"worst_plane": worst, "median_plane": median, "plane": plane}})
+
+
 # ======================================================================================== all
 
 def everything(goldens: Path, prompt: str, sizes: list[str]) -> None:
@@ -530,25 +589,29 @@ def everything(goldens: Path, prompt: str, sizes: list[str]) -> None:
         print(f"dit {size}: in_caps == cap_feats, bit for bit")
     if "1024" in sizes:
         # Last, in its own process: the float64 decoder patches the reference's classes for good.
-        common.run_stages(__file__, goldens, [["vae-witness", "--size", "768x512"]])
+        common.run_stages(__file__, goldens, [["vae-witness", "--size", "768x512"], ["vae-bf16", "--size", "768x512"]])
 
 
 def main() -> None:
     common.unbuffered()
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("stage", choices=["text", "dit", "witness", "trajectory", "bf16", "vae", "vae-witness", "img2img", "all"])
+    p.add_argument("stage", choices=["text", "dit", "witness", "trajectory", "bf16", "w8a8", "vae", "vae-witness", "vae-bf16",
+                                          "img2img", "all"])
     p.add_argument("--size", nargs="+", default=None,
                    help="512, 1024 or WIDTHxHEIGHT (default: 512; vae: 768x512; all: 512 1024)")
     p.add_argument("--goldens", help="output folder (default: $SILICONED_GOLDENS, else ./goldens)")
     p.add_argument("--prompt", default=PROMPT, help="text and all only; the checks read the prompt from the golden")
     p.add_argument("--variant", choices=quantized.VARIANTS,
-                   help="dit, bf16 and witness: the Compact's or the Light's published DiT instead of the Standard's")
+                   help="dit, bf16 and witness: the Compact's or the Light's published DiT instead of the Standard's;"
+                        " w8a8: compact, required")
     p.add_argument("--long", action="store_true", help="text only: the long prompt, past 512 tokens -> goldens-text-long")
     args = p.parse_args()
     goldens = common.goldens_directory(args.goldens)
-    if args.variant and args.stage not in ("dit", "bf16", "witness"):
-        p.error("--variant goes with dit, bf16 or witness")
-    sizes = args.size or {"vae": ["768x512"], "vae-witness": ["768x512"], "all": ["512", "1024", "768x512", "832x1216"]}.get(args.stage, ["512"])
+    if args.variant and args.stage not in ("dit", "bf16", "witness", "w8a8"):
+        p.error("--variant goes with dit, bf16, witness or w8a8")
+    if args.stage == "w8a8" and args.variant != "compact":
+        p.error("w8a8 takes --variant compact: the Compact's int8 convrot is what ComfyUI computes in W8A8")
+    sizes = args.size or {"vae": ["768x512"], "vae-witness": ["768x512"], "vae-bf16": ["768x512"], "all": ["512", "1024", "768x512", "832x1216"]}.get(args.stage, ["512"])
     if args.stage == "text" and args.long:
         text(goldens, common.LONG_PROMPT, common.LONG_SEQUENCE_LENGTH, "goldens-text-long")
     elif args.stage == "text":
@@ -558,10 +621,10 @@ def main() -> None:
     else:
         for size in sizes:
             if args.variant:
-                {"dit": dit, "witness": witness, "bf16": bf16}[args.stage](goldens, size, args.variant)
+                {"dit": dit, "witness": witness, "bf16": bf16, "w8a8": w8a8}[args.stage](goldens, size, args.variant)
             else:
                 {"dit": dit, "witness": witness, "bf16": bf16, "trajectory": trajectory, "vae": vae,
-                 "vae-witness": vae_witness, "img2img": img2img}[args.stage](goldens, size)
+                 "vae-witness": vae_witness, "vae-bf16": vae_bf16, "img2img": img2img}[args.stage](goldens, size)
 
 
 if __name__ == "__main__":

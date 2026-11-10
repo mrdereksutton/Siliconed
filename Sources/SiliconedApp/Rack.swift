@@ -1,32 +1,29 @@
 // **The rack: the chain of the render, drawn from `model.chain`, as the window's left column**.
 //
-//     ┌ Images ─────────────────┐   only if the model edits: the images the prompt works on, 1 to 3,
-//   ┌─┤ ▣ ▣ +                   ├─┐ numbered (the Prompt Lab can carry them here, with the prompt
-//   │ │                         │ │ that names them: `Lab.swift`) — or, on a model that starts from an
-//   │ └─────────────────────────┘ │ image (img2img), only once the Lab has carried one: its thumbnail and
-//   │                             │ its strength (`StartImageNode`), wired to the image encoder alone
-//   │ ┌ Prompt ─────────────────┐ │ the text field itself, under what it names
-//   │ └──────────┬──────────────┘ │
-//   │ ┌Text encoder┐ ┌Image encoder┐
-//   └▶│ (sees them)│ │             │◀┘
-//     └─────┬──────┘ └──────┬──────┘
-//           │text           │latent
-//     ┌──────── DiT ────────────┐   model ▾, license · fp32 · latent, size, seed, images, steps, detail,
-//     └────────────┬────────────┘   step previews, LoRA stack — and, running, its steps and preview
+//   ┌ Text ──────────┐ ┌ Images ──── 1/3 ┐   the inputs, read only, in outline: written and chosen in the Prompt Lab
+//   │ from the Lab   │ │ ▣ ▣             │   under the image (`LabView.swift`). The images port only on a model that
+//   └───────┬────────┘ └──┬──────┬───────┘   edits (its images, numbered) or starts from an image (img2img: the
+//           │text  ╭──────╯image │image      starting image and its strength, set on its tile in the lab)
+//   ┌Text encoder────┐ ┌Image encoder────┐   Qwen-Image-2.1's text encoder sees the images too: one short wire
+//   └───────┬────────┘ └───────┬─────────┘   across, from the images into the text encoder's right shoulder
+//           │text              │latent
+//     ┌──────── DiT ────────────┐   model ▾, license · fp32 · latent, size, seed, images, detail, step previews,
+//     └────────────┬────────────┘   LoRA stack — and, running, its steps and preview
 //                  │latent
 //     ┌ VAE decoder ────────────┐
 //     └─────────────────────────┘   → the image, on the canvas: a result, not a stage
 //
 // **A module and its settings are one box**: what the next render reads sits in the box of the stage
-// that reads it — the images in the images, the prompt in the prompt, the size, the seed and the
-// steps in the DiT. There is no other form. The latent is not a box: it is what the DiT makes, its
-// previews are drawn in the DiT. Nor is the image: it is the result, shown on the canvas. The wires
-// between the boxes are of their true type (text amber, image lavender, latent sea green — `Palette`),
-// and run top to bottom, in the direction of the signal; the images come first, as the gesture does —
-// lay the picture down, then say what to make of it —, so their wires skip the prompt: down the left
-// rail into the text encoder, down the right one into the image encoder. **Color is spent only where
-// something happens**: at rest the boxes are quiet cards and the wires muted; during a render the box
-// of the stage at work wears the accent and the wire it reads brightens and widens; what is done keeps
+// that reads it — the size and the seed in the DiT. The inputs are the exception, read only: the text and
+// the images are the Prompt Lab's, and the rack shows what goes without taking it twice. The latent is
+// not a box: it is what the DiT makes, its previews are drawn in the DiT. Nor is the image: it is the
+// result, shown on the canvas. « Generate » is not in the rack either: it is at the end of the text, in the
+// lab, where the hand is when the idea is written. The wires between the boxes are of their true type (text
+// peach, image rose, latent sky — `Palette.swift`), and run top to bottom, in the direction of the
+// signal, each port above the encoder it feeds. **Color is spent only where
+// something happens**: at rest the boxes are quiet cards, only their icons in their wire's color, and the wires
+// muted; during a render the box of the stage at work wears what runs (mint at night, indigo by day) and the
+// wire it reads brightens and widens; what is done keeps
 // a discreet check; where the engine refused, the box turns red. Under each box, what it costs: the
 // time it just took, set as soon as the stage ends — before, the one learned on this Mac. The memory a render needs is the whole chain's: it is said once, in the
 // summary under the rack (`Sidebar`), not under the DiT. Each stage's name stays the technical one —
@@ -63,50 +60,17 @@ extension View {
     }
 }
 
-/// **The rack's colors.** Three hues for the three wires — amber, lavender, sea green — at the same
-/// lightness and the same chroma (OKLCH 0.80 / 0.105 on a dark ground, 0.58 / 0.12 on a light one), so
-/// that none shouts over the others and each reads on both grounds. Everything else is the system's:
-/// the accent for what runs, red for what failed, the separator and the control colors for the rest.
-enum Palette {
-    static let amber = dynamic(dark: 0xE5B46E, light: 0xA36E09)
-    static let lavender = dynamic(dark: 0xC8AEF8, light: 0x8668B6)
-    static let seaGreen = dynamic(dark: 0x67D4C0, light: 0x00917D)
-    /// What runs: the system's accent, as a selection or a progress bar elsewhere in macOS.
-    static let live = Color.accentColor
-    static let failure = Color(nsColor: .systemRed)
-    /// A box: a card a step above the column — lifted in dark, white in light, as System Settings does.
-    static let surface = Color(nsColor: NSColor(name: nil) { a in
-        a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.07) : NSColor(white: 1, alpha: 0.85)
-    })
-    /// A field inside a box: a recess.
-    static let well = Color.primary.opacity(0.08)
-    /// A card's edge, a separator: a notch firmer than the system's `separatorColor` (10 %), which
-    /// let a box melt into the column on both grounds.
-    static let hairline = Color(nsColor: NSColor(name: nil) { a in
-        a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.16) : NSColor(white: 0, alpha: 0.14)
-    })
-
-    private static func dynamic(dark: Int, light: Int) -> Color {
-        func color(_ v: Int) -> NSColor {
-            NSColor(srgbRed: CGFloat(v >> 16 & 0xFF) / 255, green: CGFloat(v >> 8 & 0xFF) / 255, blue: CGFloat(v & 0xFF) / 255, alpha: 1)
-        }
-        return Color(nsColor: NSColor(name: nil) { a in
-            a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? color(dark) : color(light)
-        })
-    }
-}
-
 /// The boxes' shape: a continuous rounded rectangle, the system's own.
-let boxShape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+let boxShape = RoundedRectangle(cornerRadius: 12, style: .continuous)
 
 /// What a wire carries: three types, three hues, the same everywhere in the app.
 enum WireKind {
     case text, image, latent
     var color: Color {
         switch self {
-        case .text: Palette.amber
-        case .image: Palette.lavender
-        case .latent: Palette.seaGreen
+        case .text: Palette.peach
+        case .image: Palette.rose
+        case .latent: Palette.sky
         }
     }
 }
@@ -118,15 +82,10 @@ private struct Edge: Identifiable {
     let stage: Engine.Stage
     /// False: an optional input left empty (no edit image) — drawn thin and faint.
     var live = true
-    /// Set: it skips the box between its ends, and runs down that side's rail instead of through it.
-    var rail: Rail? = nil
+    /// Set: it crosses from the images port to the text encoder beside it, into the encoder's right shoulder.
+    var across = false
     var id: String { "\(from)-\(to)" }
 }
-
-private enum Rail { case left, right }
-
-/// The rails' distance to the boxes: the column's paddings leave them room.
-private let railInset: CGFloat = 9
 
 /// **The wires**: from the bottom of a box to the top of the next, straight down where the two
 /// overlap — a box under another reads where it sits. In its color, muted at rest; the wire the
@@ -142,7 +101,7 @@ private struct Wires: View {
             Canvas { c, _ in
                 for e in edges {
                     guard let a = frames[e.from].map({ g[$0] }), let b = frames[e.to].map({ g[$0] }) else { continue }
-                    let (p, end) = e.rail.map { Self.rail(a, b, $0) } ?? Self.drop(a, b)
+                    let (p, end) = e.across ? Self.across(a, b) : Self.drop(a, b)
                     let s = e.live ? state(e.stage) : .idle
                     let color: Color = !e.live ? Palette.hairline
                         : s == .idle ? e.kind.color.opacity(0.85) : e.kind.color
@@ -171,20 +130,15 @@ private struct Wires: View {
         return (p, end)
     }
 
-    /// Out of `a`'s side, down the rail, into `b`'s same side: past the boxes in between.
-    private static func rail(_ a: CGRect, _ b: CGRect, _ side: Rail) -> (Path, CGPoint) {
-        let left = side == .left, r: CGFloat = left ? 6 : -6
-        let x = left ? min(a.minX, b.minX) - railInset : max(a.maxX, b.maxX) + railInset
-        let start = CGPoint(x: left ? a.minX : a.maxX, y: a.maxY - 16)
-        let end = CGPoint(x: left ? b.minX : b.maxX, y: b.minY + 18)
-        let turn = abs(r)
+    /// From the images port's left part into the text encoder's right shoulder: a short curve across, clear of the prompt's
+    /// wire, which drops into the encoder's middle.
+    private static func across(_ a: CGRect, _ b: CGRect) -> (Path, CGPoint) {
+        let start = CGPoint(x: a.minX + a.width * 0.22, y: a.maxY)
+        let end = CGPoint(x: b.minX + b.width * 0.8, y: b.minY)
+        let dy = max(8, (end.y - start.y) * 0.7)
         var p = Path()
         p.move(to: start)
-        p.addLine(to: CGPoint(x: x + r, y: start.y))
-        p.addQuadCurve(to: CGPoint(x: x, y: start.y + turn), control: CGPoint(x: x, y: start.y))
-        p.addLine(to: CGPoint(x: x, y: end.y - turn))
-        p.addQuadCurve(to: CGPoint(x: x + r, y: end.y), control: CGPoint(x: x, y: end.y))
-        p.addLine(to: end)
+        p.addCurve(to: end, control1: CGPoint(x: start.x, y: start.y + dy), control2: CGPoint(x: end.x, y: end.y - dy))
         return (p, end)
     }
 }
@@ -193,24 +147,36 @@ private struct Wires: View {
 
 struct RackView: View {
     @Bindable var app: AppState
+    /// Set while the encoders' boxes have their top above the column's: the sidebar then pins the chain in small (`MiniChain`).
+    var chainAway: Binding<Bool>? = nil
     @State private var hoversTitle = false
+
+    /// The head of the rack, where the mini chain's click scrolls back.
+    static let top = "rack.top"
+    /// The DiT's box, where `silicontrol rack dit` scrolls.
+    static let dit = "rack.dit"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            header
-            if app.editingPossible { ImagesNode(app: app).node(.images) }
-            else if showsStart { StartImageNode(app: app).node(.images) }
-            PromptNode(app: app).node(.prompt)
+            header.id(Self.top)
+            // The inputs, each above the encoder it feeds: the columns of the two rows are the same halves.
+            HStack(alignment: .top, spacing: 10) {
+                PromptPort(app: app).node(.prompt)
+                if app.editingPossible { ImagesPort(app: app).node(.images) }
+                else if showsStart { StartPort(app: app).node(.images) }
+            }
             HStack(alignment: .top, spacing: 10) {
                 textEncoder.node(.textEncoder)
                 if encodesImages { imageEncoder.node(.imageEncoder) }
             }
-            DiTBox(app: app).node(.dit)
+            // Away once their titles and lights are: on a tall window the rack's bottom still shows their feet.
+            .onGeometryChange(for: Bool.self) { $0.frame(in: .scrollView).minY < 0 } action: { chainAway?.wrappedValue = $0 }
+            DiTBox(app: app).node(.dit).id(Self.dit)
             vae.node(.vae)
+            RenderEstimate(app: app)
             legend
         }
-        .padding(.leading, 12 + railInset)
-        .padding(.trailing, 12 + railInset)
+        .padding(.horizontal, 14)
         .padding(.vertical, 14)
         .backgroundPreferenceValue(NodeFrames.self) { frames in
             Wires(edges: edges, frames: frames, state: app.state(of:))
@@ -221,7 +187,7 @@ struct RackView: View {
     /// The chosen model edits by reference and has an image encoder — or starts from the image the rack holds: its box is drawn.
     private var encodesImages: Bool { (app.editingPossible && app.chain?.encoding != nil) || showsStart }
 
-    /// A starting image is carried, and the model starts from it (img2img): the Images box shows it, wired to the encoder alone.
+    /// A starting image is carried, and the model starts from it (img2img): its port shows it, wired to the image encoder alone.
     private var showsStart: Bool { !app.editingPossible && app.usedStart != nil }
 
     private var edges: [Edge] {
@@ -229,14 +195,14 @@ struct RackView: View {
         var e = [Edge(from: .prompt, to: .textEncoder, kind: .text, stage: .text)]
         if showsStart {
             // The text encoder does not see a starting image: only the image encoder reads it, and the DiT starts from its latent.
-            e.append(Edge(from: .images, to: .imageEncoder, kind: .image, stage: .image, rail: .right))
+            e.append(Edge(from: .images, to: .imageEncoder, kind: .image, stage: .image))
             e.append(Edge(from: .imageEncoder, to: .dit, kind: .latent, stage: .denoising))
         }
         if app.editingPossible {
             // Qwen-Image-2.1's encoder sees the images (`TextFormat.readsImages`): one more wire.
-            if app.promptNamesImages { e.append(Edge(from: .images, to: .textEncoder, kind: .image, stage: .text, live: live, rail: .left)) }
+            if app.promptNamesImages { e.append(Edge(from: .images, to: .textEncoder, kind: .image, stage: .text, live: live, across: true)) }
             if encodesImages {
-                e.append(Edge(from: .images, to: .imageEncoder, kind: .image, stage: .image, live: live, rail: .right))
+                e.append(Edge(from: .images, to: .imageEncoder, kind: .image, stage: .image, live: live))
                 e.append(Edge(from: .imageEncoder, to: .dit, kind: .latent, stage: .denoising, live: live))
             }
         }
@@ -271,9 +237,8 @@ struct RackView: View {
             .help(DiagnosticSheet.mapStatus(app))
             ComputeOnMenu(app: app)
             Spacer()
-            // « Explore » is beside « Generate » (`Sidebar`): a gesture that makes images, not a setting.
             Button("Models…") { app.managementOpen = true }
-                .buttonStyle(.link)
+                .buttonStyle(.chartLink)
                 .font(.callout)
                 .help("Install, import, remove — and what each takes on disk (⇧⌘M)")
                 .fixedSize()
@@ -315,7 +280,7 @@ struct RackView: View {
     // ── the fixed stages ──
 
     private var textEncoder: some View {
-        StageBox(title: "Text encoder", symbol: "character.textbox", state: app.state(of: .text),
+        StageBox(title: "Text encoder", symbol: "character.textbox", kind: .text, state: app.state(of: .text),
                  explanation: "A language model reads the prompt and turns it into what the DiT understands") {
             ModuleSlot(name: app.moduleNames.text)
             WeightsTag(format: app.weightFormats?.text)
@@ -328,7 +293,7 @@ struct RackView: View {
     }
 
     private var imageEncoder: some View {
-        StageBox(title: "Image encoder", symbol: "photo", state: app.state(of: .image),
+        StageBox(title: "Image encoder", symbol: "photo", kind: .latent, state: app.state(of: .image),
                  explanation: showsStart ? "Turns the starting image into the latent the DiT starts from, noised to the strength"
                                          : "Turns the images to edit into the compact form the DiT works in, the latent") {
             ModuleSlot(name: app.moduleNames.encoding)
@@ -338,12 +303,67 @@ struct RackView: View {
     }
 
     private var vae: some View {
-        StageBox(title: "VAE decoder", symbol: "square.grid.3x3.square", state: app.state(of: .decoding),
+        StageBox(title: "VAE decoder", symbol: "square.grid.3x3.square", kind: .image, state: app.state(of: .decoding),
                  explanation: "Turns the DiT’s result, the latent, into pixels: the final image") {
             ModuleSlot(name: app.moduleNames.decoding)
             WeightsTag(format: app.weightFormats?.vae)
             Cost(app.stageCost(.decoding))
         }
+    }
+}
+
+// MARK: - What the next render costs
+
+/// **The next render, before the click** (rule 7), under the chain that makes it: the size, the memory the engine will compare
+/// to this Mac's (computed), how many renders a series makes, and the time — learned on this Mac in this session, never a
+/// constant from another machine. Here, not under the text (the user, 4/11/2026: « c'est de la technique pure »).
+struct RenderEstimate: View {
+    @Bindable var app: AppState
+
+    var body: some View {
+        if app.missing == nil, let card = app.card {
+            let f = app.outputFormat
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { figures(card, f) }
+                VStack(alignment: .leading, spacing: 4) { figures(card, f) }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .labelStyle(CompactLabel())
+        }
+    }
+
+    @ViewBuilder private func figures(_ card: ModelCard, _ f: RecommendedFormat) -> some View {
+        Label {
+            Text(verbatim: "\(f.width) × \(f.height)").monospacedDigit()
+        } icon: { Image(systemName: "aspectratio") }
+        if let need = app.memoryNeed {
+            Label {
+                Text(Figures.memory(need)).monospacedDigit()
+            } icon: { Image(systemName: "memorychip") }
+            .help(String(localized: "The memory \(card.name) needs at this size (computed)"))
+        }
+        if app.seriesRenders > 1 {
+            Label {
+                Text("\(app.seriesRenders) renders").monospacedDigit()
+            } icon: { Image(systemName: "square.grid.3x3") }
+            .help(app.seriesHelp)
+        }
+        Label {
+            if let t = app.plannedCost {
+                Text(verbatim: "≈ " + Figures.duration(t)).monospacedDigit()
+            } else {
+                Text("after one render")
+            }
+        } icon: { Image(systemName: "clock") }
+        .help("Learned on this Mac: the first render at this size, with this model, sets the estimate")
+    }
+}
+
+/// An icon and its text, close together.
+private struct CompactLabel: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) { configuration.icon; configuration.title }
     }
 }
 
@@ -373,7 +393,7 @@ private struct ComputeOnMenu: View {
                     if let machine = w.otherMacs.machines[b.id] { Text(verbatim: machine.summary) }
                 }
                 Divider()
-                Button("Other Macs…") { SettingsWindow.shared.show(w.local) }
+                Button("Other Macs…") { SettingsWindow.shared.show(w.local, pane: .macs) }
             } label: {
                 // A long name gives way, never « Chain » or « Models… » beside it.
                 Text("On: \(shown?.name ?? String(localized: "This Mac"))").font(.callout)
@@ -397,7 +417,7 @@ private struct LinkEdge: View {
         let w = MainWindow.shared
         if app.mirror != nil, let id = w.carrier.showing {
             let (color, dashed): (Color, Bool) = switch w.otherMacs.links[id] {
-            case .connected?: (Color(nsColor: .systemBlue), false)
+            case .connected?: (Palette.link, false)
             case .refused?: (Palette.failure, false)
             default: (Color(nsColor: .systemOrange), true)
             }

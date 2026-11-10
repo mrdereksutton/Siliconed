@@ -596,6 +596,11 @@ package final class QwenImage21DiT: BoundaryRecording, PhaseTiming {
                            bands: [(row: Int, count: Int, modulation: UnsafeMutablePointer<Float>)],
                            x xs: UnsafeMutablePointer<Float>, segments: [QwenImage21Sequence.Segment],
                            fused: Bool = false) throws {
+        if let stream = streamed {
+            try layerStreamed(layer, kind: kind, first: first, rows: n, bands: bands, x: xs, segments: segments, fused: fused,
+                              with: stream)
+            return
+        }
         let d = config.dim, hh = config.hidden, p = sequence.prefix, all = sequence.count
         let prefix = "transformer_blocks.\(layer)."
         let k = keys + first * d, v = values + first * d
@@ -607,10 +612,33 @@ package final class QwenImage21DiT: BoundaryRecording, PhaseTiming {
         if !keysOnly { try linearGPU(prefix + "attn.to_q.weight", a: normed, into: q, m: n, k: d, n: d) }
         try linearGPU(prefix + "attn.to_k.weight", a: normed, into: k, m: n, k: d, n: d)
         try linearGPU(prefix + "attn.to_v.weight", a: normed, into: v, m: n, k: d, n: d)
-        // QK-Norm and RoPE in one pass per row (`Ops.rmsNormRope`).
+        // QK-Norm and RoPE in one pass per row (`Ops.rmsNormRope`) — or on the GPU, chained to the target's attention, where the plan
+        // says (`QKNormRope`): never in the prefill (the conditions', once a render, unplanned).
         let table = freqs + first * config.headDim
-        if !keysOnly { try headNormRope(prefix + "attn.norm_q.weight", q, rows: n, freqs: table) }
-        try headNormRope(prefix + "attn.norm_k.weight", k, rows: n, freqs: table)
+        let target = kind == .prefill ? nil : targetAssignment(queries: all - p, keys: all)
+        // Its seconds join the class of the target's first slice, as `attend` names it (`ProductLedger.pass`).
+        let passClock = kind == .prefill ? nil : ProductLedger.pass(
+            sequence: (all - p) / QwenImage21DiT.attentionSlices(heads: config.heads, queries: all - p, keys: all),
+            heads: config.heads, headDim: config.headDim)
+        if !keysOnly, let target, target.normRopeOnGPU, QKNormRope.runs(headDim: config.headDim),
+           let pass = QKNormRope.shared(device: gemm.device, queue: gemm.queue) {
+            var operands: [QKNormRope.Operand] = []
+            for (name, tensor) in [(prefix + "attn.norm_q.weight", q), (prefix + "attn.norm_k.weight", k)] {
+                try artifact.materialize(name, into: reserve, capacity: reserveCapacity)
+                let r = try gemm.region(tensor, bytes: n * d * 4, name: "qk")
+                operands.append(.init(r.buffer, offset: r.offset, heads: config.heads,
+                                      weight: Array(UnsafeBufferPointer(start: reserve, count: config.headDim))))
+            }
+            let freqsRegion = try gemm.region(table, bytes: n * config.headDim * 4, name: "freqs")
+            timed("qk norm + rope") {
+                pass.run(operands, rows: n, headDim: config.headDim, eps: Float(config.eps), freqs: freqsRegion, layout: .interleaved,
+                         wait: target.splits || !segments.isEmpty)
+            }
+        } else {
+            if !keysOnly { try headNormRope(prefix + "attn.norm_q.weight", q, rows: n, freqs: table) }
+            try headNormRope(prefix + "attn.norm_k.weight", k, rows: n, freqs: table)
+        }
+        passClock?.finish()
         if kind == .step, !fused {
             try timed("kv cache") {
                 if let cache {
@@ -651,6 +679,166 @@ package final class QwenImage21DiT: BoundaryRecording, PhaseTiming {
             try linearGPU(prefix + "img_mlp.out.weight", a: h1, into: o + begin * d, m: rows, k: hh, n: d)
         }
         try residual(xs, rows: n, bands: bands, gate: 3 * d)
+    }
+
+    // MARK: - The stream (`SILICONED_STREAM`)
+
+    /// What a streamed layer runs on: the GPU's modulated LayerNorm, its QK-norm and RoPE, and the target's tiled attention by query
+    /// slice, as `attend` cuts it (`begin` counted from the target's first query).
+    private struct StreamKernels {
+        let norm: ModulatedLayerNormGPU
+        let qk: QKNormRope
+        let target: [(begin: Int, rows: Int, kernel: TiledAttention)]
+    }
+
+    /// **Every pass of this DiT streams, or none does** — decided once, at the first layer: the prefill, the step and the full pass are
+    /// one implementation (`layerPass`), and the check holds the step from the cache to the full pass within 10⁻⁵; a stream in one of
+    /// them only would put the GPU's norms against the CPU's. `nil` (the layers as before, the same bits) without the stream, with a
+    /// LoRA, with the conditions' K/V in a file (its reader writes `keys` beside the queued attention, and reads ahead while it runs),
+    /// or where the plan does not give the target's attention to the tiles (a cut by heads reads Q, K and V on the CPU).
+    private lazy var streamed: StreamKernels? = {
+        let kernels = makeStreamKernels()
+        if GPUStream.policy != .off, ProcessInfo.processInfo.environment["SILICONED_STREAM_REPORT"] != nil {
+            FileHandle.standardError.write(Data(("Qwen-Image-2.1 stream: " + (kernels.map {
+                "on, the target's attention in \($0.target.count) tiled slice(s)" } ?? "off for this DiT (a LoRA, K/V in a file, "
+                + "or the plan's target attention not in tiles)") + "\n").utf8))
+        }
+        return kernels
+    }()
+
+    private func makeStreamKernels() -> StreamKernels? {
+        guard GPUStream.policy != .off, lora == nil, cacheLoRA == nil, kvFile == nil, QKNormRope.runs(headDim: config.headDim),
+              let qk = QKNormRope.shared(device: gemm.device, queue: gemm.queue),
+              let norm = ModulatedLayerNormGPU.shared(device: gemm.device, queue: gemm.queue) else { return nil }
+        let all = sequence.count, count = sequence.target
+        let slices = QwenImage21DiT.attentionSlices(heads: config.heads, queries: count, keys: all)
+        var target: [(begin: Int, rows: Int, kernel: TiledAttention)] = []
+        for piece in 0..<slices {
+            let begin = piece * count / slices, rows = (piece + 1) * count / slices - begin
+            let cut = Self.attentionAssignment(gemm.plan, rows: rows, keys: all, heads: config.heads, headDim: config.headDim)
+            let key = "\(rows)×\(all)"
+            guard !cut.splits, cut.usesTiles,
+                  let kernel = tileKernels[key] ?? TiledAttention.make(cut, device: gemm.device, queue: gemm.queue, heads: config.heads,
+                                                                       sequence: rows, headDim: config.headDim, keys: all)
+            else { return nil }
+            tileKernels[key] = kernel
+            target.append((begin, rows, kernel))
+        }
+        return StreamKernels(norm: norm, qk: qk, target: target)
+    }
+
+    /// **`layerPass` as one stream of GPU work** (`GPUStream`): the modulated LayerNorms on the GPU (`ModulatedLayerNormGPU`, one
+    /// dispatch per band, each its row of the modulation), the QK-norm and RoPE queued after the products (`QKNormRope`, in the prefill
+    /// too), the target's attention in tiles, the gated residuals and the SwiGLU as before (already on the GPU), the products' bf16
+    /// weights read in place where the map is wrapped (`WeightProducts`); one drain, at the layer's end.
+    ///
+    /// The CPU touches nothing the queued work reads or writes: the cache's K/V rows go into `keys`/`values` and the QK-norm's
+    /// weights are read **before** the first kernel is queued — into arrays, never the reserve, in which a queued product rounds its
+    /// operand. The prefix segments' attentions (the prefill, the full pass) are the graph's, on the same queue, behind the QK pass.
+    /// Not the CPU norms' bits (the sums' order): judged against the oracle.
+    private func layerStreamed(_ layer: Int, kind: Pass, first: Int, rows n: Int,
+                               bands: [(row: Int, count: Int, modulation: UnsafeMutablePointer<Float>)],
+                               x xs: UnsafeMutablePointer<Float>, segments: [QwenImage21Sequence.Segment], fused: Bool,
+                               with kernels: StreamKernels) throws {
+        let d = config.dim, hh = config.hidden, p = sequence.prefix, eps = Float(config.eps)
+        let prefix = "transformer_blocks.\(layer)."
+        let k = keys + first * d, v = values + first * d
+        let keysOnly = kind == .prefill && layer == config.layers - 1
+        let stream = gemm.queue.stream
+        stream.drain()
+        if kind == .step, !fused, let cache {
+            timed("kv cache") {
+                let layerCache = cache + 2 * layer * p * d
+                copyRows(layerCache, into: keys, rows: p)
+                copyRows(layerCache + p * d, into: values, rows: p)
+            }
+        }
+        let normQ = keysOnly ? nil : try headWeight(prefix + "attn.norm_q.weight")
+        let normK = try headWeight(prefix + "attn.norm_k.weight")
+        let (xb, nb, mb) = (try slice(xs), try slice(normed), try slice(modulationSlot))
+        // The norm writes the next products' operand rounded too, where they read it so (`WeightProducts.RoundedOperand`), each band
+        // at its rows — or quantized to int8 for W8A8.
+        func modulatedNorm(scale: Int, rounded: WeightProducts.RoundedOperand? = nil) {
+            timed("norm") {
+                for band in bands {
+                    ownTimings["elementwise GPU", default: 0] += kernels.norm.run(
+                        (xb, band.row * d), scale: (mb, band.modulation - modulationSlot + scale), into: (nb, band.row * d),
+                        rows: band.count, columns: d, eps: eps, rounded: rounded?.rows(from: band.row))
+                }
+            }
+        }
+        // `SILICONED_STREAM_WAIT`: the same kernels, each waited for — the judge that the stream does not cross itself.
+        if ProcessInfo.processInfo.environment["SILICONED_STREAM_WAIT"] == nil { stream.isOn = true }
+        defer { stream.isOn = false }      // drains: the CPU reads `x` (a boundary, `norm_out`) and the K/V (the cache) next
+
+        // ── attention
+        let normed1 = try products.roundedOperand(prefix + "attn.to_k.weight", m: n, k: d, n: d, quantizes: true)
+        modulatedNorm(scale: 0, rounded: normed1)
+        if !keysOnly { try linearGPU(prefix + "attn.to_q.weight", a: normed, into: q, m: n, k: d, n: d, rounded: normed1) }
+        try linearGPU(prefix + "attn.to_k.weight", a: normed, into: k, m: n, k: d, n: d, rounded: normed1)
+        try linearGPU(prefix + "attn.to_v.weight", a: normed, into: v, m: n, k: d, n: d, rounded: normed1)
+        var operands: [QKNormRope.Operand] = []
+        for (tensor, weight) in (normQ.map { [(q, $0)] } ?? []) + [(k, normK)] {
+            let r = try gemm.region(tensor, bytes: n * d * 4, name: "qk")
+            operands.append(.init(r.buffer, offset: r.offset, heads: config.heads, weight: weight))
+        }
+        let table = try gemm.region(freqs + first * config.headDim, bytes: n * config.headDim * 4, name: "freqs")
+        // Chained to what follows (`wait: false` stays out of the stream's drain); the prefill's last layer ends on it, and the CPU
+        // stores its K/V next: waited for there.
+        timed("qk norm + rope") {
+            kernels.qk.run(operands, rows: n, headDim: config.headDim, eps: eps, freqs: table, layout: .interleaved,
+                           wait: !stream.isOn || keysOnly)
+        }
+        if keysOnly { return }
+        for segment in segments {
+            try attend(queries: segment.start, count: segment.end - segment.start, keys: segment.end, causal: segment.isText, first: first)
+        }
+        // Where the target's slices write every row of `merged` (a step: no prefix rows here), each also writes its rows of `to_out`'s
+        // operand rounded, where it reads it so: no pass of the product's own.
+        let covered = kind != .prefill && segments.isEmpty && first == p && kernels.target.allSatisfy { $0.kernel.writesRounded }
+            && kernels.target.reduce(0) { $0 + $1.rows } == n
+        let attended = covered ? try products.roundedOperand(prefix + "attn.to_out.0.weight", m: n, k: d, n: d) : nil
+        if kind != .prefill {
+            let (kb, vb) = (try slice(keys), try slice(values))
+            for piece in kernels.target {
+                let local = p + piece.begin - first
+                let (qb, ob) = (try slice(q + local * d), try slice(merged + local * d))
+                timed("sdpa wall") {
+                    ownTimings["sdpa GPU", default: 0] += piece.kernel.run(q: qb, k: kb, v: vb, into: ob,
+                                                                           rounded: attended?.rows(from: local).bf16)
+                }
+            }
+        }
+        try linearGPU(prefix + "attn.to_out.0.weight", a: merged, into: o, m: n, k: d, n: d, rounded: attended)
+        try residual(xs, rows: n, bands: bands, gate: d)
+
+        // ── MLP
+        let (h1b, h2b) = (try slice(h1), try slice(h2))
+        let chunks = (n + mlpRows - 1) / mlpRows
+        // In one chunk the norm rounds the MLP's operand too; by chunks the SwiGLU's operand takes the slot after the first, and each
+        // chunk's products round their own rows.
+        let normed2 = chunks == 1 ? try products.roundedOperand(prefix + "img_mlp.gate_layer.weight", m: n, k: d, n: hh, quantizes: true) : nil
+        modulatedNorm(scale: 2 * d, rounded: normed2)
+        for chunk in 0..<chunks {
+            let begin = chunk * n / chunks, rows = (chunk + 1) * n / chunks - begin
+            try linearGPU(prefix + "img_mlp.gate_layer.weight", a: normed + begin * d, into: h1, m: rows, k: d, n: hh, rounded: normed2)
+            try linearGPU(prefix + "img_mlp.proj.weight", a: normed + begin * d, into: h2, m: rows, k: d, n: hh, rounded: normed2)
+            // `h1` is read by `out` alone, the chunk's: where it reads the copy alone, the SwiGLU writes no fp32 (`readers`).
+            let gated = try products.roundedOperand(prefix + "img_mlp.out.weight", m: rows, k: hh, n: d, quantizes: true,
+                                                    holding: elementwise.swigluQuantizedColumns, readers: [(prefix + "img_mlp.out.weight", d)])
+            timed("swiglu") {
+                ownTimings["elementwise GPU", default: 0] += elementwise.swiglu((h1b, 0), (h2b, 0), count: rows * hh, rounded: gated)
+            }
+            try linearGPU(prefix + "img_mlp.out.weight", a: h1, into: o + begin * d, m: rows, k: hh, n: d, rounded: gated)
+        }
+        try residual(xs, rows: n, bands: bands, gate: 3 * d)
+    }
+
+    /// A QK-norm's weight (`head_dim` floats), widened into an array of its own.
+    private func headWeight(_ name: String) throws -> [Float] {
+        var w = [Float](repeating: 0, count: config.headDim)
+        _ = try w.withUnsafeMutableBufferPointer { try artifact.materialize(name, into: $0) }
+        return w
     }
 
     // ── the modulation ──────────────────────────────────────────────────────────────────
@@ -819,10 +1007,17 @@ package final class QwenImage21DiT: BoundaryRecording, PhaseTiming {
         }
     }
 
-    /// The plan's answer for an attention of the target's queries: the split or the graph (no flash). The memory need reads the same.
+    /// The plan's answer for an attention of the target's queries: the split or the graph (no flash), the QK-norm and RoPE where the plan
+    /// put them. The memory need reads the same.
     package static func attentionAssignment(_ plan: CapacityPlan, rows: Int, keys: Int, heads: Int, headDim: Int) -> AttentionAssignment {
         let a = plan.assign(AttentionKey(sequence: rows, keys: keys, heads: heads, headDim: headDim))
-        return a.splits || a.usesTiles ? a : .graph
+        return a.splits || a.usesTiles ? a : AttentionAssignment.graph.normRope(onGPU: a.normRopeOnGPU)
+    }
+
+    /// The target's attention as `attend` asks for its first slice: where its QK-norm and RoPE run.
+    private func targetAssignment(queries count: Int, keys: Int) -> AttentionAssignment {
+        let slices = QwenImage21DiT.attentionSlices(heads: config.heads, queries: count, keys: keys)
+        return Self.attentionAssignment(gemm.plan, rows: count / slices, keys: keys, heads: config.heads, headDim: config.headDim)
     }
 
     /// Queries `[queries, queries + count)` of the joint sequence (held from `first`) against the keys
@@ -899,8 +1094,8 @@ package final class QwenImage21DiT: BoundaryRecording, PhaseTiming {
     /// Under a plan that reads the bf16 weight as published, it goes into the reserve as it is (`Artifact.stage`) and the product
     /// is `TensorGEMM`'s: the stack is then always added after it — merging would widen the weight again.
     private func linearGPU(_ name: String, a: UnsafeMutablePointer<Float>, into c: UnsafeMutablePointer<Float>,
-                           m: Int, k: Int, n: Int) throws {
-        try products.linear(name, a: try slice(a), c: try slice(c), m: m, k: k, n: n)
+                           m: Int, k: Int, n: Int, rounded: WeightProducts.RoundedOperand? = nil) throws {
+        try products.linear(name, a: try slice(a), c: try slice(c), m: m, k: k, n: n, rounded: rounded)
     }
 }
 

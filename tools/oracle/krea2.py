@@ -5,8 +5,12 @@
     krea2.py dit --size 512 [1024 768x512]     one DiT evaluation at the first sigma         -> goldens-krea2-dit-<size>
     krea2.py bf16 --size 512 [1024 768x512]    the same evaluation in bfloat16               -> witness-bf16-krea2-dit-<size>
     krea2.py dit|bf16|witness|witness-step --size 512 --variant compact|light   the same, for the Compact's (Comfy-Org int8 convrot) or the
-                                               Light's (GGUF Q4_K_M) published DiT -> goldens-krea2-dit-<variant>-<size>
+                                               Light's (our SQ file) published DiT -> goldens-krea2-dit-<variant>-<size>
+    krea2.py w8a8 --size 512 --variant compact   `bf16 --variant compact` with ComfyUI's default int8 products in the
+                                               int8 layers (the W8A8 bar)    -> witness-w8a8-krea2-dit-compact-<size>
     krea2.py trajectory --size 512 [1024]      the 8-step Euler loop                         -> goldens-krea2-trajectory-<size>
+    krea2.py trajectory --size 512 --permute 0 N [N...] [--permute-kind group|full]   the free 8-step loop under each
+                                               drawn summation order (0: the identity, same calls) -> draw-krea2-<size>-trajectory-perm<kind>N
     krea2.py vae --size 512 [1024 768x512]     the decoder on the final latent               -> goldens-krea2-vae-<size>
     krea2.py witness --size 512                time, img_in, blocks 0-1 in float64           -> witness-krea2-f64-<size>
     krea2.py witness-step --size 512 --step 1  a WHOLE evaluation in float64, at step i      -> witness-krea2-f64-<size>-step<i>
@@ -15,6 +19,7 @@
     krea2.py draw --size 512 --step 0 --permute N [N...] [--permute-kind group|full]   fp32 draws whose summation
                                                order is drawn (the residual stream permuted) -> draw-krea2-<size>-step<i>-perm<kind>N
     krea2.py vae-witness --size 512            the decoder in float64                        -> witness-krea2-vae-f64-<size>
+    krea2.py vae-bf16 --size 512               the decoder in bfloat16, as the pipeline runs it -> witness-bf16-krea2-vae-<size>
     krea2.py img2img --size 512 [--variant compact]   img2img at strength 0.6: the picture encoded, the start, the
                                                truncated loop (steps 3-7)                    -> goldens-krea2-img2img[-<variant>]-<size>
     krea2.py img2img-witness --size 512 --step 3 4 5 6 7 [--variant compact]   an img2img step in float64
@@ -31,6 +36,8 @@ fp32) just before its forward pass and dropped just after. Expect minutes per ev
 
 `bf16` is the bar of a half-precision path (the ANE's fp16 products): the `dit` evaluation with the
 reference in bfloat16, on the `dit` golden's inputs. It is not part of `all` (costly, and only that path reads it).
+`w8a8` is the bar of the engine's W8A8 route (`check krea2 dit --variant compact --int8-activations`): the same bf16
+evaluation with every int8 layer computed as ComfyUI does by default (`quantized.Int8Products`); not part of `all` either.
 
 `all` writes what `siliconed check krea2` reads at the sizes asked (default 512): the text, the DiT
 evaluation and its head witness, the trajectory and the float64 witness of every one of its eight steps
@@ -220,7 +227,7 @@ def stage_text(prompt: str = PROMPT, length: int = MAX_SEQUENCE_LENGTH, stem: st
 
 def load_transformer(dtype: torch.dtype = torch.float32, variant: str | None = None, streamed: bool = True):
     """The DiT, its blocks streamed. With a `variant`, from the Compact's or the Light's published file,
-    dequantized by its publisher's code (`quantized.Variant`, the two tensors Krea hid in its GGUF left out).
+    as `quantized.Variant` reads it (the Light's our SQ file, decoded by `quantized.sq_decode`; the two tensors Krea hid in its checkpoint left out).
     `streamed=False`: the blocks stay on `meta`, for a caller that loads them itself (`model.published`)."""
     from diffusers import Krea2Transformer2DModel
     config = Krea2Transformer2DModel.load_config(snap() / "transformer")
@@ -352,6 +359,37 @@ def stage_bf16(size: str, variant: str | None = None):
     write(quantized.stem(f"witness-bf16-krea2-dit-{name}", variant), payload,
           {"dtype": "bfloat16", "inputs": f"goldens-krea2-dit-{name}",
            **({"weights": model.published.describe()} if variant else {})})
+
+
+def stage_w8a8(size: str, variant: str):
+    """`bf16 --variant compact` with every linear the Compact publishes in int8 convrot computed by comfy_kitchen's own
+    `int8_linear` on the published integers (`quantized.Int8Products`, the recipe cited there): the bar of the engine's
+    W8A8 route. ComfyUI's Krea 2 (comfy/ldm/krea2/model.py at the frozen commit of `quant_fixtures.COMFY`) calls its
+    linears plainly: the attention's `wq`, `wk`, `wv` and `gate` one `Linear` each on the same x (the same integers four
+    times), `wo(out * sigmoid(gate))`, the MLP `down(silu(gate(x)) * up(x))`, no input activation or residual folded into a
+    product. Inputs: the Standard's dit golden, as `bf16` reads them. Writes `witness-w8a8-krea2-dit-compact-<size>`, the
+    bf16 bar's keys."""
+    if variant != "compact":
+        raise SystemExit("w8a8: the Compact only (--variant compact): its int8 convrot is what ComfyUI computes in W8A8")
+    height, width, name = common.parse_size(size)
+    golden = read(f"goldens-krea2-dit-{name}", f"krea2.py dit --size {name}")
+    embeds, mask = text_inputs()
+    model = load_transformer(torch.bfloat16, variant)
+    products = quantized.Int8Products(model, model.published)
+    pipe = make_pipeline(transformer=model)
+    positions = pipe.prepare_position_ids(embeds.shape[1], height // 16, width // 16, torch.device("cpu"))
+    packed = pipe._pack_latents(golden["latent_in"][None], 1, 16, height // 8, width // 8)
+    taps = probe_dit(model, mask)
+    half = torch.bfloat16
+    out = model(hidden_states=packed.to(half), encoder_hidden_states=embeds.to(half),
+                timestep=golden["timestep"].to(half), position_ids=positions, encoder_attention_mask=mask,
+                return_dict=False)[0].float()
+    assert products.calls == len(products.layers), (products.calls, len(products.layers))
+    payload = {"model_out": unpack(pipe, out, height, width), "model_out_packed": out[0],
+               **{k: v.float() for k, v in taps.items()}}
+    write(quantized.stem(f"witness-w8a8-krea2-dit-{name}", variant), payload,
+          {"dtype": "bfloat16", "inputs": f"goldens-krea2-dit-{name}", "int8": products.describe(),
+           "weights": model.published.describe()})
 
 
 def stage_trajectory(size: str):
@@ -782,6 +820,57 @@ def stage_permuted_draws(size: str, step: int, seeds: list[int], kind: str, img2
         print(f"-> {path}")
 
 
+def stage_permuted_trajectory(size: str, seeds: list[int], kind: str):
+    """**The free trajectory under drawn summation orders**: the 8 Euler steps from the seed's noise, each velocity the
+    permuted model's (`stage_permuted_draws`' call for call: valid text rows, no mask), each step `x += (σ[i+1] − σ[i])·v`
+    in fp32 as the scheduler does — the reference's own chaos, which a draw restarted from the golden's latent at each
+    step cannot show. Seed 0 is the identity: the nominal pass along the same calls. Each block is loaded once per step
+    and run under every seed. Writes, per seed, `draw-krea2-<size>-trajectory-perm<kind><seed>` (latent_1 … latent_8)."""
+    resolution = int(size)
+    trajectory = read(f"goldens-krea2-trajectory-{resolution}", f"krea2.py trajectory --size {resolution}")
+    text = read(f"goldens-krea2-dit-{resolution}", f"krea2.py dit --size {resolution}")["txt_in_out"]
+    sigmas = trajectory["sigmas"].float()
+    model = load_transformer(streamed=False)
+    pipe = make_pipeline(transformer=model)
+    d = model.hidden_size
+    perms = {s: residual_permutation(d, kind, s) for s in seeds}
+    top = {k: v for k, v in model.state_dict().items()
+           if k.startswith(("time_embed.", "time_mod_proj.", "img_in.", "final_layer."))}
+    t = text.shape[0]
+    rope = model.rotary_emb(pipe.prepare_position_ids(t, resolution // 16, resolution // 16, torch.device("cpu")))
+    empty = {k: torch.empty(v.shape, dtype=v.dtype, device="meta") for k, v in model.transformer_blocks[0].state_dict().items()}
+    latent = {s: trajectory["latent_init"].clone() for s in seeds}
+    payload = {s: {} for s in seeds}
+    for step in range(len(sigmas) - 1):
+        timestep = ((sigmas[step] * 1000).float() / 1000).reshape(1)
+        x, temb, temb_mod = {}, {}, {}
+        for s in seeds:
+            p = perms[s]
+            model.load_state_dict(permuted_state(top, p), strict=False, assign=True)
+            temb[s] = model.time_embed(timestep, dtype=torch.float32)
+            temb_mod[s] = model.time_mod_proj(torch.nn.functional.gelu(temb[s], approximate="tanh"))
+            packed = pipe._pack_latents(latent[s][None], 1, 16, resolution // 8, resolution // 8)
+            x[s] = torch.cat([text[:, p][None], model.img_in(packed)], dim=1)
+        for i, block in enumerate(model.transformer_blocks):
+            weights = model.published.under(f"transformer_blocks.{i}.", torch.float32)
+            for s in seeds:
+                block.load_state_dict(permuted_state(weights, perms[s], f"transformer_blocks.{i}."), assign=True)
+                x[s] = block(x[s], temb_mod[s], rope, None)
+                block.load_state_dict(empty, assign=True)
+            del weights
+            print(f"  step {step}, block {i}", end="\r", flush=True)
+        for s in seeds:
+            model.load_state_dict(permuted_state(top, perms[s]), strict=False, assign=True)
+            velocity = unpack(pipe, model.final_layer(x[s][:, t:], temb[s]), resolution)
+            latent[s] = latent[s] + (sigmas[step + 1] - sigmas[step]) * velocity
+            payload[s][f"latent_{step + 1}"] = latent[s].clone()
+        print(f"  step {step}: sigma = {float(sigmas[step]):.4f}          ", flush=True)
+    for s in seeds:
+        path = OUT / f"draw-krea2-{resolution}-trajectory-perm{kind}{s}.safetensors"
+        save_file({k: v.contiguous() for k, v in payload[s].items()}, str(path))
+        print(f"-> {path}")
+
+
 def stage_witness(size: str):
     """**The float64 reference of the head**: the engine's inputs (the oracle's latent and ITS `txt_in`
     output: fp32, valid rows, no padding), then time, `img_in` and the first two blocks in double."""
@@ -858,6 +947,28 @@ def stage_vae_witness(size: str):
     print(f"-> {path}")
 
 
+def stage_vae_bf16(size: str):
+    """**The decoder in bfloat16, as the pipeline runs it with `torch_dtype=torch.bfloat16`** on `goldens-krea2-vae-<size>`'s
+    latent: `latents.to(vae.dtype)`, `/ (1 / std) + mean` in bf16, then `vae.decode` (`pipeline_qwenimage.py`'s decoding, which
+    Krea's follows). The bar of the engine's bf16 decoder (invariant 3): no further from the fp64 witness than this, + 25 %. Its
+    convolutions on bf16 operands with fp32 sums (`common.bf16_convolutions_in_fp32`): call it in a process that does nothing else."""
+    from diffusers import AutoencoderKLQwenImage
+    _, _, name = common.parse_size(size)
+    common.bf16_convolutions_in_fp32()
+    bf16 = torch.bfloat16
+    decoded = read(f"goldens-krea2-vae-{name}", f"krea2.py vae --size {name}")
+    exact = read(f"witness-krea2-vae-f64-{name}", f"krea2.py vae-witness --size {name}")["image"]
+    vae = AutoencoderKLQwenImage.from_pretrained(snap() / "vae", torch_dtype=bf16).eval()
+    latent = decoded["latent_final"][None, :, None].to(bf16)
+    mean = torch.tensor(vae.config.latents_mean).view(1, 16, 1, 1, 1).to(bf16)
+    inv_std = 1.0 / torch.tensor(vae.config.latents_std).view(1, 16, 1, 1, 1).to(bf16)
+    with torch.no_grad():
+        image = vae.decode(latent / inv_std + mean, return_dict=False)[0][0, :, 0].float()
+    worst, median, plane = common.per_plane(image, exact)
+    print(f"  decoder {name}: bf16 vs fp64 - worst plane {worst:.3e} (plane {plane}), median {median:.3e}")
+    write(f"witness-bf16-krea2-vae-{name}", {"image": image})
+
+
 def everything(goldens: Path, sizes: list[str], witness_steps: list[int], draws: int) -> None:
     """Per size, in dependency order: the text, the evaluation and its head witness, the trajectory and the
     whole-evaluation witnesses of its steps (squares: they start from the trajectory's latents), then the
@@ -874,6 +985,7 @@ def everything(goldens: Path, sizes: list[str], witness_steps: list[int], draws:
                for s in squares for i in range(8) for j in range(1, draws + 1)]
     stages += [["vae", "--size", s] for s in sizes]
     stages += [["vae-witness", "--size", s] for s in sizes]
+    stages += [["vae-bf16", "--size", s] for s in sizes]
     if "512" in squares:
         stages += [["img2img", "--size", "512"]] + [["img2img-witness", "--size", "512", "--step", str(i)] for i in range(3, STEPS)]
     common.run_stages(__file__, goldens, stages)
@@ -883,8 +995,8 @@ def main() -> None:
     global OUT
     common.unbuffered()
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("stage", choices=["text", "dit", "bf16", "trajectory", "vae", "witness", "witness-step", "draw",
-                                     "vae-witness", "img2img", "img2img-witness", "img2img-draw", "all"])
+    p.add_argument("stage", choices=["text", "dit", "bf16", "w8a8", "trajectory", "vae", "witness", "witness-step", "draw",
+                                     "vae-witness", "vae-bf16", "img2img", "img2img-witness", "img2img-draw", "all"])
     p.add_argument("--size", nargs="+", default=None,
                    help="512, 1024 or WIDTHxHEIGHT (dit, witness, vae: a rectangle too; default 512, all: every size)")
     p.add_argument("--step", type=int, nargs="+", default=[0],
@@ -892,7 +1004,7 @@ def main() -> None:
     p.add_argument("--jitter", type=int, nargs="+", default=[0],
                    help="draw only: seed(s) of the one-ulp move of the latent (0 = the unmoved inputs)")
     p.add_argument("--permute", type=int, nargs="+", default=None,
-                   help="draw and img2img-draw: seed(s) of the residual permutation (the summation order drawn), all in one process")
+                   help="trajectory, draw and img2img-draw: seed(s) of the residual permutation (the summation order drawn; 0 the identity), all in one process")
     p.add_argument("--permute-kind", choices=["group", "full"], default="group",
                    help="draw --permute: groups of 256 channels (what the int8 engine can draw too) or any permutation")
     p.add_argument("--witness-steps", type=int, nargs="+", default=list(range(8)),
@@ -900,12 +1012,14 @@ def main() -> None:
     p.add_argument("--draws", type=int, default=0, help="all only: jitters 1..N of every step's draw (default 0: none)")
     p.add_argument("--long", action="store_true", help="text only: the long prompt, past 512 tokens -> goldens-krea2-text-long")
     p.add_argument("--variant", choices=quantized.VARIANTS,
-                   help="dit and bf16: the Compact's or the Light's published DiT instead of the Standard's")
+                   help="dit and bf16: the Compact's or the Light's published DiT instead of the Standard's; w8a8: compact, required")
     p.add_argument("--goldens", help="output folder (default: $SILICONED_GOLDENS, else ./goldens)")
     args = p.parse_args()
-    if args.variant and args.stage not in ("dit", "bf16", "witness", "witness-step", "draw", "img2img", "img2img-witness",
+    if args.stage == "w8a8" and args.variant != "compact":
+        p.error("w8a8 takes --variant compact: the Compact's int8 convrot is what ComfyUI computes in W8A8")
+    if args.variant and args.stage not in ("dit", "bf16", "w8a8", "witness", "witness-step", "draw", "img2img", "img2img-witness",
                                            "img2img-draw"):
-        p.error("--variant goes with dit, bf16, witness, witness-step, draw, img2img, img2img-witness or img2img-draw")
+        p.error("--variant goes with dit, bf16, w8a8, witness, witness-step, draw, img2img, img2img-witness or img2img-draw")
     global CONFIG_ONLY, VARIANT
     CONFIG_ONLY, VARIANT = bool(args.variant), args.variant
     OUT = common.goldens_directory(args.goldens) / "krea2"
@@ -918,9 +1032,13 @@ def main() -> None:
     sizes = args.size or ["512"]
     if args.stage == "img2img-draw" and args.permute is None:
         p.error("img2img-draw takes --permute")
+    if args.permute is not None and args.stage == "trajectory":
+        for size in sizes:
+            stage_permuted_trajectory(size, args.permute, args.permute_kind)
+        return
     if args.permute is not None:
         if args.stage not in ("draw", "img2img-draw") or len(args.step) > 1 or args.jitter != [0]:
-            p.error("--permute goes with draw or img2img-draw, one --step, no --jitter")
+            p.error("--permute goes with trajectory, draw or img2img-draw (one --step, no --jitter)")
         for size in sizes:
             stage_permuted_draws(size, args.step[0], args.permute, args.permute_kind, img2img=args.stage == "img2img-draw")
         return
@@ -938,11 +1056,11 @@ def main() -> None:
             stage_img2img_witness(size, args.step[0])
         elif args.stage == "draw":
             stage_draw(size, args.step[0], args.jitter[0])
-        elif args.variant and args.stage in ("dit", "bf16"):
-            {"dit": stage_dit_variant, "bf16": stage_bf16}[args.stage](size, args.variant)
+        elif args.variant and args.stage in ("dit", "bf16", "w8a8"):
+            {"dit": stage_dit_variant, "bf16": stage_bf16, "w8a8": stage_w8a8}[args.stage](size, args.variant)
         else:
             {"dit": stage_dit, "bf16": stage_bf16, "trajectory": stage_trajectory, "vae": stage_vae, "witness": stage_witness,
-             "vae-witness": stage_vae_witness, "img2img": stage_img2img}[args.stage](size)
+             "vae-witness": stage_vae_witness, "vae-bf16": stage_vae_bf16, "img2img": stage_img2img}[args.stage](size)
 
 
 if __name__ == "__main__":

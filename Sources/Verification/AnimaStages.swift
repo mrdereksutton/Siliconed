@@ -7,7 +7,8 @@ import Siliconed
 //
 // What sets it apart: two tokenizers (Qwen's and T5's) feed Qwen3-0.6B and a conditioner that maps its
 // states onto T5's; the step is `x += (σᵢ₊₁ − σᵢ) · v`, without the negation Z-Image's pipeline applies;
-// the VAE is Qwen-Image's. The goldens are the reference prompt's, seed 42, at 512² and 1024².
+// the VAE is Qwen-Image's. The goldens are the reference prompt's, seed 42, at 512² and 1024², the DiT's
+// evaluation and trajectory also at 1536² (9,216 image tokens).
 
 enum AnimaStages {
     static let all: [Stage] = [tokenizer, text, dit, trajectory, vae]
@@ -74,9 +75,9 @@ enum AnimaStages {
     static let dit = Stage(
         model: model, name: "dit",
         proves: "one evaluation of the DiT at σ = 1, boundary by boundary, and its output per latent plane against the fp64 witness",
-        sizes: ["512", "1024", "768x512"], options: ["--map", "--neural-engine", "--bf16-activations", "--bf16-attention", "--fp16-attention", "--no-accelerators", "--variant"],
-        oracle: "tools/oracle/anima.py dit --size {size}; witness --size {size} --step 0; with --neural-engine, --bf16-activations, --bf16-attention or --fp16-attention, bf16 --size {size}; with --variant compact or light, dit and bf16 with --variant, at 512 \(Wording.publishers)", weights: ["DiT"],
-        rule: "the rule, floor 5e-4; model_out per latent plane at the fp64 witness; \(Wording.rectangle); \(Wording.halfPrecision)"
+        sizes: ["512", "1024", "768x512", "1536"], options: ["--map", "--neural-engine", "--bf16-activations", "--bf16-attention", "--fp16-attention", "--int8-activations", "--no-accelerators", "--variant"],
+        oracle: "tools/oracle/anima.py dit --size {size}; witness --size {size} --step 0; with --neural-engine, --bf16-activations, --bf16-attention or --fp16-attention, bf16 --size {size}; with --variant compact or light, dit and bf16 with --variant, at 512 \(Wording.publishers); with --int8-activations, w8a8 --size {size} --variant compact (ComfyUI's own int8 products)", weights: ["DiT"],
+        rule: "the rule, floor 5e-4; model_out per latent plane at the fp64 witness; \(Wording.rectangle); \(Wording.halfPrecision); with --int8-activations, against ComfyUI's W8A8 error + 25 %"
     ) { invocation in
         let version = try invocation.quantizedVariant()
         let report = Report(title: "\(model) dit\(version.map { " " + $0.rawValue } ?? "") \(invocation.size)")
@@ -96,7 +97,8 @@ enum AnimaStages {
         let started = Date()
         _ = try dit.forward(latent: latent.baseAddress!, context: context.baseAddress!, sigma: sigma[0])
         if invocation.profile { printTimings(dit.timings, seconds: Date().timeIntervalSince(started)) }
-        let half = try invocation.halfReference(file, script: "tools/oracle/anima.py bf16 --size \(invocation.size)\(version.map { " --variant " + $0.rawValue } ?? "")")
+        let half = try invocation.reference(file, script: "tools/oracle/anima.py bf16 --size \(invocation.size)\(version.map { " --variant " + $0.rawValue } ?? "")",
+                                            w8a8Script: "tools/oracle/anima.py w8a8 --size \(invocation.size) --variant compact")
         let d = dit.config.dim
         let widths = ["temb": 3 * d, "embedded_timestep": d, "model_out": height * width]
         // Per channel against the oracle: the witness's worst POSITION is a noisy statistic here (an
@@ -116,13 +118,14 @@ enum AnimaStages {
         if invocation.bf16Activations { try BF16ActivationRun.account(report) }
         if invocation.bf16Attention { try BF16AttentionRun.account(report) }
         if invocation.fp16Attention { try FP16AttentionRun.account(report) }
+        if invocation.int8Activations { try W8A8Run.account(report) }
         return report
     }
 
     static let trajectory = Stage(
         model: model, name: "trajectory",
         proves: "the seed's noise bit for bit, the schedule, then the 8 Euler steps: each step's velocity from the oracle's latent at that step",
-        sizes: ["512", "1024"], options: ["--map"],
+        sizes: ["512", "1024", "1536"], options: ["--map"],
         oracle: "tools/oracle/anima.py trajectory --size {size}", weights: ["DiT"],
         rule: "σ within 1e-6; the rule on each guided velocity, floor 5e-4; the free pass is shown with its gain, not judged"
     ) { invocation in
@@ -176,10 +179,13 @@ enum AnimaStages {
     static let vae = Stage(
         model: model, name: "vae",
         proves: "the Qwen-Image decoder on the final latent of the oracle's trajectory, plane by plane",
-        sizes: ["512", "1024", "768x512"], oracle: "tools/oracle/anima.py vae --size {size}; vae-witness --size {size}", weights: ["VAE"],
-        rule: "the rule per plane, floor 5e-4, at the fp64 witness (no floor there); on a rectangle, the transposed image must deviate"
+        sizes: ["512", "1024", "768x512"], oracle: "tools/oracle/anima.py vae --size {size}; vae-witness --size {size}; vae-bf16 --size {size}", weights: ["VAE"],
+        rule: "the rule per plane, floor 5e-4, at the fp64 witness (no floor there); a decoder in bf16 no further from it than the reference in bf16, + 25 %; on a rectangle, the transposed image must deviate"
     ) { invocation in
         let report = Report(title: "\(model) vae \(invocation.size)")
+        let reference = try DecoderReference.image(invocation.goldens, file: "anima/goldens-anima-vae-\(invocation.size).safetensors",
+                                                   publishedInBF16: AnimaVAE.publishedInBF16,
+                                                   script: "tools/oracle/anima.py vae-bf16 --size \(invocation.size)")
         let goldens = try invocation.goldens.open("anima/goldens-anima-vae-\(invocation.size).safetensors")
         let witness = invocation.goldens.optional("anima/witness-anima-vae-f64-\(invocation.size).safetensors")
         guard let entry = goldens.entries["latent_final"], let latent = goldens.float32("latent_final"),
@@ -189,7 +195,8 @@ enum AnimaStages {
         let decoder = try AnimaVAE(path: try Library.processWide.component(.anima, "vae.safetensors"),
                                    latentHeight: entry.shape[1], latentWidth: entry.shape[2])
         let (image, _) = try decoder.decode(latent: latent.baseAddress!)
-        report.add(Judge.planes("image RGB", engine: image, oracle: expected, witness: witness?.float32("image"), planes: 3))
+        report.add(Judge.planes("image RGB", engine: image, oracle: expected, witness: witness?.float32("image"), reference: reference,
+                                planes: 3))
         if let m = Judge.orientation(image, expected, height: decoder.imageHeight, width: decoder.imageWidth) { report.add(m) }
         return report
     }

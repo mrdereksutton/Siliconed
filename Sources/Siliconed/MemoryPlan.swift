@@ -10,6 +10,9 @@ import Foundation
 ///                no encoder buffer, the decoders' smallest bands
 ///                  + the text encoder's four buffers                ── kept if the need stays ≤ B
 ///                  + the decoders' standard bands                   ── kept if the need stays ≤ B
+///                  + Flux's wide band                               ── kept if the need stays ≤ B
+///                  + the DiT's map read in place, charged whole     ── kept if the need stays ≤ B (no stream then)
+///                  + the text encoder kept, charged to every phase  ── kept if the need stays ≤ B and the map loses nothing
 ///                  └─ the map's head left to the page cache: what B leaves beside the denoising (`released`)
 ///
 /// What only buys time is chosen here. What changes a bit — `mlpBudget`, the prefill's groups,
@@ -19,7 +22,10 @@ import Foundation
 ///
 ///   - **Each knob lives in its own phase** — the encoder's buffers in `text`, the bands in `decoding`,
 ///     the map's buffers in `denoising` — and the need is the largest phase: each is kept or dropped
-///     alone, and adding one never raises another phase.
+///     alone, and adding one never raises another phase. **Except the encoder kept** (`KeptEncoder`), which lives in all of them
+///     and between renders: chosen last, beside everything else, and only where the DiT's map keeps all it had — read in place,
+///     or whole in the room beside the denoising (with the layers in it). Where the map is streamed, that room is its head,
+///     read at every evaluation: the encoder, read once per new prompt, does not take it.
 ///   - **No map read through the page cache is in the need** — B bounds the process's footprint
 ///     (`phys_footprint`), and a mapped map's pages are clean and file-backed: the kernel drops them
 ///     without writing, never swaps them, and they are nobody's footprint. So the text encoder with no
@@ -31,6 +37,11 @@ import Foundation
 ///     (measured: heads of 0.43–0.73 read 6.6–8.6 GB an evaluation, 5.4 at 0.5) — the page cache
 ///     holds less than any figure says. Only a map that fits whole in that room leaves the stream (no
 ///     buffer at all: a 32 GB Mac, an 8-bit map).
+///   - **A map read in place is charged, whole** (`Request.mapInPlace`): wrapped in a GPU buffer (`Artifact.wrappedMap`), the map's
+///     pages the CPU maps count in the footprint once the GPU has read it — the prefetcher's `WILLNEED` maps them all —, so the
+///     reading in place is a choice of the plan with its price, the whole file beside the denoising's anonymous need, taken only
+///     where that holds in B; otherwise the weights are copied into the reserve, the same bits. Taken, the map is never streamed:
+///     its need is the cached one plus the file, which is the condition `released` keeps the map whole on, and more.
 ///   - **Never one buffer**: measured, one serializes the reads behind the computation (Z-Image 512²
 ///     14.4 s a step against 4.1 with two; Qwen 512 20 s against 6), the same bits. The lean plan streams
 ///     the whole map with the stream's buffers (`TailStream.unitSlots`): a budget too short for a head is a cache too short for it, and the
@@ -59,12 +70,27 @@ package enum MemoryPlan {
         }
     }
 
+    /// **Whether this process's denoiser of `family` reads its map in place** (`WeightProducts.prepare`): a family whose blocks run on
+    /// the GPU stream (`SILICONED_STREAM`, read once per process; `SILICONED_STREAM_WAIT` turns the stream off). A setting, not the
+    /// machine's state.
+    package static let streamedFamilies: Set<Family> = [.zImage, .qwenImage21, .mossImage, .krea2, .anima]
+    package static func readsMapInPlace(_ family: Family) -> Bool {
+        streamedFamilies.contains(family) && GPUStream.policy != .off && ProcessInfo.processInfo.environment["SILICONED_STREAM_WAIT"] == nil
+    }
+
+    /// **Whether a product may read its weight in place now** (`WeightProducts.prepare`): the render's plan says so — or, outside a
+    /// render (a check, a bench: no memory contract), wherever the map is open.
+    package static var mapInPlace: Bool { current?.request.mapInPlace ?? true }
+
     /// The text encoder's reference: four buffers (three layers ahead). Nothing between four and none:
     /// one buffer was measured worse than none on the DiT, two and three never.
     package static let encoderSlots = 4
 
     /// Flux's decoder (Z-Image): the smallest band proved and timed (7.3 s at 1024² against 4.4).
     package static let fluxMinimumBand = 1 << 20
+    /// Flux's decoder, where B holds it: four times the standard band, the same bits — at 1024² 1.09 s against 1.21 in bf16
+    /// (+0.2 GB), 2.34 against 2.51 in fp32 (+0.5 GB); wider bought nothing more.
+    package static let fluxWideBand = 1 << 25
     /// Qwen-Image-2.1's decoder: a quarter of the measured band (bits proved down to 2 rows; time not measured).
     package static let qwenMinimumBand = 1 << 16
 
@@ -82,6 +108,9 @@ package enum MemoryPlan {
         /// The denoising's need with the map streamed (its buffers), and with it wholly cached.
         package var denoisingStreamed: Int
         package var denoisingCached: Int
+        /// **The map made resident beside the text** (`MapWarmup`): read in place, and the wired map holds in B beside every phase
+        /// before the denoising — its wired pages are not in the footprint, they are in the RAM.
+        package var warmsMap = false
         /// What each site decided, in order, for the report (the report prints it).
         package var decisions: [String] = []
         /// The lean plan, all of it: no encoder buffer and the smallest bands.
@@ -96,25 +125,61 @@ package enum MemoryPlan {
         var plan = request.lean
         let floor = MemoryNeed.of(plan)?.peak ?? .max
         for faster in [{ (r: inout MemoryNeed.Request) in r.encoderSlots = encoderSlots },
-                       { (r: inout MemoryNeed.Request) in r.minimumBands = false }] {
+                       { (r: inout MemoryNeed.Request) in r.minimumBands = false },
+                       { (r: inout MemoryNeed.Request) in if !r.minimumBands { r.wideBands = true } }] {
             var candidate = plan
             faster(&candidate)
             if let peak = MemoryNeed.of(candidate)?.peak, peak <= ceiling { plan = candidate }
         }
-        let need = MemoryNeed.of(plan)
+        // The head and the stream are sized on the denoising's need without the map: what `released` compares the map with.
+        let streamedNeed = MemoryNeed.of(plan)
         var cached = plan
         cached.tail = .none
+        let cachedNeed = MemoryNeed.of(cached)
+        // The map read in place, last: the whole file charged beside the cached denoising, kept where it holds in B and where the
+        // family's need charges it (a map its products would not read in place costs nothing and is not taken).
+        if request.mapInPlaceAvailable {
+            var inPlace = cached
+            inPlace.mapInPlace = true
+            if let candidate = MemoryNeed.of(inPlace), candidate.inPlaceBytes > 0, candidate.peak <= ceiling { plan = inPlace }
+        }
+        var need = plan.mapInPlace ? MemoryNeed.of(plan) : streamedNeed
+        var (denoisingStreamed, denoisingCached) = (streamedNeed?.need(of: .denoising), cachedNeed?.need(of: .denoising))
+        // The text encoder kept, after everything else: its layers charged to every phase, kept where the need with them holds in B
+        // **and the DiT's map loses nothing to them** — read in place, or still whole in the room the cache has beside the
+        // denoising (`released`). Where the map is streamed, that room is its head, read at every evaluation: taking it for an
+        // encoder read once per prompt would cost more than it saves.
+        // The denoising's needs the head is sized on (`released`) carry the layers too: they stay beside it.
+        if need != nil, let mapBytes = MemoryNeed.ditMapBytes(request), let cachedDenoising = denoisingCached {
+            var kept = plan
+            kept.encoderKept = true
+            kept.encoderSlots = 0
+            if let candidate = MemoryNeed.of(kept), candidate.keptEncoderBytes > 0, candidate.peak <= ceiling,
+               plan.mapInPlace || mapBytes <= ceiling - (cachedDenoising + candidate.keptEncoderBytes) {
+                plan = kept
+                need = candidate
+                denoisingStreamed = denoisingStreamed.map { $0 + candidate.keptEncoderBytes }
+                denoisingCached = cachedDenoising + candidate.keptEncoderBytes
+            }
+        }
         // Unknown: the denoising takes all of B — no room left for a head (`released`).
         var render = Render(ceiling: ceiling, request: plan, need: need, floor: floor,
-                            denoisingStreamed: need?.need(of: .denoising) ?? ceiling,
-                            denoisingCached: MemoryNeed.of(cached)?.need(of: .denoising) ?? ceiling)
+                            denoisingStreamed: denoisingStreamed ?? ceiling, denoisingCached: denoisingCached ?? ceiling)
         guard let need else {
             render.decisions.append(String(format: "plan: need unknown in B %.2f — refused", Double(ceiling) / 1e9))
             return render
         }
-        render.decisions.append(String(format: "plan: need %.2f GB in B %.2f (floor %.2f, process base %.2f)%@",
+        // Read in place, the map is wired for the GPU before the denoising where the phases before it hold in B beside it.
+        let before = [MemoryNeed.Phase.Kind.text, .vision, .references].compactMap { need.need(of: $0) }.max() ?? 0
+        render.warmsMap = plan.mapInPlace && before + need.inPlaceBytes <= ceiling
+        render.decisions.append(String(format: "plan: need %.2f GB in B %.2f (floor %.2f, process base %.2f)%@%@%@%@",
                                        Double(need.peak) / 1e9, Double(ceiling) / 1e9, Double(floor) / 1e9,
-                                       Double(need.base) / 1e9, (render.lean ? " — lean plan" : "") as NSString))
+                                       Double(need.base) / 1e9, (render.lean ? " — lean plan" : "") as NSString,
+                                       (plan.mapInPlace ? String(format: " — map read in place (%.2f GB charged)",
+                                                                 Double(need.inPlaceBytes) / 1e9) : "") as NSString,
+                                       (render.warmsMap ? " and made resident beside the text" : "") as NSString,
+                                       (plan.encoderKept ? String(format: " — text encoder kept (%.2f GB charged)",
+                                                                  Double(need.keptEncoderBytes) / 1e9) : "") as NSString))
         return render
     }
 
@@ -140,6 +205,7 @@ package enum MemoryPlan {
     /// from the front of the sequence are read again at every evaluation — the tail, each layer's `spans` — and the head stays in the cache.
     /// 0 where the map fits B whole (`!streamed`: read once, cold, not per evaluation). Pure; `mapBytes` is the whole map.
     package static func streamedBytes(spans: [Int], mapBytes: Int, plan render: Render, fraction: Double) -> Int {
+        if render.request.mapInPlace { return 0 }
         let (released, streamed) = Self.released(spans: spans, mapBytes: mapBytes, ceiling: render.ceiling,
                                                  streamed: render.denoisingStreamed, cached: render.denoisingCached, fraction: fraction)
         return streamed ? spans[released...].reduce(0, +) : 0
@@ -152,7 +218,7 @@ package enum MemoryPlan {
     /// 128 GB Macs, and what the plan report prints.
     package enum Verdict: Sendable, Equatable {
         /// The render goes: the lean plan's `floor` is within B, and `need` is the chosen plan's peak.
-        case plan(floor: Int, need: Int, encoderBuffers: Bool, standardBands: Bool)
+        case plan(floor: Int, need: Int, encoderBuffers: Bool, standardBands: Bool, mapInPlace: Bool = false, encoderKept: Bool = false)
         /// B is too small: `needed` is the floor, `mac` the smallest Mac sold whose B holds it.
         case refused(needed: Int, mac: Int)
         /// No Mac's RAM holds it (`MemoryNeed.limit`); `area` is the largest area the family addresses.
@@ -163,9 +229,10 @@ package enum MemoryPlan {
         /// One word for a table: `ok` plus what the plan gives up, `needs 64 GB`, `unaddressable`.
         package var label: String {
             switch self {
-            case let .plan(_, _, encoderBuffers, standardBands):
+            case let .plan(_, _, encoderBuffers, standardBands, mapInPlace, encoderKept):
                 return "ok" + (encoderBuffers && standardBands ? "" : " (lean" + (encoderBuffers ? "" : ", no encoder buffers")
                                + (standardBands ? "" : ", small bands") + ")")
+                    + (mapInPlace ? " +map in place" : "") + (encoderKept ? " +encoder kept" : "")
             case let .refused(_, mac): return "needs \(mac) GB"
             case .unaddressable: return "unaddressable"
             case .unknown: return "unknown"
@@ -181,6 +248,7 @@ package enum MemoryPlan {
         guard floor.peak <= ceiling else { return .refused(needed: floor.peak, mac: MemoryBudget.macNeeded(for: floor.peak)) }
         let plan = choose(request, ceiling: ceiling)
         return .plan(floor: floor.peak, need: plan.need?.peak ?? floor.peak,
-                     encoderBuffers: plan.request.encoderSlots > 0, standardBands: !plan.request.minimumBands)
+                     encoderBuffers: plan.request.encoderSlots > 0 || plan.request.encoderKept, standardBands: !plan.request.minimumBands,
+                     mapInPlace: plan.request.mapInPlace, encoderKept: plan.request.encoderKept)
     }
 }

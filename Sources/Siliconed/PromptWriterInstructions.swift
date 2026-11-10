@@ -25,8 +25,10 @@ import Foundation
 ///   - **What is there, never what is not**: an exclusion the user did not write (« no text », « no people ») is a
 ///     subject the text encoder reads all the same; Krea 2's and MOSS-Image's instructions forbid them. Their longer
 ///     prose also turned the writer's quotes curly (« “CROZON” »): they ask for straight ones, as the user typed them.
+///   - **The user may write their own** (`Edits`, Settings › Prompt Lab, 4/11): a whole text in place of ours, for one family
+///     and one gesture; what they did not touch follows ours from version to version.
 package enum PromptWriterInstructions {
-    package enum Gesture: CaseIterable, Sendable { case rewrite, describe }
+    package enum Gesture: String, CaseIterable, Sendable { case rewrite, describe }
 
     /// The system turn for `family` and `gesture`.
     package static func instruction(for family: Family, _ gesture: Gesture) -> String {
@@ -71,7 +73,13 @@ package enum PromptWriterInstructions {
             //   https://github.com/Tongyi-MAI/Z-Image · https://arxiv.org/abs/2511.22699
             //   https://huggingface.co/spaces/Tongyi-MAI/Z-Image-Turbo (`pe.py`: fix the unchangeable elements, add composition,
             //   light, material, colour and depth, quote the text, no metaphor, no emotional rhetoric, no "8K" or "masterpiece").
+            // The rule against absences, as Krea 2's and in second place (5/11/2026): the greedy writer turned « irish redhead
+            // on an old green bike » into a list of « no … » clauses (« no visible wear on bike pedals, … ») up to the loop
+            // guard, and Z-Image, distilled without a negative prompt, draws what a « no » names (« no lettering » wrote
+            // names on the boats).
             return "Write in English, one paragraph of plain descriptive sentences. "
+                + "Describe only what is in the picture, never what is absent: write no phrase beginning with \"no\" or \"without\" "
+                + "unless the user wrote it, not even at the end to say what the picture leaves out. "
                 + "Where the text leaves them open, add composition, camera angle, lighting, materials, colours and depth. "
                 + "No metaphors, no emotional rhetoric, no quality tags such as \"8K\" or \"masterpiece\". Under 350 words."
         case .qwenImage21:
@@ -166,6 +174,55 @@ package enum PromptWriterInstructions {
             //   https://github.com/OpenMOSS/MOSS-Image/blob/main/USERGUIDE.md
             return "Write in English, as cohesive prose: composition, subjects and their actions, setting, colours, lighting and style, "
                 + "with the spatial relationships in words. Include only what is visible."
+        }
+    }
+
+    // MARK: - The user's own
+
+    /// **The user's texts in place of ours**, one per family and gesture, kept as typed. A text equal to ours is not kept:
+    /// it would stop following ours when a version changes them. A text left blank is kept (the field stays as the hand
+    /// left it) but sends ours — the writer is never sent an empty system turn.
+    package struct Edits: Equatable, Sendable {
+        /// `family.gesture` (`zImage.rewrite`) → the text: a property list as is, for the preferences.
+        package private(set) var texts: [String: String]
+
+        package init(_ texts: [String: String] = [:]) {
+            // Only what this version can send: a family or gesture gone, or a text equal to ours, is dropped.
+            var kept: [String: String] = [:]
+            for family in Family.allCases {
+                for gesture in Gesture.allCases {
+                    let key = Self.key(family, gesture)
+                    if let text = texts[key], text != PromptWriterInstructions.instruction(for: family, gesture) { kept[key] = text }
+                }
+            }
+            self.texts = kept
+        }
+
+        package static func key(_ family: Family, _ gesture: Gesture) -> String { "\(family.rawValue).\(gesture.rawValue)" }
+
+        /// The text the field shows: theirs if they wrote one, blank included; ours otherwise.
+        package func text(_ family: Family, _ gesture: Gesture) -> String {
+            texts[Self.key(family, gesture)] ?? instruction(for: family, gesture)
+        }
+
+        /// Whether the field is theirs: « Restore » brings ours back.
+        package func isEdited(_ family: Family, _ gesture: Gesture) -> Bool { texts[Self.key(family, gesture)] != nil }
+
+        /// Their text, when it is the one sent: written, and not blank.
+        package func sent(_ family: Family, _ gesture: Gesture) -> String? {
+            texts[Self.key(family, gesture)].flatMap { $0.allSatisfy(\.isWhitespace) ? nil : $0 }
+        }
+
+        /// **The system turn sent** for `family` and `gesture`: theirs if it is sent, ours otherwise.
+        package func instruction(for family: Family, _ gesture: Gesture) -> String {
+            sent(family, gesture) ?? PromptWriterInstructions.instruction(for: family, gesture)
+        }
+
+        /// Their text for `family` and `gesture`; ours, or `nil`, restores ours.
+        package mutating func set(_ text: String?, for family: Family, _ gesture: Gesture) {
+            let key = Self.key(family, gesture)
+            if let text, text != PromptWriterInstructions.instruction(for: family, gesture) { texts[key] = text }
+            else { texts[key] = nil }
         }
     }
 }

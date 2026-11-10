@@ -227,12 +227,12 @@ private struct RatioPreviewStage: View {
 
                 // Morphing aspect ratio frame
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(Color.primary.opacity(0.12))
+                    .fill(Palette.live.opacity(0.14))
                     .overlay(
                         RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .strokeBorder(Color.primary.opacity(0.9), lineWidth: 1.6)
+                            .strokeBorder(Palette.live, lineWidth: 1.7)
                     )
-                    .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
+                    .shadow(color: Palette.live.opacity(0.24), radius: 7, y: 1)
                     .frame(width: frameW, height: frameH)
                     .animation(Motion.pick(.spring(response: 0.24, dampingFraction: 0.78)), value: ratio)
             }
@@ -300,12 +300,12 @@ private struct RatioTile: View {
             .frame(width: 44, height: 54)
             .background(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(selected ? Color.primary.opacity(0.16)
+                    .fill(selected ? Palette.live.opacity(0.16)
                                    : hovering ? Color.primary.opacity(0.09) : Color.primary.opacity(0.04))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(selected ? Color.primary.opacity(0.65)
+                    .strokeBorder(selected ? Palette.live.opacity(0.85)
                                            : hovering ? Color.primary.opacity(0.25) : Palette.hairline,
                                   lineWidth: selected ? 1.4 : 1)
             )
@@ -350,12 +350,12 @@ private struct ResolutionTile: View {
             .padding(.horizontal, 10)
             .background(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(selected ? Color.primary.opacity(0.16)
+                    .fill(selected ? Palette.live.opacity(0.16)
                                    : hovering ? Color.primary.opacity(0.09) : Color.primary.opacity(0.04))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(selected ? Color.primary.opacity(0.65)
+                    .strokeBorder(selected ? Palette.live.opacity(0.85)
                                            : hovering ? Color.primary.opacity(0.25) : Palette.hairline,
                                   lineWidth: selected ? 1.4 : 1)
             )
@@ -406,8 +406,9 @@ struct PillFace<Content: View>: View {
             .padding(.horizontal, 11)
             .frame(height: 30)
             .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color.primary.opacity(hovering || active ? 0.14 : 0.07)))
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Palette.hairline))
+                .fill(active ? Palette.live.opacity(0.14) : Color.primary.opacity(hovering ? 0.12 : 0.06)))
+            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(active ? Palette.live.opacity(0.75) : (hovering ? Color.primary.opacity(0.22) : Palette.hairline)))
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
             .animation(Motion.pick(.easeOut(duration: 0.12)), value: hovering)
@@ -475,14 +476,14 @@ struct ChoiceRow<Label: View>: View {
                 Spacer(minLength: 12)
                 Image(systemName: "checkmark")
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Palette.live)
                     .opacity(selected ? 1 : 0)
             }
             .font(.callout)
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(selected ? Color.accentColor.opacity(hovering ? 0.22 : 0.14)
+                .fill(selected ? Palette.live.opacity(hovering ? 0.2 : 0.13)
                                : hovering ? Color.primary.opacity(0.08) : Color.clear))
             .contentShape(Rectangle())
         }

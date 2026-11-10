@@ -94,6 +94,10 @@ package final class NeuralEngine: @unchecked Sendable {
     }
     private var bindings: [Shape: Binding] = [:]
     private var refused: Set<Shape> = []
+    /// Under the GPU stream, the ANE's thread binds and refuses while the encoding thread asks `accepts` for the next product.
+    private let shapesLock = NSLock()
+    private func isRefused(_ shape: Shape) -> Bool { shapesLock.withLock { refused.contains(shape) } }
+    private func refuse(_ shape: Shape) { shapesLock.withLock { _ = refused.insert(shape) } }
 
     /// Per column: `λ`, `1 / λ`, then the lift's partial maxima and L1 sums (`chunks` rows of `n` each).
     private var columns: Pages?
@@ -194,38 +198,25 @@ package final class NeuralEngine: @unchecked Sendable {
             .appendingPathComponent("siliconed-ane-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)", isDirectory: true)
     }
 
-    /// **Released, it waits for Core ML to let go of its surfaces**: Core ML keeps a program and its
-    /// operands ~0.5 s after its last prediction, then frees them on its own queue (0.51 s, measured 22/10/2026) — the
-    /// phase after the engine's (the decoder) would find them held, above its need. The surfaces are
-    /// looked up by identifier until none exists (`IOSurfaceLookup`: an object's existence, not the
-    /// footprint), at most `releaseWait`.
+    /// **Released, it does not wait for Core ML to let go of its surfaces**: Core ML keeps a program and its operands ~0.5 s after
+    /// its last prediction, then frees them on its own queue (0.51 s, measured 22/10/2026, whatever is done to them). The phase after
+    /// the engine's (the decoder) runs beside them, and its need carries them (`MemoryNeed.carryingSurfaces`).
     deinit {
-        let identifiers = bindings.values.flatMap { [$0.x, $0.w, $0.y] }
-            .compactMap { CVPixelBufferGetIOSurface($0)?.takeUnretainedValue() }.map(IOSurfaceGetID)
         bindings.removeAll()
-        let started = DispatchTime.now().uptimeNanoseconds
-        while identifiers.contains(where: { IOSurfaceLookup($0) != nil }),
-              Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9 < NeuralEngine.releaseWait {
-            usleep(2_000)
-        }
         try? FileManager.default.removeItem(at: directory)
     }
-
-    /// The longest a released engine waits for its surfaces; beyond it, the render's memory check reports
-    /// what is left.
-    package static let releaseWait = 2.0
 
     /// `false` once a program of the product's was refused (a surface Core ML cannot read dense, a shape
     /// it does not compile): the GPU then takes the whole product from the start, not after its share.
     package func accepts(rows: Int, k: Int, n: Int) -> Bool {
-        !NeuralEngine.shapes(rows: rows, k: k, n: n).contains { refused.contains($0) }
+        !NeuralEngine.shapes(rows: rows, k: k, n: n).contains { isRefused($0) }
     }
 
     /// The same for the int8 program (`int8Group`: the weight's convrot group, `nil` for none): no part of the product refused, and
     /// the cut of K one the rotation allows (`readsInt8`).
     package func accepts(rows: Int, k: Int, n: Int, int8Group group: Int?) -> Bool {
         guard NeuralEngine.readsInt8(k: k, n: n, group: group) else { return false }
-        return !NeuralEngine.shapes(rows: rows, k: k, n: n, int8: true, alignment: group ?? 64).contains { refused.contains($0) }
+        return !NeuralEngine.shapes(rows: rows, k: k, n: n, int8: true, alignment: group ?? 64).contains { isRefused($0) }
     }
 
     /// **Whether the int8 program can read a `k × n` weight rotated by `group`** (`nil`: not rotated): K a whole number of groups, and
@@ -655,13 +646,13 @@ package final class NeuralEngine: @unchecked Sendable {
 
     /// The shape's program bound to its own three surfaces, made once.
     private func binding(_ shape: Shape) -> Binding? {
-        if let binding = bindings[shape] { return binding }
-        if refused.contains(shape) { return nil }
+        if let binding = shapesLock.withLock({ bindings[shape] }) { return binding }
+        if isRefused(shape) { return nil }
         guard let model = program(shape),
               let x = NeuralEngine.surface(rows: shape.rows, columns: shape.k),
               let w = NeuralEngine.surface(rows: shape.k, columns: shape.n, int8: shape.int8),
               let y = NeuralEngine.surface(rows: shape.rows, columns: shape.n) else {
-            refused.insert(shape)
+            refuse(shape)
             return nil
         }
         let dims = { (values: [Int]) in values.map { NSNumber(value: $0) } }
@@ -673,10 +664,10 @@ package final class NeuralEngine: @unchecked Sendable {
                 (shape.int8 ? "wq" : "w"): MLFeatureValue(multiArray: MLMultiArray(pixelBuffer: w, shape: dims([shape.k, shape.n]))),
             ])
             let binding = Binding(model: model, features: features, options: options, x: x, w: w, y: y)
-            bindings[shape] = binding
+            shapesLock.withLock { bindings[shape] = binding }
             return binding
         } catch {
-            refused.insert(shape)
+            refuse(shape)
             return nil
         }
     }

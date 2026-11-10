@@ -69,8 +69,9 @@ package struct CapacityModel: Codable, Sendable, Equatable {
         /// rotation, `bfloat × int8`, the scale after the sums; `gpu/q8act`: a GGUF Q8_0, each block's scale applied in fp32
         /// to its partial sums) — the integers are exact in bf16, so only the operand is rounded, as for `bf16act`; a K-quant
         /// (`gpu/q4kact`: Q4_K, Q5_K's `sc·q` exact in fp16, `bfloat × half` per super-block, its `d` in fp32 on the partial sums,
-        /// the mins apart — `KQuantKernels`).
-        case fp32, bf16, bf16act, int8, q8, fp16, int8act, q8act, q4kact
+        /// the mins apart — `KQuantKernels`); the int8 weight as published beside the activation quantized to int8 (`gpu/int8x8`: W8A8,
+        /// ComfyUI's `int8_linear` — after its rotation, per row, `int8 × int8 → int32`, `s_x · s_w` after the sums: `QuantizedKernels`).
+        case fp32, bf16, bf16act, int8, q8, fp16, int8act, q8act, q4kact, int8x8
         /// Attentions: the MPSGraph graph, the flash kernel, a share of the heads on the CPU, the three stages by tiles of query rows
         /// (`tiles`: fp32 throughout; `tiles16`: fp16 operands, fp32 sums; `tilesbf16`: bf16 operands, fp32 sums) — the last two in
         /// the form their map chose (`attentionTiles`).
@@ -79,7 +80,7 @@ package struct CapacityModel: Codable, Sendable, Equatable {
         /// A product's form (its seconds a line of `k`, `n` and rows), not an attention's.
         package var isProduct: Bool {
             switch self {
-            case .fp32, .bf16, .bf16act, .int8, .q8, .fp16, .int8act, .q8act, .q4kact: return true
+            case .fp32, .bf16, .bf16act, .int8, .q8, .fp16, .int8act, .q8act, .q4kact, .int8x8: return true
             case .graph, .flash, .heads, .tiles, .tiles16, .tilesbf16: return false
             }
         }
@@ -306,13 +307,47 @@ package struct CapacityModel: Codable, Sendable, Equatable {
     package var wake: Double?
     /// The idle from which the wake is paid (seconds): the report's.
     package var wakeIdle: Double?
+    /// **The QK-norm and RoPE before a self-attention, on either side** (`Context.normRope`), each a line in the values it runs over (Q's and
+    /// K's, `S · (H + H_kv) · Dh`): what the solver weighs against each other, the CPU's pass paying the wake besides. `nil`: a map without
+    /// the probe — the CPU's pass, priced as before (at nothing but the wake).
+    package var normRope: NormRope?
+
+    /// The two routes of the QK-norm and RoPE, `t = t₀ + values / rate`.
+    package struct NormRope: Codable, Sendable, Equatable {
+        /// The CPU's pass (`Ops.rmsNormRope`), its wall.
+        package var cpu: Line
+        /// The GPU's kernel queued before the attention (`QKNormRope`, `wait: false`): the GPU's own seconds, what the chain adds.
+        package var gpu: Line
+        /// The same kernel waited for — what a cut by heads pays, its CPU heads reading Q and K after it: its wall, the completion included.
+        package var gpuWaited: Line
+        package init(cpu: Line, gpu: Line, gpuWaited: Line) { self.cpu = cpu; self.gpu = gpu; self.gpuWaited = gpuWaited }
+    }
+
+    /// **The decoders' 3×3 convolution, on fp32 operands and on bf16 ones** (`Context.convolution`): MPSGraph's, each a line in its
+    /// FLOP. What the plan reads to run a decoder whose weights are published in bf16 in bf16 (`CapacityPlan.Resources.halfDecoder`).
+    /// `nil`: a map without the probe, or whose bf16 convolution the judge refused — the decoders in fp32, as before.
+    package var convolution: Convolution?
+
+    /// The two lines of the decoders' convolution, `t = t₀ + FLOP / rate`, and the work they are compared at.
+    package struct Convolution: Codable, Sendable, Equatable {
+        package var fp32: Line
+        package var bf16: Line
+        /// The FLOP of the probe's largest convolution: a decoder's convolutions are of that order (a band's), never thin.
+        package var work: Double
+        package init(fp32: Line, bf16: Line, work: Double) { self.fp32 = fp32; self.bf16 = bf16; self.work = work }
+        /// **bf16 is the faster at the decoders' work**: what the plan takes, where half precision is allowed.
+        package var prefersHalf: Bool {
+            func seconds(_ l: Line) -> Double { l.rate > 0 ? l.t0 + work / l.rate : .infinity }
+            return seconds(bf16) < seconds(fp32)
+        }
+    }
 
     package init() {}
 
     // MARK: - JSON
 
     private enum CodingKeys: String, CodingKey {
-        case crest, lines, thin, aneRowUnit, sharing, heat, memoryBandwidth, diskBandwidth, diskClasses, preparation, kquantPreparation, kquantStaging, tiles, thinTiles, attentionTiles, noise, wake, wakeIdle
+        case crest, lines, thin, aneRowUnit, sharing, heat, memoryBandwidth, diskBandwidth, diskClasses, preparation, kquantPreparation, kquantStaging, tiles, thinTiles, attentionTiles, noise, wake, wakeIdle, normRope, convolution
     }
 
     /// The engines of a dictionary keyed by their names.
@@ -354,6 +389,8 @@ package struct CapacityModel: Codable, Sendable, Equatable {
         diskClasses = try c.decodeIfPresent([String: CapacityDisk.Reading].self, forKey: .diskClasses) ?? [:]
         wake = try c.decodeIfPresent(Double.self, forKey: .wake)
         wakeIdle = try c.decodeIfPresent(Double.self, forKey: .wakeIdle)
+        normRope = try c.decodeIfPresent(NormRope.self, forKey: .normRope)
+        convolution = try c.decodeIfPresent(Convolution.self, forKey: .convolution)
         let prepared = try c.decodeIfPresent([String: [String: Double]].self, forKey: .preparation) ?? [:]
         for (kindName, paths) in prepared {
             guard let kind = WeightKind(rawValue: kindName) else {
@@ -402,6 +439,8 @@ package struct CapacityModel: Codable, Sendable, Equatable {
         if !diskClasses.isEmpty { try c.encode(diskClasses, forKey: .diskClasses) }
         try c.encodeIfPresent(wake, forKey: .wake)
         try c.encodeIfPresent(wakeIdle, forKey: .wakeIdle)
+        try c.encodeIfPresent(normRope, forKey: .normRope)
+        try c.encodeIfPresent(convolution, forKey: .convolution)
         try c.encode(Dictionary(uniqueKeysWithValues: preparation.map { kind, paths in
             (kind.rawValue, Dictionary(uniqueKeysWithValues: paths.map { ($0.key.rawValue, $0.value) }))
         }), forKey: .preparation)
@@ -437,6 +476,9 @@ package struct CapacityModel: Codable, Sendable, Equatable {
         m.kquantStaging = kquantStaging.map(r)
         m.noise = noise.map(r)
         m.wake = wake.map(r); m.wakeIdle = wakeIdle.map(r)
+        func line(_ l: Line) -> Line { Line(t0: r(l.t0), rate: r(l.rate)) }
+        m.normRope = normRope.map { NormRope(cpu: line($0.cpu), gpu: line($0.gpu), gpuWaited: line($0.gpuWaited)) }
+        m.convolution = convolution.map { Convolution(fp32: line($0.fp32), bf16: line($0.bf16), work: r($0.work)) }
         return m
     }
 
@@ -508,6 +550,9 @@ package struct CapacityModel: Codable, Sendable, Equatable {
         case .q8act: return (1 + 4.0 / 64, 8)
         // The blocks (0.56 B), unpacked into `sc·q` (half: written, then read) and the mins; the activation's rounded copy and sums.
         case .q4kact: return (0.5625 + 4 + 4.0 / 32, 9)
+        // The activation read once in fp32 and written in int8, read again in int8; the sums written in int32, then read and written
+        // in fp32 by the scales' pass.
+        case .int8x8: return (1, 18)
         default: return (4, 4)
         }
     }

@@ -81,8 +81,13 @@ package struct QwenImage21Maps: Sendable {
     package let ditUnitStaging: Int
     /// Each DiT layer's bytes in the map and the map's, from the header (`Artifact.layerSpans`): what the stream reads per evaluation.
     package let ditLayerSpans: [Int], ditMapBytes: Int
+    /// What the DiT's map costs read in place (`MemoryNeed.inPlaceBytes`, `Request.mapInPlace`).
+    package let ditInPlaceBytes: Int
     /// The largest layer's staging run in the encoder's map: what one of its buffers holds.
     package let encoderLayerStaging: Int
+    /// What the encoder costs kept (`MemoryNeed.keptEncoderBytes(header:)`, `Request.encoderKept`): its language layers, never the
+    /// vision tower (an edit's, read through the map).
+    package let encoderKeptBytes: Int
     /// What the tokenizer's two tables map (`Tokenizer.tableBytes`).
     package let tokenizerTables: Int
     /// What widening the largest rotated (int8 convrot) weight allocates beside the arenas
@@ -108,7 +113,9 @@ package struct QwenImage21Maps: Sendable {
                                              fileSize: ditSize)
         ditLayerSpans = Artifact.layerSpans(header: dit, prefixes: (0..<ditConfig.layers).map(QwenImage21DiT.layerPrefix), fileSize: ditSize)
         ditMapBytes = Artifact.mapBytes(header: dit)
+        ditInPlaceBytes = MemoryNeed.inPlaceBytes(header: dit, fileSize: ditSize)
         ditLayerStaging = ditStaging; encoderLayerStaging = encoderStaging; self.tokenizerTables = tokenizerTables
+        encoderKeptBytes = MemoryNeed.keptEncoderBytes(header: encoder)
         encoderRotationScratch = Widen.rotationScratchBytes(header: encoder)
         ditRotationScratch = Widen.rotationScratchBytes(header: dit, prefixes: (0..<ditConfig.layers).map(QwenImage21DiT.layerPrefix))
         ditFormat = Artifact.weightFormat(header: dit); encoderFormat = Artifact.weightFormat(header: encoder)
@@ -326,6 +333,7 @@ package struct QwenImage21Need {
             // The map's stream buffers: only with the K/V in memory (`QwenImage21DiT.body`).
             Term("map staging", storage == .memory && request.tail.fraction > 0
                 ? TailStream.unitSlots * maps.ditUnitStaging : 0),
+            Term(MemoryNeed.inPlaceTerm, request.mapInPlace && request.mapInPlaceAvailable ? maps.ditInPlaceBytes : 0),
             Term("DiT rotation scratch", maps.ditRotationScratch),
         ]
         // Two slots of the user's stack, on the 7 Linears of a block (`StreamedLoRA`), and, with more
@@ -373,7 +381,8 @@ package struct QwenImage21Need {
         let band = request.minimumBands ? min(QwenImage21VAEDecoder.bandPixels, MemoryPlan.qwenMinimumBand)
                                         : QwenImage21VAEDecoder.bandPixels
         let plan = QwenImage21VAEDecoder.plan(config: vae, latentHeight: target.height, latentWidth: target.width,
-                                              bandPixels: band)
+                                              bandPixels: band, half: VAEPrecision.half(plan: request.ditPlan,
+                                                                                        publishedInBF16: QwenImage21VAEDecoder.publishedInBF16))
         let rgb = 3 * H * W * 4
         return .init(kind: .decoding, terms: MemoryNeed.vae("Qwen decoder", plan)
             + [Term("RGB copy beyond the heaps", max(0, rgb - plan.registers - plan.workspace)),
@@ -398,6 +407,8 @@ package struct QwenImage21Need {
     package var need: MemoryNeed {
         MemoryNeed(phases: [visionPhase, textPhase, referencesPhase, denoisingPhase, decodingPhase].compactMap { $0 },
                    crossing: crossing, base: request.base)
+            .keeping(request, encoder: maps.encoderKeptBytes)
+            .carryingSurfaces()
     }
 
     // ── the pieces ───────────────────────────────────────────────────────────────────────────

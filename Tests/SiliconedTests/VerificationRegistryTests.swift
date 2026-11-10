@@ -69,6 +69,25 @@ final class VerificationRegistryTests: XCTestCase {
         XCTAssertThrowsError(try Invocation(["--edit", "0"], accepted: ["--edit"], defaultSize: "512"))
     }
 
+    /// `--int8-activations` takes the W8A8 reference beside the golden (`witness-w8a8-…`) and requires it; never with fp32 throughout.
+    func testInt8ActivationsAreJudgedAgainstTheW8A8Reference() throws {
+        let options: Set<String> = ["--int8-activations", "--no-accelerators"]
+        XCTAssertThrowsError(try Invocation(["--int8-activations", "--no-accelerators"], accepted: options, defaultSize: "512"))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("w8a8-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let invocation = try Invocation(["--int8-activations", "--goldens", directory.path], accepted: options, defaultSize: "512",
+                                        designates: false)
+        XCTAssertTrue(invocation.int8Activations)
+        XCTAssertFalse(invocation.halfPrecision)
+        let golden = "goldens-dit-compact-512.safetensors"
+        XCTAssertThrowsError(try invocation.reference(golden, script: "bf16", w8a8Script: "w8a8")) { XCTAssert($0 is Skip) }
+        let values: [Float] = [1, 2]
+        try ForgeDiT.writeSafetensors([(name: "x", dtype: "F32", shape: [2], bytes: values.withUnsafeBytes { Data($0) })],
+                                      to: directory.appendingPathComponent("witness-w8a8-dit-compact-512.safetensors").path)
+        XCTAssertEqual(try invocation.reference(golden, script: "bf16", w8a8Script: "w8a8")?.values("x"), values)
+    }
+
     // MARK: - The rule
 
     private func judge(_ engine: [Float], _ oracle: [Float], witness: [Float]? = nil, half: [Float]? = nil) -> Measure {
@@ -138,7 +157,7 @@ final class VerificationRegistryTests: XCTestCase {
         let stages = Registry.stages.filter { $0.model == "anima" }
         let runs = CheckCommand.everyStage(stages, ["--goldens", "g"])
         XCTAssertEqual(runs.map(\.0), ["anima tokenizer", "anima text", "anima dit 512", "anima dit 1024", "anima dit 768x512",
-                                       "anima trajectory 512", "anima trajectory 1024",
+                                       "anima dit 1536", "anima trajectory 512", "anima trajectory 1024", "anima trajectory 1536",
                                        "anima vae 512", "anima vae 1024", "anima vae 768x512", "anima img2img"])
         XCTAssertEqual(runs[3].2, ["--size", "1024", "--goldens", "g"])
         XCTAssertEqual(runs[0].2, ["--goldens", "g"])

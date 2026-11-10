@@ -33,7 +33,16 @@ import Synchronization
 ///     Where the GPU has matrix accelerators both products reach them (M5: 18 TFLOP/s against 7 for the three stages); the tile that
 ///     fits the registers is the machine's (M5: 16 rows — the 16 × 128 accumulator; 32 rows halves the speed), hence measured.
 ///     P is written at S's own index: the two destinations of one descriptor share the layout (`map_iterator` maps only into a
-///     reduction), which the check against fp64 proves on every Mac (`KernelStages`).
+///     reduction), which the check against fp64 proves on every Mac (`KernelStages`). O's rescale is skipped when no row's maximum
+///     moved (every factor exactly 1: same bits), and only the last chunk asks for each score's index. Where the time goes (M5 Pro,
+///     S = 4 128, 30 heads): the two products alone 12.0 ms, the softmax ~1.2 ms more, the rounding of Q, K, V before the kernel
+///     ~1.1 ms — where the QK-norm and RoPE pass precedes the attention it writes Q and K rounded into `operands` itself (Z, Krea 2,
+///     MOSS, Anima), and only V is converted here: its product has too many routes (ANE rows, LoRA added after) to write it rounded. Mapping O's iterator straight into the factor's reduction (no threadgroup memory), P handed through threadgroup
+///     memory, two chunks a pass, `exp2` on a folded scale, 8 or 16 simdgroups: all as fast or slower there.
+///   - **The output is the next product's operand** (`to_out`, `proj.o`): where that product rounds its activation to bf16
+///     (`BFloatKernels`), the last pass — the fused kernel's epilogue, or the three stages' second product — also writes O rounded into
+///     the slot the product reads (`run(…rounded:)`, `WeightProducts.RoundedOperand`), with `round_bf16`'s integer sequence on the values
+///     it stores: the product encodes no rounding pass, the same bits. The fp32 O is written as before (the ANE's rows, a LoRA read it).
 ///   - **Any length**: the tensors carry the real extents, so a block of 100 rows or a key length that is no multiple of 32 needs no
 ///     padding rows. Cross-attention (`keys ≠ sequence`) and grouped k/v heads are the same code; a causal mask is not (the callers
 ///     that need one never ask).
@@ -174,8 +183,13 @@ package final class TiledAttention {
     private struct Params {
         var rows: UInt32, keys: UInt32, qWidth: UInt32, kvWidth: UInt32, headDim: UInt32, group: UInt32
         var headBase: UInt32, firstRow: UInt32, count: UInt32, scale: Float, outWidth: UInt32
+        /// 1: the output also written rounded to bf16 (`run(…rounded:)`).
+        var rounds: UInt32
     }
-    private struct FusedParams { var sequence: UInt32, keys: UInt32, qWidth: UInt32, kvWidth: UInt32, outWidth: UInt32, group: UInt32; var scale: Float }
+    private struct FusedParams {
+        var sequence: UInt32, keys: UInt32, qWidth: UInt32, kvWidth: UInt32, outWidth: UInt32, group: UInt32; var scale: Float
+        var rounds: UInt32
+    }
 
     /// The attentions run on bf16 operands since the process started: the check under `--bf16-attention` says how many it judged.
     package static let bf16Runs = Mutex<Int>(0)
@@ -187,18 +201,45 @@ package final class TiledAttention {
         switch precision { case .fp32: "tiles"; case .fp16: "tiles16"; case .bf16: "tilesbf16" }
     }
 
+    /// `SILICONED_ATTN_ROUND_FUSED=0`: every operand converted before the kernel again, as before their producers wrote them rounded
+    /// (a forcing for a measurement; the same bits either way).
+    package static let fusesRounding = ProcessInfo.processInfo.environment["SILICONED_ATTN_ROUND_FUSED"] != "0"
+
+    /// The operands an attention may be handed already rounded (`Prerounded`): written by their producer into `operands`.
+    package struct Prerounded: OptionSet, Sendable {
+        package let rawValue: Int
+        package init(rawValue: Int) { self.rawValue = rawValue }
+        package static let q = Prerounded(rawValue: 1), k = Prerounded(rawValue: 2), v = Prerounded(rawValue: 4)
+    }
+
+    /// **The half-precision copies the kernel reads**, where a producer may write them itself (the QK-norm and RoPE pass,
+    /// `QKNormRope.Operand.rounded`) and spare the conversion before the kernel: `q [S, H·Dh]`, `k` and `v [keys, KVH·Dh]`, the callers'
+    /// own layouts — so only when this instance computes every head (a head split's GPU share keeps a compact copy of its columns).
+    /// `nil` in fp32 or under a split. The same rounding of the same fp32 values either way: the same bits.
+    package var operands: (q: MTLBuffer, k: MTLBuffer, v: MTLBuffer)? { computed == heads ? half : nil }
+
+    /// **The output written rounded to bf16 too**, as the next product reads its operand (`run(…rounded:)`,
+    /// `WeightProducts.RoundedOperand`): only where this instance computes every head — a head split's GPU share writes some columns.
+    package var writesRounded: Bool { computed == heads }
+
     /// **Runs the attention** over `q [S, H·Dh]`, `k` and `v [keys, KVH·Dh]` (fp32, offset 0), writing `out [S, H·Dh]`: one command
-    /// buffer. Returns the GPU seconds.
-    package func run(q: MTLBuffer, k: MTLBuffer, v: MTLBuffer, into out: MTLBuffer) -> Double {
-        let clock = ProductLedger.attention(sequence: sequence, heads: heads, headDim: headDim, route: route)
+    /// buffer. Returns the GPU seconds. `prerounded`: the operands already in `operands`, whose fp32 source is then not read.
+    /// `rounded`: the output also written there rounded to bf16 (`[S, H·Dh]`, the same row stride; `writesRounded` only) — by the
+    /// last pass, from the values it stores, with the rounding of `round_bf16` (`BFloatKernels.roundingSource`): the operand the
+    /// projection that reads `out` would have rounded itself, bit for bit; the fp32 output is written as before.
+    package func run(q: MTLBuffer, k: MTLBuffer, v: MTLBuffer, into out: MTLBuffer, prerounded: Prerounded = [],
+                     rounded: (buffer: MTLBuffer, offset: Int)? = nil) -> Double {
+        let clock = ProductLedger.attention(sequence: sequence, heads: heads, headDim: headDim, route: route, stream: queue.stream)
         defer { clock?.finish() }
-        let commands = submit(q: q, k: k, v: v, into: out)
-        commands.waitUntilCompleted()
-        return Attention.verdict(commands, what: "tiled attention S=\(sequence) H=\(computed)/\(heads) \(precision)")
+        let commands = submit(q: q, k: k, v: v, into: out, prerounded: operands == nil ? [] : prerounded, rounded: rounded)
+        let what = "tiled attention S=\(sequence) H=\(computed)/\(heads) \(precision)"
+        return queue.stream.settle(commands, label: "sdpa GPU", what: { what })
     }
 
     /// The same, **committed and not awaited**: the head split computes the CPU's heads meanwhile, then waits on the buffer.
-    package func submit(q: MTLBuffer, k: MTLBuffer, v: MTLBuffer, into out: MTLBuffer) -> MTLCommandBuffer {
+    package func submit(q: MTLBuffer, k: MTLBuffer, v: MTLBuffer, into out: MTLBuffer, prerounded: Prerounded = [],
+                        rounded: (buffer: MTLBuffer, offset: Int)? = nil) -> MTLCommandBuffer {
+        precondition(rounded == nil || writesRounded, "the output rounded where only some heads are computed")
         if precision == .bf16 { Self.bf16Runs.withLock { $0 += 1 } }
         if precision == .fp16 { Self.fp16Runs.withLock { $0 += 1 } }
         let commands = queue.checkedCommandBuffer()
@@ -213,9 +254,10 @@ package final class TiledAttention {
             let kvComputed = computed / group
             e.setComputePipelineState(halfPipeline)
             // (source, copy, rows, columns converted, source row stride): the first columns of each row, the computed heads'.
-            for (from, to, rows, columns, stride) in [(q, half.q, sequence, computed * headDim, qWidth),
-                                                      (k, half.k, keys, kvComputed * headDim, kvWidth),
-                                                      (v, half.v, keys, kvComputed * headDim, kvWidth)] {
+            for (operand, from, to, rows, columns, stride) in [(Prerounded.q, q, half.q, sequence, computed * headDim, qWidth),
+                                                               (.k, k, half.k, keys, kvComputed * headDim, kvWidth),
+                                                               (.v, v, half.v, keys, kvComputed * headDim, kvWidth)]
+                where !prerounded.contains(operand) {
                 var shape = SIMD3<UInt32>(UInt32(columns), UInt32(stride), UInt32(columns))
                 e.setBuffer(from, offset: 0, index: 0); e.setBuffer(to, offset: 0, index: 1)
                 e.setBytes(&shape, length: MemoryLayout<SIMD3<UInt32>>.stride, index: 2)
@@ -226,11 +268,13 @@ package final class TiledAttention {
         }
         if let tile, let fusedPipeline {
             var p = FusedParams(sequence: UInt32(sequence), keys: UInt32(keys), qWidth: UInt32(qWidth), kvWidth: UInt32(kvWidth),
-                                outWidth: UInt32(outWidth), group: UInt32(group), scale: 1 / Float(headDim).squareRoot())
+                                outWidth: UInt32(outWidth), group: UInt32(group), scale: 1 / Float(headDim).squareRoot(),
+                                rounds: rounded == nil ? 0 : 1)
             e.setComputePipelineState(fusedPipeline)
             e.setBuffer(qs, offset: 0, index: 0); e.setBuffer(ks, offset: 0, index: 1); e.setBuffer(vs, offset: 0, index: 2)
             e.setBuffer(out, offset: 0, index: 3)
             e.setBytes(&p, length: MemoryLayout<FusedParams>.stride, index: 4)
+            e.setBuffer(rounded?.buffer ?? out, offset: rounded?.offset ?? 0, index: 5)  // read only where `rounds`
             e.setThreadgroupMemoryLength(tile.simdgroups * tile.rows * 4, index: 0)
             let blocks = (sequence + tile.rows * tile.simdgroups - 1) / (tile.rows * tile.simdgroups)
             e.dispatchThreadgroups(MTLSize(width: 1, height: blocks, depth: computed),
@@ -249,7 +293,7 @@ package final class TiledAttention {
                 var p = Params(rows: UInt32(rows), keys: UInt32(keys), qWidth: UInt32(qWidth), kvWidth: UInt32(kvWidth),
                                headDim: UInt32(headDim), group: UInt32(heads / kvHeads), headBase: UInt32(head),
                                firstRow: UInt32(first), count: UInt32(count), scale: 1 / Float(headDim).squareRoot(),
-                               outWidth: UInt32(outWidth))
+                               outWidth: UInt32(outWidth), rounds: rounded == nil ? 0 : 1)
                 e.setComputePipelineState(scoresPipeline)
                 e.setBuffer(qs, offset: 0, index: 0); e.setBuffer(ks, offset: 0, index: 1); e.setBuffer(scores, offset: 0, index: 2)
                 e.setBytes(&p, length: MemoryLayout<Params>.stride, index: 3)
@@ -265,6 +309,7 @@ package final class TiledAttention {
                 e.setBuffer(probabilities ?? scores, offset: 0, index: 0); e.setBuffer(vs, offset: 0, index: 1)
                 e.setBuffer(out, offset: 0, index: 2)
                 e.setBytes(&p, length: MemoryLayout<Params>.stride, index: 3)
+                e.setBuffer(rounded?.buffer ?? out, offset: rounded?.offset ?? 0, index: 4)  // read only where `rounds`
                 e.dispatchThreadgroups(MTLSize(width: headDim / 32, height: (rows + 63) / 64, depth: count),
                                        threadsPerThreadgroup: MTLSize(width: productPipeline.threadExecutionWidth * 4, height: 1, depth: 1))
                 head += count
@@ -303,7 +348,10 @@ package final class TiledAttention {
         uint rows, keys, qWidth, kvWidth, headDim, group, headBase, firstRow, count;
         float scale;
         uint outWidth;
+        uint rounds;
     };
+
+    \(BFloatKernels.roundingSource)
 
     template <typename Op, typename SA, typename SB, typename SC>
     inline void tile(Op op, SA a, SB b, SC c) {
@@ -370,9 +418,10 @@ package final class TiledAttention {
                                    uint tg [[threadgroup_position_in_grid]], uint sg [[simdgroup_index_in_threadgroup]],
                                    uint lane [[thread_index_in_simdgroup]]) { softmax_rounded<bfloat>(s, out, p, tg, sg, lane); }
 
-    // O[first + r, head·Dh + n] = Σ_j P[z, r, j] · V[j, kvhead·Dh + n], written where the head's columns are.
+    // O[first + r, head·Dh + n] = Σ_j P[z, r, j] · V[j, kvhead·Dh + n], written where the head's columns are — and, where `rounds`,
+    // rounded to bf16 into `r` at the same index, from the values stored.
     template <typename T>
-    inline void product_body(device T *pr, device T *v, device float *o, constant Params &p, uint3 g) {
+    inline void product_body(device T *pr, device T *v, device float *o, device ushort *r, constant Params &p, uint3 g) {
         const int head = int(p.headBase + g.z), kvHead = head / int(p.group);
         const int rows = int(p.rows), keys = int(p.keys), dim = int(p.headDim);
         tensor<device T, dextents<int32_t, 2>, tensor_inline> A(pr + ulong(g.z) * rows * keys, dextents<int32_t, 2>(keys, rows));
@@ -383,14 +432,29 @@ package final class TiledAttention {
         constexpr auto d = matmul2d_descriptor(64, 32, static_cast<int>(dynamic_extent), false, false, false);
         matmul2d<d, execution_simdgroups<4>> op;
         const int x = g.x * 32, y = g.y * 64;
-        tile(op, A.slice(0, y), B.slice(x, 0), C.slice(x, y));
+        auto As = A.slice(0, y);
+        auto Bs = B.slice(x, 0);
+        auto t = op.template get_destination_cooperative_tensor<decltype(As), decltype(Bs), float>();
+        for (uint16_t i = 0; i < t.get_capacity(); ++i) { if (t.is_valid_element(i)) t[i] = 0; }
+        op.run(As, Bs, t);
+        t.store(C.slice(x, y));
+        if (p.rounds) {
+            tensor<device bfloat, dextents<int32_t, 2>, tensor_inline> R((device bfloat *)r + ulong(p.firstRow) * p.outWidth + ulong(head) * dim,
+                                                                       dextents<int32_t, 2>(dim, rows), array<int32_t, 2>({1, int(p.outWidth)}));
+            auto u = op.template get_destination_cooperative_tensor<decltype(As), decltype(Bs), bfloat>();
+            for (uint16_t i = 0; i < t.get_capacity(); ++i) { if (t.is_valid_element(i)) u[i] = as_type<bfloat>(ushort(rounded(t[i]))); }
+            u.store(R.slice(x, y));
+        }
     }
     kernel void tiles_product_f32(device float *pr [[buffer(0)]], device float *v [[buffer(1)]], device float *o [[buffer(2)]],
-                                  constant Params &p [[buffer(3)]], uint3 g [[threadgroup_position_in_grid]]) { product_body<float>(pr, v, o, p, g); }
+                                  constant Params &p [[buffer(3)]], device ushort *r [[buffer(4)]],
+                                  uint3 g [[threadgroup_position_in_grid]]) { product_body<float>(pr, v, o, r, p, g); }
     kernel void tiles_product_f16(device half *pr [[buffer(0)]], device half *v [[buffer(1)]], device float *o [[buffer(2)]],
-                                  constant Params &p [[buffer(3)]], uint3 g [[threadgroup_position_in_grid]]) { product_body<half>(pr, v, o, p, g); }
+                                  constant Params &p [[buffer(3)]], device ushort *r [[buffer(4)]],
+                                  uint3 g [[threadgroup_position_in_grid]]) { product_body<half>(pr, v, o, r, p, g); }
     kernel void tiles_product_bf16(device bfloat *pr [[buffer(0)]], device bfloat *v [[buffer(1)]], device float *o [[buffer(2)]],
-                                   constant Params &p [[buffer(3)]], uint3 g [[threadgroup_position_in_grid]]) { product_body<bfloat>(pr, v, o, p, g); }
+                                   constant Params &p [[buffer(3)]], device ushort *r [[buffer(4)]],
+                                   uint3 g [[threadgroup_position_in_grid]]) { product_body<bfloat>(pr, v, o, r, p, g); }
 
     // The first `columns` of each row of a source with row stride `stride`, into a compact copy (x: column, y: row).
     kernel void tiles_to_half(device const float *x [[buffer(0)]], device half *y [[buffer(1)]], constant uint3 &shape [[buffer(2)]],
@@ -433,10 +497,13 @@ package final class TiledAttention {
         using namespace mpp::tensor_ops;
         typedef \(type) T;
         constant constexpr int BR = \(tile.rows), BC = \(tile.keys), D = \(headDim);
-        struct FusedParams { uint sequence, keys, qWidth, kvWidth, outWidth, group; float scale; };
+        struct FusedParams { uint sequence, keys, qWidth, kvWidth, outWidth, group; float scale; uint rounds; };
+
+        \(BFloatKernels.roundingSource)
 
         kernel void fused(device T *q [[buffer(0)]], device T *k [[buffer(1)]], device T *v [[buffer(2)]], device float *o [[buffer(3)]],
-                          constant FusedParams &p [[buffer(4)]], threadgroup float *shared [[threadgroup(0)]],
+                          constant FusedParams &p [[buffer(4)]], device ushort *r [[buffer(5)]],
+                          threadgroup float *shared [[threadgroup(0)]],
                           uint3 tg [[threadgroup_position_in_grid]], uint sg [[simdgroup_index_in_threadgroup]],
                           uint groups [[simdgroups_per_threadgroup]]) {
             const int head = int(tg.z), kvHead = head / int(p.group);
@@ -475,19 +542,27 @@ package final class TiledAttention {
             for (uint16_t i = 0; i < Sc.get_capacity(); ++i) { if (Sc.is_valid_element(i)) Sc[i] = 0; }
                 scores.run(Qb, Kc, Sc);
                 // The keys past the length (the last chunk's) leave the softmax: −∞, hence P = 0 (V's rows there read as zeros).
-                const int valid = min(BC, keys - j0);
-                #pragma unroll
-            for (uint16_t i = 0; i < Sc.get_capacity(); ++i) {
-                    if (Sc.is_valid_element(i)) { auto at = Sc.get_multidimensional_index(i); Sc[i] = at[0] < valid ? Sc[i] * p.scale : -INFINITY; }
+                // Only the last chunk can hold such keys: the others scale without asking for each score's index.
+                const int valid = keys - j0;
+                if (valid < BC) {
+                    #pragma unroll
+                    for (uint16_t i = 0; i < Sc.get_capacity(); ++i) {
+                        if (Sc.is_valid_element(i)) { auto at = Sc.get_multidimensional_index(i); Sc[i] = at[0] < valid ? Sc[i] * p.scale : -INFINITY; }
+                    }
+                } else {
+                    #pragma unroll
+                    for (uint16_t i = 0; i < Sc.get_capacity(); ++i) { if (Sc.is_valid_element(i)) Sc[i] *= p.scale; }
                 }
                 auto mx = scores.get_row_reduction_destination_cooperative_tensor<QT, KT, float>();
                 reduce_rows(Sc, mx, reduction_operation::max, -INFINITY);
+                bool unchanged = true;
                 #pragma unroll
             for (uint16_t i = 0; i < mx.get_capacity(); ++i) {
                     if (mx.is_valid_element(i)) {
                         const float mn = max(m[i], mx[i]);
                         const float alpha = precise::exp(m[i] - mn);
                         m[i] = mn; mx[i] = alpha;
+                        unchanged = unchanged && alpha == 1.0f;
                         factor[mx.get_multidimensional_index(i)[0]] = alpha;
                     }
                 }
@@ -504,10 +579,13 @@ package final class TiledAttention {
                 reduce_rows(Sc, sum, reduction_operation::sum, 0.0f);
                 #pragma unroll
             for (uint16_t i = 0; i < l.get_capacity(); ++i) { if (l.is_valid_element(i)) l[i] = l[i] * mx[i] + sum[i]; }
-                simdgroup_barrier(mem_flags::mem_threadgroup);
-                #pragma unroll
-            for (uint16_t i = 0; i < Oc.get_capacity(); ++i) {
-                    if (Oc.is_valid_element(i)) { auto at = Oc.get_multidimensional_index(i); Oc[i] *= factor[at[1]]; }
+                // No row's maximum moved (every factor exactly 1, uniform over the simdgroup): rescaling O would change no bit — skipped.
+                if (!simd_all(unchanged)) {
+                    simdgroup_barrier(mem_flags::mem_threadgroup);
+                    #pragma unroll
+                    for (uint16_t i = 0; i < Oc.get_capacity(); ++i) {
+                        if (Oc.is_valid_element(i)) { auto at = Oc.get_multidimensional_index(i); Oc[i] *= factor[at[1]]; }
+                    }
                 }
                 auto Pin = product.get_left_input_cooperative_tensor<T, T, float>(P);
                 auto Vc = V.slice(0, j0);
@@ -523,6 +601,16 @@ package final class TiledAttention {
             }
             auto Ob = O.slice(0, row0);
             Oc.store(Ob);
+            // The output rounded to bf16 too, where the next product reads its operand so: from the values just stored, into a
+            // cooperative tensor of O's layout, stored as O is (element by element, the writes scatter and cost more than the pass).
+            if (p.rounds) {
+                tensor<device bfloat, dextents<int32_t, 2>, tensor_inline> R((device bfloat *)r + head * D, dextents<int32_t, 2>(D, int(p.sequence)),
+                                                                           array<int32_t, 2>({1, int(p.outWidth)}));
+                auto Rc = product.get_destination_cooperative_tensor<PT, VT, bfloat>();
+                #pragma unroll
+                for (uint16_t i = 0; i < Oc.get_capacity(); ++i) { if (Oc.is_valid_element(i)) Rc[i] = as_type<bfloat>(ushort(rounded(Oc[i]))); }
+                Rc.store(R.slice(0, row0));
+            }
         }
         """
     }

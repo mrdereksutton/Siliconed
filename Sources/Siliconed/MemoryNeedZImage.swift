@@ -9,6 +9,7 @@ import Foundation
 ///     references  (img2img, Détail) the `fitted` copy when the size differs                     │ a time,
 ///                 + the Flux encoder's two heaps and host copies (`VAEEncoder.plan`)              │ each
 ///     denoising   4 DiT arenas(S, r) + CacheLoRA(r) + the tail's buffers + the sampler's latents │ handing
+///                 (+ the whole DiT file where the plan reads it in place: `Request.mapInPlace`)   │
 ///                 + the full-size attentions the 3 blocks keep (a head split from 1024 rows:     │ back its
 ///                   host arena ⊕ the GPU heads' queries; MPSGraph below) · its GEMM               │ memory
 ///     decoding    the Flux decoder's two heaps and the image it returns (`VAE.plan`)              ┘
@@ -39,7 +40,7 @@ import Foundation
 ///     `CacheLoRA` (every module a stack can touch, `DiT.loraTargets` — the worst case), and, with more than one LoRA, the `down`
 ///     staging of one module while the cache fills (`LoRA.downBytes`);
 ///   - **the VAEs hand everything back before they return** (two heaps of ours; `finish` waits until
-///     Metal's ledger is back to its level before them, under 0.1 s): the encoder's memory is not
+///     Metal's ledger has let them go, under 0.1 s): the encoder's memory is not
 ///     carried into the denoising any more, nor the DiT's into the decoding (`Context.keptDenoiser`
 ///     released first);
 ///   - Z-Image has no reference image: `references` are img2img's (and Détail's) starting image as
@@ -63,8 +64,16 @@ extension MemoryNeed {
         /// `Artifact.largestRun` of the encoder's layers (0 when its config does not parse).
         package let encoderLayerStaging: Int
         /// What widening the DiT's largest int8 convrot weight allocates outside every arena
-        /// (`Widen.rotationScratchBytes`): an imported Comfy-style convrot DiT; 0 otherwise.
+        /// (`Widen.rotationScratchBytes`): the Compact's int8 convrot, or an imported Comfy-style one; 0 otherwise.
         package let ditRotationScratch: Int
+        /// **What the DiT's map costs read in place** (`Request.mapInPlace`): the length `Artifact.wrappedMap` wraps — the whole file,
+        /// rounded up to the page — where its block products may read their weight there, bf16 or int8 (`MemoryNeed.inPlaceBytes`); 0
+        /// otherwise.
+        package let ditInPlaceBytes: Int
+        /// What the encoder costs kept (`MemoryNeed.keptEncoderBytes(header:)`, `Request.encoderKept`): its layers, resident.
+        package let encoderKeptBytes: Int
+        /// Every tensor of the DiT's map (`Artifact.mapBytes`): what `MemoryPlan.released` compares with the room beside the denoising.
+        package let ditMapBytes: Int
 
         package init(dit: [String: Any], ditSize: Int = .max, encoder: [String: Any], encoderSize: Int = .max) {
             self.dit = dit; self.ditSize = ditSize; self.encoder = encoder; self.encoderSize = encoderSize
@@ -75,6 +84,9 @@ extension MemoryNeed {
                 Artifact.largestRun(header: encoder, prefixes: TextEncoder.layerPrefixes(config), fileSize: encoderSize)
             } ?? 0
             ditRotationScratch = Widen.rotationScratchBytes(header: dit)
+            ditInPlaceBytes = MemoryNeed.inPlaceBytes(header: dit, fileSize: ditSize)
+            encoderKeptBytes = MemoryNeed.keptEncoderBytes(header: encoder)
+            ditMapBytes = Artifact.mapBytes(header: dit)
         }
 
         /// What one buffer of the DiT's stream holds over `layers`: the largest tensor's run (`Artifact.largestRun`).
@@ -115,7 +127,7 @@ extension MemoryNeed {
             }
         }
         static func size(_ path: String) -> Int {
-            ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? NSNumber)?.intValue ?? .max
+            Library.fileSize(path) ?? .max
         }
     }
 
@@ -191,6 +203,7 @@ extension MemoryNeed {
             Term("LoRA down staging", request.loraRanks.count > 1
                 ? LoRA.downBytes(k: loraModules.map(\.k).max() ?? 0, rank: request.loraRanks.max() ?? 0) : 0),
             Term("map staging", staging),
+            Term(inPlaceTerm, request.mapInPlace && request.mapInPlaceAvailable ? maps.ditInPlaceBytes : 0),
             // The DiT's velocity `[C, h, w]`.
             Term("sampler", latent + request.solver.historyBytes(count: latent / f)),
             Term("DiT rotation scratch", maps.ditRotationScratch),
@@ -205,11 +218,16 @@ extension MemoryNeed {
                  plan: request.ditPlan, weight: Artifact.weightFormat(header: maps.dit)))
 
         // ── decoding: the decoder's two heaps and the image it returns; the latent it reads crosses ──
-        let band = request.minimumBands ? min(VAE.bandElements, MemoryPlan.fluxMinimumBand) : VAE.bandElements
+        let band = request.minimumBands ? min(VAE.bandElements, MemoryPlan.fluxMinimumBand)
+            : request.wideBands ? max(VAE.bandElements, MemoryPlan.fluxWideBand) : VAE.bandElements
         let decoding = Phase(kind: .decoding,
-                             terms: vae("Flux decoder", VAE.plan(latentHeight: latentHeight, latentWidth: latentWidth,
-                                                                 band: band)) + [batchImages(request)])
+                             terms: vae("Flux decoder", VAE.plan(latentHeight: latentHeight, latentWidth: latentWidth, band: band,
+                                                                 half: VAEPrecision.half(plan: request.ditPlan,
+                                                                                         publishedInBF16: VAE.publishedInBF16)))
+                                 + [batchImages(request)])
 
         return MemoryNeed(phases: [text] + references + [denoising, decoding], crossing: crossing, base: request.base)
+            .keeping(request, encoder: maps.encoderKeptBytes)
+            .carryingSurfaces()
     }
 }

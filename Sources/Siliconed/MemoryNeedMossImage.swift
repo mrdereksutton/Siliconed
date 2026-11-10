@@ -31,7 +31,8 @@ extension MossImageDiT {
     /// `normed`, `q`, `k`, `v`, `merged`, `o` (`d`), `h1` (`2·ffn`, the fused value|gate and the text blocks'
     /// QKV), `h2` (`ffn`), the RoPE table (`head_dim`); the six modulation vectors and the head's two; one
     /// reserve for the widest weight (`d · 2·ffn`); the latent's tokens and the final projection at the image's
-    /// rows; the encoder's rows at the text's; under a LoRA, its `mid [n, r]`.
+    /// rows; the encoder's rows at the text's; under a LoRA, its `mid [n, r]`; where the denoiser streams (`GPUStream.policy`), the
+    /// block's two norm weights where the GPU's modulated norm reads them (`2·d`).
     package static func slices(config: Config, imageTokens s: Int, maxText: Int, rank: Int) -> [(name: String, count: Int)] {
         let n = s + maxText, d = config.dim, f = config.hidden
         return [("x", n * d), ("normed", n * d), ("q", n * d), ("k", n * d), ("v", n * d), ("merged", n * d), ("o", n * d),
@@ -39,6 +40,7 @@ extension MossImageDiT {
                 ("tokens", s * config.channels), ("projected", s * config.channels), ("textIn", maxText * config.textDim),
                 ("freqs", n * config.headDim)]
             + (rank > 0 ? [("loraMid", n * rank)] : [])
+            + (GPUStream.policy != .off ? [("norms", 2 * d)] : [])
     }
 
     /// **The arena `init` maps** for this grid, these text rows and this cumulative rank.
@@ -113,6 +115,7 @@ extension MemoryNeed {
             Term("DiT arena", MossImageDiT.arenaBytes(config: config, gridHeight: gridHeight, gridWidth: gridWidth,
                                                      maxText: t, rank: rank)),
             Term("map staging", streamed ? TailStream.unitSlots * unit : 0),
+            Term(inPlaceTerm, request.mapInPlace && request.mapInPlaceAvailable ? inPlaceBytes(header: header, fileSize: fileSize) : 0),
             Term("LoRA cache", rank > 0 ? CacheLoRA.arenaBytes(CacheLoRA.bytes(modules: modules.map { ($0.k, $0.n, rank) })) : 0),
             Term("LoRA down staging", request.loraRanks.count > 1
                 ? LoRA.downBytes(k: modules.map(\.k).max() ?? 0, rank: request.loraRanks.max() ?? 0) : 0),

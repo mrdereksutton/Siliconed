@@ -51,7 +51,11 @@ import Synchronization
 ///     it). P20 allows it (bf16 between two operations, fp32 accumulations); the plan assigns it by the
 ///     measured throughput, and the check judges it against diffusers in bf16;
 ///   - **the rotation moves to the activation**: `W = R · q · s` along K (`Widen.dequantizeRotated`),
-///     `x · W = (x · R) · q · s`, `R = H/√G` — fp32 butterflies on `x`, the integers never touched.
+///     `x · W = (x · R) · q · s`, `R = H/√G` — fp32 butterflies on `x`, the integers never touched;
+///   - **a quantized activation: W8A8, the quant's own author's forward** (`QuantizedKernels`, a third library compiled only when asked):
+///     the rotated activation quantized to int8 per row, `int8_t × int8_t → int32`, then `s_x · s_w` — ComfyUI's `int8_linear` on the
+///     published int8 convrot, at the integers' rate of the tensor units. Only beside a published 8-bit weight (the multiplication in
+///     the weight's own format), judged against Comfy's own forward: no further from the fp64 witness than it, + 25 %.
 package final class TensorGEMM {
     private let queue: MTLCommandQueue
     func makeCommands() -> MTLCommandBuffer { queue.checkedCommandBuffer() }
@@ -67,6 +71,9 @@ package final class TensorGEMM {
     /// compiled.
     let rounded: BFloatKernels?
     package var roundsActivations: Bool { rounded != nil }
+    /// The products on an activation quantized to int8 (W8A8, `QuantizedKernels`), `nil` unless asked at `init` and compiled.
+    let quantized: QuantizedKernels?
+    package var quantizesActivations: Bool { quantized != nil }
     /// ... and the Q8_0 kernel on it compiled.
     package var roundsBlocks: Bool { rounded?.blocks != nil }
     /// The tile each kernel runs (`MatmulTile`): the map's, or the standard one of the default library.
@@ -196,7 +203,7 @@ package final class TensorGEMM {
 
     /// `nil` on a device without Metal 4, or when this macOS's compiler refuses the kernel: the caller keeps the
     /// default path — and the refusal is said (`MetalCompile`), since that path is slower and another arithmetic.
-    package init?(device: MTLDevice, queue: MTLCommandQueue, roundingActivations: Bool = false) {
+    package init?(device: MTLDevice, queue: MTLCommandQueue, roundingActivations: Bool = false, quantizingActivations: Bool = false) {
         guard device.supportsFamily(.metal4) else { return nil }
         let options = MTLCompileOptions()
         options.languageVersion = .version4_0
@@ -220,6 +227,8 @@ package final class TensorGEMM {
         } else {
             rounded = nil
         }
+        // Refused by this compiler: the integers are read on the rounded or fp32 activation, as before W8A8 (said by `MetalCompile`).
+        quantized = quantizingActivations ? QuantizedKernels(device: device, options: options) : nil
     }
 
     /// `C [m, n] = A [m, k] · W`, `A` and `C` fp32, `W` bf16 — `[k, n]` when `weightIsTransposed`
@@ -237,7 +246,7 @@ package final class TensorGEMM {
         encoder.setBuffer(c, offset: 0, index: 2)
         var mkn = SIMD3<UInt32>(UInt32(m), UInt32(k), UInt32(n))
         encoder.setBytes(&mkn, length: MemoryLayout<SIMD3<UInt32>>.stride, index: 3)
-        encoder.dispatchThreadgroups(tile.grid(rows: m, columns: n), threadsPerThreadgroup: tile.threads(pipeline))
+        tile.dispatch(encoder, pipeline, rows: m, columns: n)
         encoder.endEncoding()
         commands.commit()
         commands.waitUntilCompleted()
@@ -249,24 +258,45 @@ package final class TensorGEMM {
     /// `perColumn` false), `R` the convrot rotation of group `rotation` (nil: none). The rotation goes
     /// to the activation — `x · R · q · s` — by chunks of `chunk` rows into `rotated` (fp32, the
     /// reserve's tail), each chunk's product written where its rows go. One submission; returns the
-    /// GPU seconds.
-    package func linear(a: MTLBuffer, int8 w: MTLBuffer, scales: MTLBuffer, scalesOffset: Int, perColumn: Bool,
+    /// GPU seconds. `weightOffset`: where `q` starts in `w` (the tensor's offset in the wrapped map, read in place). `settled`: the
+    /// buffer goes to the queue's stream (`GPUStream.settle`: queued, 0 returned, while the stream is on) instead of being waited for —
+    /// only where the CPU writes nothing this product reads before the next drain: its weight read in place, not staged.
+    package func linear(a: MTLBuffer, int8 w: MTLBuffer, weightOffset: Int = 0, scales: MTLBuffer, scalesOffset: Int, perColumn: Bool,
                         block: Int? = nil, rotation: (group: Int, scratch: MTLBuffer, offset: Int, chunk: Int)?,
-                        rounding: Rounding? = nil, c: MTLBuffer, m: Int, k: Int, n: Int) -> Double {
-        let commands = submit(a: a, int8: w, scales: scales, scalesOffset: scalesOffset, perColumn: perColumn,
-                              block: block, rotation: rotation, rounding: rounding, c: c, m: m, k: k, n: n, columns: n)
-        commands.waitUntilCompleted()
-        return Attention.verdict(commands, what: "matmul2d float × int8 \(m)×\(k)×\(n)")
+                        rounding: Rounding? = nil, quantizing: Quantizing? = nil, prequantized: Bool = false,
+                        c: MTLBuffer, m: Int, k: Int, n: Int, settled: Bool = false) -> Double {
+        func finish(_ commands: MTLCommandBuffer, _ what: @escaping @Sendable () -> String) -> Double {
+            if settled { return queue.stream.settle(commands, label: "gemm GPU", what: what) }
+            commands.waitUntilCompleted()
+            return Attention.verdict(commands, what: what())
+        }
+        if let quantizing, block == nil,
+           let commands = submitQuantized(a: a, int8: w, weightOffset: weightOffset, scales: scales, scalesOffset: scalesOffset,
+                                          perColumn: perColumn, group: rotation?.group, quantizing: quantizing, prequantized: prequantized,
+                                          c: c, m: m, k: k, n: n) {
+            GEMM.quantizedProducts.withLock { $0 += 1 }
+            return finish(commands) { "matmul2d int8 × int8 \(m)×\(k)×\(n)" }
+        }
+        // Refused (no pipeline for this k): the fp32 activation, rotated in the room the codes had — a row of fp32 takes four times
+        // a row of codes, so the chunk is a quarter or less.
+        var rotation = rotation
+        if let quantizing, let r = rotation {
+            rotation = (r.group, r.scratch, r.offset, max(1, quantizing.rows * (k + 4) / (4 * k)))
+        }
+        let commands = submit(a: a, int8: w, weightOffset: weightOffset, scales: scales, scalesOffset: scalesOffset,
+                              perColumn: perColumn, block: block, rotation: rotation, rounding: rounding, c: c, m: m, k: k, n: n,
+                              columns: n)
+        return finish(commands) { "matmul2d float × int8 \(m)×\(k)×\(n)" }
     }
 
     /// The same on the first `columns` of `C` only, **committed and not awaited**: the caller computes
     /// the other columns meanwhile (the AMX, `WeightProducts`), then waits on the buffer. `block`: the
     /// scales are per block of that many rows and column (GGUF Q8_0, `[k / block, n]`), applied inside
-    /// the product — no rotation then (`Artifact` refuses one there).
-    package func submit(a: MTLBuffer, int8 w: MTLBuffer, scales: MTLBuffer, scalesOffset: Int, perColumn: Bool,
+    /// the product — no rotation then (`Artifact` refuses one there). `weightOffset`: where `q` starts in `w`.
+    package func submit(a: MTLBuffer, int8 w: MTLBuffer, weightOffset: Int = 0, scales: MTLBuffer, scalesOffset: Int, perColumn: Bool,
                         block: Int? = nil, rotation: (group: Int, scratch: MTLBuffer, offset: Int, chunk: Int)?,
                         rounding: Rounding? = nil, c: MTLBuffer, m: Int, k: Int, n: Int, columns: Int) -> MTLCommandBuffer {
-        if let rounding, let rounded = submitRounded(a: a, int8: w, scales: scales, scalesOffset: scalesOffset,
+        if let rounding, let rounded = submitRounded(a: a, int8: w, weightOffset: weightOffset, scales: scales, scalesOffset: scalesOffset,
                                                      perColumn: perColumn, block: block, rotation: rotation,
                                                      rounding: rounding, c: c, m: m, k: k, n: n, columns: columns) {
             return rounded
@@ -277,7 +307,7 @@ package final class TensorGEMM {
         if let block, let blocks {
             encoder.setComputePipelineState(blocks)
             encoder.setBuffer(a, offset: 0, index: 0)
-            encoder.setBuffer(w, offset: 0, index: 1)
+            encoder.setBuffer(w, offset: weightOffset, index: 1)
             encoder.setBuffer(c, offset: 0, index: 2)
             encoder.setBytes(&mkn, length: MemoryLayout<SIMD3<UInt32>>.stride, index: 3)
             encoder.setBuffer(scales, offset: scalesOffset, index: 4)
@@ -296,11 +326,11 @@ package final class TensorGEMM {
         func product(_ x: MTLBuffer, _ xOffset: Int, first: Int, rows: Int) {
             encoder.setComputePipelineState(int8)
             encoder.setBuffer(x, offset: xOffset, index: 0)
-            encoder.setBuffer(w, offset: 0, index: 1)
+            encoder.setBuffer(w, offset: weightOffset, index: 1)
             encoder.setBuffer(c, offset: first * n * 4, index: 2)
             mkn.x = UInt32(rows)
             encoder.setBytes(&mkn, length: MemoryLayout<SIMD3<UInt32>>.stride, index: 3)
-            encoder.dispatchThreadgroups(tile.grid(rows: rows, columns: columns), threadsPerThreadgroup: tile.threads(int8))
+            tile.dispatch(encoder, int8, rows: rows, columns: columns)
         }
         if let rotation {
             var groupNorm = SIMD2<UInt32>(UInt32(rotation.group), (1 / Float(rotation.group).squareRoot()).bitPattern)

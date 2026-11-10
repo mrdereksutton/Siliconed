@@ -14,7 +14,8 @@ import Foundation
 ///
 /// Where it runs: the seven GEMMs on the GPU (with the AMX when co-execution is on, `Conductor`), the
 /// SDPA on the GPU with a share of the heads on the CPU (`HeadSplitAttention`), the SwiGLU on
-/// the GPU (`ElementwiseGPU`), the norms, RoPE and residuals on the CPU. The elementwise ops weigh
+/// the GPU (`ElementwiseGPU`), the QK-norm and RoPE on the CPU or the GPU as the plan says (`QKNormRope`), the other norms and the
+/// residuals on the CPU. The elementwise ops weigh
 /// little in FLOPs, carry all the porting risk, and on the CPU they can be debugged.
 package final class Block: BoundaryRecording, PhaseTiming {
     package struct Shapes {
@@ -248,15 +249,11 @@ package final class Block: BoundaryRecording, PhaseTiming {
 
     /// `x` as `[S, D]`, modified in place, `S` the sizing length. `freqs` as `[S, Dh/2, 2]`.
     /// `adaln` as `[256]`.
-    package func forward(x: UnsafeMutablePointer<Float>, freqs: UnsafePointer<Float>,
-                        adaln: UnsafePointer<Float>, adalnDim: Int, prefix: String) throws {
-        self.prefix = prefix
-        let s = shapes.sequence
-        let d = shapes.dim, h = shapes.hidden
-        let heads = shapes.heads, headDim = shapes.headDim
-
-        // ── modulation: a bare Linear, with bias, four pieces. No SiLU.
-        let scaleMSA = modulationSlot, gateMSA = modulationSlot + d
+    /// The modulation's four pieces into `modulationSlot` — `scale_msa, gate_msa, scale_mlp, gate_mlp`, tanh on the gates, 1 + on
+    /// the scales; ones without modulation (the context refiners). On the CPU.
+    private func modulate(adaln: UnsafePointer<Float>, adalnDim: Int) throws {
+        let d = shapes.dim
+        let gateMSA = modulationSlot + d, scaleMSA = modulationSlot
         let scaleMLP = modulationSlot + 2 * d, gateMLP = modulationSlot + 3 * d
         if modulation {
             try widen("adaLN_modulation.0.weight", count: 4 * d * adalnDim, into: weightReserve)
@@ -279,6 +276,121 @@ package final class Block: BoundaryRecording, PhaseTiming {
             // duplicate the path, because a second path is a second place to go wrong.
             for i in 0..<(4 * d) { modulationSlot[i] = 1 }
         }
+    }
+
+    // ── the stream (prototype, `SILICONED_STREAM`) ──────────────────────────────────────────────────────────────────────────
+
+    /// The norms' weights and the modulation, where the GPU's norms read them: `[norm1 | norm2 | ffn_norm1 | ffn_norm2 | scale_msa |
+    /// gate_msa | scale_mlp | gate_mlp]`, each `dim` floats. Written by the CPU after the block's drain, read by the queued kernels.
+    private lazy var bank: MTLBuffer? = gemm.device.makeBuffer(length: 8 * shapes.dim * 4, options: .storageModeShared)
+
+    /// **The block as one stream of GPU work** (`GPUStream`): the norms and gated residuals on the GPU (`ElementwiseGPU.normScale`,
+    /// `normResidual`), the QK-norm and RoPE chained to the attention (`QKNormRope`), the products' bf16 weights read in place
+    /// (`WeightProducts`), and one drain, at the block's end. Not the CPU norms' bits (`ElementwiseGPU`: the sum's order): judged
+    /// against the oracle. `false` where the prototype does not run (a boundary recorded, a LoRA, no tiled attention, no QK pass on the
+    /// GPU): the block runs as before.
+    private func forwardStreamed(x: UnsafeMutablePointer<Float>, freqs: UnsafePointer<Float>,
+                                 adaln: UnsafePointer<Float>, adalnDim: Int) throws -> Bool {
+        guard GPUStream.policy != .off, !recordBoundaries, lora == nil, cacheLoRA == nil, flash() == nil, let tiled = tiled(),
+              QKNormRope.runs(headDim: shapes.headDim), let pass = QKNormRope.shared(device: gemm.device, queue: gemm.queue),
+              let bank else { return false }
+        let s = shapes.sequence
+        let d = shapes.dim, h = shapes.hidden
+        let heads = shapes.heads, headDim = shapes.headDim
+        let stream = gemm.queue.stream
+        stream.drain()                                     // the CPU writes the reserve, the modulation and the bank next
+        try modulate(adaln: adaln, adalnDim: adalnDim)
+        // The norms' weights are widened where the map's stream serves them (`DiT.consumptionOrder`), not all at once here: a
+        // streamed tail reads its units in that order into three buffers, and a weight asked before its unit is read finds no buffer
+        // free — it is served through the page cache and strands its unit's buffer until the next evaluation (`TailStream.fallbacks`:
+        // `ffn_norm2` asked first, one per streamed layer). Each lands in its own slice of the bank, which no work queued before it reads.
+        let weights = bank.contents().assumingMemoryBound(to: Float.self)
+        func widenNorm(_ index: Int, _ name: String) throws { try widen(name, count: d, into: weights + index * d) }
+        try widenNorm(0, "attention_norm1.weight")
+        (weights + 4 * d).update(from: modulationSlot, count: 4 * d)
+
+        let xs = try gemm.region(x, bytes: s * d * 4, name: "x")
+        let x0: ElementwiseGPU.BufferSlice = (xs.buffer, xs.offset / 4)
+        func at(_ i: Int) -> ElementwiseGPU.BufferSlice { (bank, i * d) }
+        let a = try gemm.wrap(UnsafeMutableRawPointer(normed), bytes: s * d * 4, name: "normed")
+        let o = try gemm.wrap(UnsafeMutableRawPointer(qkv), bytes: s * d * 4, name: "qkv")
+        let qb = try gemm.wrap(UnsafeMutableRawPointer(qHeads), bytes: s * d * 4, name: "q")
+        let kb = try gemm.wrap(UnsafeMutableRawPointer(kHeads), bytes: s * d * 4, name: "k")
+        let vb = try gemm.wrap(UnsafeMutableRawPointer(vHeads), bytes: s * d * 4, name: "v")
+        let ob = try gemm.wrap(UnsafeMutableRawPointer(merged), bytes: s * d * 4, name: "sdpaOut")
+        let table = try gemm.region(freqs, bytes: s * headDim * 4, name: "freqs")
+
+        if GPUStream.policy != .off, ProcessInfo.processInfo.environment["SILICONED_STREAM_WAIT"] == nil { stream.isOn = true }
+        defer { stream.isOn = false }                      // drains: the DiT reads `x` on the CPU after the last block
+
+        // ── attention
+        // The norm writes the operand of the three products rounded too (`WeightProducts.RoundedOperand`): one rounding, not three —
+        // or, for W8A8, quantized to int8 as it writes it: no pass of the products' own. `normed` has no other reader: the residuals
+        // read `x` and `qkv`, so where the three read the copy alone the norm writes no fp32 (`readers`).
+        let attentionReaders: [(name: String, n: Int)] = [(prefix + "attention.to_q.weight", d), (prefix + "attention.to_k.weight", d),
+                                                          (prefix + "attention.to_v.weight", d)]
+        let normed1 = try products.roundedOperand(prefix + "attention.to_q.weight", m: s, k: d, n: d, quantizes: true,
+                                                  readers: attentionReaders)
+        timed("norm") { elementwise.normScale(x0, weight: at(0), scale: at(4), into: (a, 0), rows: s, columns: d, eps: eps, rounded: normed1) }
+        for (name, buffer) in [("attention.to_q.weight", qb), ("attention.to_k.weight", kb), ("attention.to_v.weight", vb)] {
+            try products.linear(prefix + name, a: a, c: buffer, m: s, k: d, n: d, rounded: normed1)
+        }
+        try widen("attention.norm_q.weight", count: headDim, into: scratch)
+        let normQ = Array(UnsafeBufferPointer(start: scratch, count: headDim))
+        try widen("attention.norm_k.weight", count: headDim, into: scratch)
+        let normK = Array(UnsafeBufferPointer(start: scratch, count: headDim))
+        // The pass joins the attention's class (`ProductLedger.pass`), its GPU seconds on the stream.
+        let passClock = ProductLedger.pass(sequence: s, heads: heads, headDim: headDim, stream: stream)
+        // The pass writes Q and K rounded straight into the attention's copies (no conversion before its kernel, no fp32 written back:
+        // nothing else reads them here); the same rounding of the same values, the same bits.
+        let copies = TiledAttention.fusesRounding ? tiled.operands : nil
+        let precision = tiled.precision
+        timed("qk-norm + rope") {
+            pass.run([.init(qb, heads: heads, weight: normQ, rounded: copies.map { ($0.q, precision) }, keepsFP32: false),
+                      .init(kb, heads: heads, weight: normK, rounded: copies.map { ($0.k, precision) }, keepsFP32: false)],
+                     rows: s, headDim: headDim, eps: 1e-5, freqs: table, layout: .interleaved, wait: !stream.isOn)
+        }
+        passClock?.finish()
+        // The attention writes `to_out`'s operand rounded too, where it reads it so: no pass of the product's own.
+        let attended = tiled.writesRounded ? try products.roundedOperand(prefix + "attention.to_out.0.weight", m: s, k: d, n: d) : nil
+        timed("sdpa wall") {
+            ownTimings["sdpa GPU", default: 0] += tiled.run(q: qb, k: kb, v: vb, into: ob, prerounded: copies == nil ? [] : [.q, .k],
+                                                            rounded: attended?.bf16)
+        }
+        try products.linear(prefix + "attention.to_out.0.weight", a: ob, c: o, m: s, k: d, n: d, rounded: attended)
+        try widenNorm(1, "attention_norm2.weight")
+        try widenNorm(2, "ffn_norm1.weight")
+        timed("residual") { elementwise.normResidual(x0, plus: (o, 0), weight: at(1), gate: at(5), rows: s, columns: d, eps: eps) }
+
+        // ── feed-forward
+        let normed2 = try products.roundedOperand(prefix + "feed_forward.w1.weight", m: s, k: d, n: h, quantizes: true,
+                                                  readers: [(prefix + "feed_forward.w1.weight", h), (prefix + "feed_forward.w3.weight", h)])
+        timed("norm") { elementwise.normScale(x0, weight: at(2), scale: at(6), into: (a, 0), rows: s, columns: d, eps: eps, rounded: normed2) }
+        let h1 = try gemm.wrap(UnsafeMutableRawPointer(hidden1), bytes: s * h * 4, name: "h1")
+        let h3 = try gemm.wrap(UnsafeMutableRawPointer(hidden3), bytes: s * h * 4, name: "h3")
+        try products.linear(prefix + "feed_forward.w1.weight", a: a, c: h1, m: s, k: d, n: h, rounded: normed2)
+        try products.linear(prefix + "feed_forward.w3.weight", a: a, c: h3, m: s, k: d, n: h, rounded: normed2)
+        let gated = try products.roundedOperand(prefix + "feed_forward.w2.weight", m: s, k: h, n: d, quantizes: true,
+                                                holding: elementwise.swigluQuantizedColumns, readers: [(prefix + "feed_forward.w2.weight", d)])
+        timed("swiglu") { ownTimings["elementwise GPU", default: 0] += elementwise.swiglu((h1, 0), (h3, 0), count: s * h, rounded: gated) }
+        try products.linear(prefix + "feed_forward.w2.weight", a: h1, c: o, m: s, k: h, n: d, rounded: gated)
+        try widenNorm(3, "ffn_norm2.weight")
+        timed("residual") { elementwise.normResidual(x0, plus: (o, 0), weight: at(3), gate: at(7), rows: s, columns: d, eps: eps) }
+        return true
+    }
+
+    package func forward(x: UnsafeMutablePointer<Float>, freqs: UnsafePointer<Float>,
+                        adaln: UnsafePointer<Float>, adalnDim: Int, prefix: String) throws {
+        self.prefix = prefix
+        let s = shapes.sequence
+        let d = shapes.dim, h = shapes.hidden
+        let heads = shapes.heads, headDim = shapes.headDim
+
+        // ── modulation: a bare Linear, with bias, four pieces. No SiLU.
+        let scaleMSA = modulationSlot, gateMSA = modulationSlot + d
+        let scaleMLP = modulationSlot + 2 * d, gateMLP = modulationSlot + 3 * d
+        if try forwardStreamed(x: x, freqs: freqs, adaln: adaln, adalnDim: adalnDim) { return }
+        try modulate(adaln: adaln, adalnDim: adalnDim)
 
         // ── attention ────────────────────────────────────────────────────────────────────
         try widen("attention_norm1.weight", count: d, into: scratch)
@@ -302,18 +414,6 @@ package final class Block: BoundaryRecording, PhaseTiming {
             record(label, destination, s * d)
         }
 
-        // QK-Norm over head_dim, AFTER the split into heads and BEFORE the RoPE.
-        try widen("attention.norm_q.weight", count: headDim, into: scratch)
-        timed("qk-norm") { Ops.rmsNorm(qHeads, weight: scratch, into: qHeads, rows: s * heads, columns: headDim, eps: 1e-5) }
-        record("layer0_q_normed", qHeads, s * d)
-        try widen("attention.norm_k.weight", count: headDim, into: scratch)
-        timed("qk-norm") { Ops.rmsNorm(kHeads, weight: scratch, into: kHeads, rows: s * heads, columns: headDim, eps: 1e-5) }
-        record("layer0_k_normed", kHeads, s * d)
-
-        timed("rope") {
-            Ops.rope(qHeads, freqs: freqs, sequence: s, heads: heads, headDim: headDim)
-            Ops.rope(kHeads, freqs: freqs, sequence: s, heads: heads, headDim: headDim)
-        }
         // No more rearrangement here: `q`, `k` and `v` go out as the GEMM wrote them,
         // `[S, H·Dh]` in fp32, and the output comes back in the same layout. The transposition and
         // the precision conversion live in `Attention`'s graph — see its initialization comment
@@ -322,6 +422,47 @@ package final class Block: BoundaryRecording, PhaseTiming {
         let flash = flash()
         let tiled = tiled()
         let split = flash == nil && tiled == nil ? try headSplit() : nil
+
+        // QK-Norm over head_dim, AFTER the split into heads and BEFORE the RoPE (eps 1e-5, not the block's).
+        try widen("attention.norm_q.weight", count: headDim, into: scratch)
+        let normQ = Array(UnsafeBufferPointer(start: scratch, count: headDim))
+        try widen("attention.norm_k.weight", count: headDim, into: scratch)
+        let normK = Array(UnsafeBufferPointer(start: scratch, count: headDim))
+        let passClock = ProductLedger.pass(sequence: s, heads: heads, headDim: headDim)
+        if attentionAssignment.normRopeOnGPU, QKNormRope.runs(headDim: headDim),
+           let pass = QKNormRope.shared(device: gemm.device, queue: gemm.queue) {
+            // On the GPU, chained to the attention (`QKNormRope`); waited for where the CPU reads Q and K next.
+            let table = try gemm.region(freqs, bytes: s * headDim * 4, name: "freqs")
+            timed("qk-norm + rope") {
+                if recordBoundaries {
+                    pass.run([.init(qb, heads: heads, weight: normQ), .init(kb, heads: heads, weight: normK)],
+                             rows: s, headDim: headDim, eps: 1e-5, freqs: nil, layout: .interleaved)
+                    record("layer0_q_normed", qHeads, s * d)
+                    record("layer0_k_normed", kHeads, s * d)
+                    pass.run([.init(qb, heads: heads, weight: nil), .init(kb, heads: heads, weight: nil)],
+                             rows: s, headDim: headDim, eps: 1e-5, freqs: table, layout: .interleaved)
+                } else {
+                    pass.run([.init(qb, heads: heads, weight: normQ), .init(kb, heads: heads, weight: normK)],
+                             rows: s, headDim: headDim, eps: 1e-5, freqs: table, layout: .interleaved, wait: split != nil)
+                }
+            }
+        } else if recordBoundaries {
+            timed("qk-norm") { Ops.rmsNorm(qHeads, weight: normQ, into: qHeads, rows: s * heads, columns: headDim, eps: 1e-5) }
+            record("layer0_q_normed", qHeads, s * d)
+            timed("qk-norm") { Ops.rmsNorm(kHeads, weight: normK, into: kHeads, rows: s * heads, columns: headDim, eps: 1e-5) }
+            record("layer0_k_normed", kHeads, s * d)
+            timed("rope") {
+                Ops.rope(qHeads, freqs: freqs, sequence: s, heads: heads, headDim: headDim)
+                Ops.rope(kHeads, freqs: freqs, sequence: s, heads: heads, headDim: headDim)
+            }
+        } else {
+            // One pass per row, the same operations in the same order as the two passes, so the same bits (`QKNormRopeTests`).
+            timed("qk-norm + rope") {
+                Ops.rmsNormRope(qHeads, weight: normQ, freqs: freqs, sequence: s, heads: heads, headDim: headDim, eps: 1e-5)
+                Ops.rmsNormRope(kHeads, weight: normK, freqs: freqs, sequence: s, heads: heads, headDim: headDim, eps: 1e-5)
+            }
+        }
+        passClock?.finish()
         timed("sdpa wall") {
             if let flash {
                 ownTimings["sdpa GPU", default: 0] += flash.run(q: qb, k: kb, v: vb, into: ob)

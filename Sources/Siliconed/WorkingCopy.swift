@@ -17,7 +17,7 @@ import Foundation
 ///   library's: profile, render cache and licenses stay this Mac's.
 /// - **A file is up to date when its size and date are the original's** (`FileCopy.isSame`); it is
 ///   copied under `.partiel`, then renamed.
-/// - **Several models stay** — an exploration across models copies all of its own before its first
+/// - **Several models stay** — a series across models copies all of its own before its first
 ///   cell —, the least recently used thrown out first when room runs short, `margin` always left free
 ///   on the volume; beyond, `diskFull`, before the first byte. A file a preparation needs is never
 ///   thrown out by it.
@@ -113,13 +113,11 @@ package final class WorkingCopy: @unchecked Sendable {
             guard let card = cards.first(where: { $0.id == id }) else { throw .unknownModel(model: id) }
             let f = card.family
             let components = Installer(library: source).componentsFolder(f)
-            if let e = FileManager.default.enumerator(at: URL(fileURLWithPath: components), includingPropertiesForKeys: [.isRegularFileKey]) {
-                while let u = e.nextObject() as? URL {
-                    let name = u.lastPathComponent
-                    guard (try? u.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true,
-                          name != ".DS_Store", !name.hasSuffix(".partiel") else { continue }
-                    add(u.standardizedFileURL.path)
-                }
+            // Through links: a linked tokenizer is copied as the file it reaches, never left out.
+            for (path, _) in Library.regularFiles(under: components) {
+                let name = (path as NSString).lastPathComponent
+                guard name != ".DS_Store", !name.hasSuffix(".partiel") else { continue }
+                add(path)
             }
             add(source.map(source.encoderMap(f)))
             let dit = card.map ?? source.map(source.ditMap(f))

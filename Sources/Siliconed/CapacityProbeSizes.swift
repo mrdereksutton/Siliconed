@@ -9,6 +9,8 @@ import Foundation
 ///     every    the attention's pair (the cut by heads, GPU + CPU) at S = 1 024 · 4 096
 ///
 ///     engine rates  ──▶  projection(stage) = Σ runs · FLOP / rate  +  the exact rows' fp64 on the CPU  (+ constants of the stage)
+///     one pulse, timed                      +  the tiles' trials: candidates × rounds × shapes, each a steady figure at its kernel's rate
+///                                           +  steps × the pulse: one closes every step through the guard (`steps`)
 ///        │
 ///        ├─ before the first product   the memory plan takes the largest tier whose need fits B (`MemoryNeedDiagnostic`)
 ///        └─ after the first witnesses  from what each engine did on the same product (`tier(for:)`): a tier steps down only while its
@@ -38,15 +40,27 @@ import Foundation
 ///     witnesses measured at the start of the run and the run then adds.
 ///   - **The projection is the one number to tune and to audit**: each stage's seconds are written with it (`Report.stages`), so a
 ///     fleet of reports says how far it is from the truth on each Mac.
+///   - **What a stage does beside its figures is counted, not left to the margin.** The tiles' trials (`MatmulTile`, 330 to 384 a map) and
+///     a pulse after every step (400 to 560, ~18 ms each) were outside the projection: five maps of three Macs (schemas 19 to 22) took
+///     1.7 to 2.1 times what they projected, the heat's margin (`margin`) eaten by them alone, and the guard's budget (`retryBudget`) set
+///     against half the run. Both have a count the sizes give (`steps`, `tileTrials`): the trials are priced like any figure, the pulse
+///     at what one took on this Mac a moment before. What stays outside is what no count gives: a step measured again (the guard's own
+///     budget), a figure measured once more (`again`), a candidate in doubt measured again, a compilation.
 extension Diagnostic.CapacityProbes {
-    /// FLOP/s each engine does alone on a product of the witness's size (measured: `witness`), the CPU's attention heads.
+    /// FLOP/s each engine does alone on a product of the witness's size (measured: `witness`), the CPU's attention heads — and what the
+    /// projection counts beside the figures: a pulse's seconds, whether the GPU runs `matmul2d` (the tiles' trials).
     package struct Rates: Sendable, Equatable {
         package var gpu: Double
         package var amx: Double?
         package var ane: Double?
         package var cpu: Double
-        package init(gpu: Double, amx: Double? = nil, ane: Double? = nil, cpu: Double = 1.0e12) {
-            self.gpu = gpu; self.amx = amx; self.ane = ane; self.cpu = cpu
+        /// **Seconds one pulse takes on this Mac** (`Pulser`: fourteen empty submissions, two loops on one core, two on the crowd), timed
+        /// before the projection on its fast side of two; 0 counts none.
+        package var pulse: Double
+        /// The GPU runs the `matmul2d` kernels whose tile the map chooses (`MatmulTile.kernels`): their candidates are timed.
+        package var tiled: Bool
+        package init(gpu: Double, amx: Double? = nil, ane: Double? = nil, cpu: Double = 1.0e12, pulse: Double = 0, tiled: Bool = true) {
+            self.gpu = gpu; self.amx = amx; self.ane = ane; self.cpu = cpu; self.pulse = pulse; self.tiled = tiled
         }
     }
 
@@ -124,6 +138,17 @@ extension Diagnostic.CapacityProbes {
             solo + product + integers + small + thin + chains + sharing + stairRows.map { (m: $0, k: Self.stair.k, n: Self.stair.n) } + [Self.witness]
         }
 
+        /// **The wide product a tile is chosen on** (`chooseTiles`): the largest solo's work on a long `k` (twice its `k`, half its `n`), inside
+        /// the surfaces the tier's products already size (`products` leaves it out: it runs on the GPU's tiles alone, and adds neither an operand
+        /// nor an ANE program). A square product cannot see a tile that loses on a long `k`, and a long `k` sees the square's order: on an
+        /// M5 Pro (5/11/2026), `bf16act` 128 × 64 and 128 × 128 within 2 % of each other on 4 128 × 3 840², 13 % apart on 4 128 × 10 240 × 3 840,
+        /// the candidates in the same order on both and on a long `n`, the gaps widest on the long `k` (6/11/2026: a DiT's down projection ran at
+        /// 17.8 TFLOP/s against 20.8 for its up projection, on the tile the square had chosen).
+        package var wide: [Shape] {
+            guard let s = solo.last else { return [] }
+            return [(m: s.m, k: 2 * s.k, n: s.n / 2)]
+        }
+
         /// A lower tier's operands are inside the allocated ones: every dimension of `a`, `b`, `c` is no larger.
         package func operandsFit(in other: Sizes) -> Bool {
             func biggest(_ s: Sizes) -> (a: Int, b: Int, c: Int) {
@@ -143,8 +168,11 @@ extension Diagnostic.CapacityProbes {
         /// What a kernel's rate is to the GPU's fp32 product (M1 Pro, three runs: bf16 0.62, bf16 rounded 0.49, int8 0.97, Q8_0 0.31). The
         /// 8-bit ones on a rounded activation were never run on a GPU without bf16 in hardware: priced as the rounded bf16 kernel (the same
         /// bfloat operand) and as Q8_0's (the same fill of threadgroup memory); the K-quant's as the rounded bf16 kernel (its operands' rate).
+        /// W8A8 (`int8x8`) by the same rule, as the rounded kernels: it runs their tensor operations, not the int8 kernel's simdgroups, and
+        /// no GPU without int8 tensor units has timed it. Where both ran, it was never slower than the rounded int8 one (M5 Pro: 3.4 to 6.3
+        /// times the fp32 product, against 2.7 to 3.4): an upper bound in seconds. Priced as the int8 kernel (0.97) it hid half its time.
         static let formRatio: [String: Double] = ["bf16": 0.62, "bf16act": 0.49, "int8": 0.97, "q8": 0.31, "int8act": 0.49, "q8act": 0.31,
-                                                     "q4kact": 0.49]
+                                                     "q4kact": 0.49, "int8x8": 0.49]
         /// Attention kernels' rates to the GPU's product (M1 Pro: the system graph 0.40, the flash kernel 0.46).
         static let graphRatio = 0.40, flashRatio = 0.46
         /// The three stages by tiles, fp32 and fp16 operands (M1 Pro: 0.43 and 0.49 of the GPU's product; the matrix units of a bigger GPU
@@ -166,7 +194,7 @@ extension Diagnostic.CapacityProbes {
             let g = rates.gpu
             func flop(_ s: Shape) -> Double { 2 * Double(s.m) * Double(s.k) * Double(s.n) }
             func truth(_ shapes: [Shape], kinds: Double) -> Double {
-                Set(shapes.map { [$0.k, $0.n] }).reduce(0.0) { $0 + Double($1[0]) * Double($1[1]) } * Self.truthPerValue * kinds
+                Set(shapes.map { [$0.k, $0.n] }).reduce(0.0) { (sum: Double, kn: [Int]) -> Double in sum + Double(kn[0]) * Double(kn[1]) } * Self.truthPerValue * kinds
             }
             let forms = ["int8act", "q8act"].reduce(0) { $0 + 1 / Self.formRatio[$1]! }
             var p: [String: Double] = [:]
@@ -178,6 +206,19 @@ extension Diagnostic.CapacityProbes {
                 p["sharing int8"] = pairPasses.reduce(0) { $0 + chain(flop($1), rate: 0.8 * (g * Self.formRatio["int8act"]! + a)) + 0.15 }
             }
             return p
+        }
+
+        /// **The seconds W8A8 adds** (`gpu/int8x8`: its solos on the eight shapes of the rounded kernels, its thin runs, one truth of its
+        /// own codes per shape), inside `projection`. No M1 Pro has timed it: the check against its stages leaves it out.
+        package func quantizedSeconds(_ rates: Rates) -> [String: Double] {
+            func flop(_ s: Shape) -> Double { 2 * Double(s.m) * Double(s.k) * Double(s.n) }
+            func truth(_ shapes: [Shape]) -> Double {
+                Set(shapes.map { [$0.k, $0.n] }).reduce(0.0) { (sum: Double, kn: [Int]) -> Double in sum + Double(kn[0]) * Double(kn[1]) } * Self.truthPerValue
+            }
+            let rate = rates.gpu * Self.formRatio["int8x8"]!
+            let big = (solo + product).filter { Self.takes(.int8x8, $0) }, small = thin.filter { Self.takes(.int8x8, $0) }
+            return ["solos 8-bit and rounded": Self.runs * big.reduce(0) { $0 + flop($1) } / rate + truth(big),
+                    "thin products": Self.runs * small.reduce(0) { $0 + flop($1) } / rate + truth(small)]
         }
 
         /// **The seconds the rounded bf16 pair adds** (`gpu/bf16act+ane/fp16`, its own stage `sharing rounded`), inside `projection`: the chain
@@ -193,9 +234,102 @@ extension Diagnostic.CapacityProbes {
         /// has timed them.
         package func roundedProductSeconds(_ rates: Rates) -> [String: Double] {
             func flop(_ s: Shape) -> Double { 2 * Double(s.m) * Double(s.k) * Double(s.n) }
-            let values = Set(product.map { [$0.k, $0.n] }).reduce(0.0) { $0 + Double($1[0]) * Double($1[1]) }
+            let values = Set(product.map { [$0.k, $0.n] }).reduce(0.0) { (sum: Double, kn: [Int]) -> Double in sum + Double(kn[0]) * Double(kn[1]) }
             let forms = ["bf16act", "int8act"].reduce(0) { $0 + 1 / (rates.gpu * Self.formRatio[$1]!) }
             return ["solos 8-bit and rounded": Self.runs * product.reduce(0) { $0 + flop($1) } * forms + values * Self.truthPerValue * 2]
+        }
+
+        // MARK: What the stages do beside their figures
+
+        /// **A steady figure's runs, judged one included** (`solo`, `CapacityProbes.steady`): the judged run, two runs, then the calls
+        /// `steadyCalls` reads after the first steady one — on a few-millisecond product, a fiftieth of a second of them.
+        static func steadySeconds(_ t: Double) -> Double {
+            t * Double(2 + Diagnostic.CapacityProbes.steadyCalls(t))
+        }
+
+        /// **Whether `solo` times a GPU or AMX kernel of this form on this shape** — the conditions it puts on the shape alone: an 8-bit
+        /// weight's k in whole groups or blocks, its plan and a rounded activation's rows in the reserve (`WeightProducts`), the reserve
+        /// being `k · n` floats.
+        static func takes(_ form: CapacityModel.Form, _ s: Shape) -> Bool {
+            switch form {
+            case .bf16act: return WeightProducts.roundingPlan(k: s.k, n: s.n, capacity: s.k * s.n) != nil
+            case .int8x8:
+                return (s.k * s.n) % 2 == 0 && s.k % Diagnostic.int8Group == 0
+                    && WeightProducts.int8Plan(k: s.k, n: s.n, capacity: s.k * s.n, perColumn: false, group: Diagnostic.int8Group,
+                                               amxColumns: 0, quantized: true) != nil
+            case .int8, .int8act, .q8, .q8act:
+                let int8 = form == .int8 || form == .int8act
+                return (s.k * s.n) % 2 == 0 && s.k % (int8 ? Diagnostic.int8Group : Diagnostic.q8Block) == 0
+                    && WeightProducts.int8Plan(k: s.k, n: s.n, capacity: s.k * s.n, perColumn: false, group: int8 ? Diagnostic.int8Group : nil,
+                                               amxColumns: 0, block: int8 ? nil : Diagnostic.q8Block, rounded: form == .int8act || form == .q8act) != nil
+            default: return true
+            }
+        }
+
+        /// **The shapes a tiled kernel's candidates are timed on** (`chooseTiles`): the wide products (`wide`) for the wide tile, the thin
+        /// shapes for the thin one, each that the kernel takes (`takes`).
+        func tileShapes(_ kernel: CapacityModel.Kernel) -> (wide: [Shape], thin: [Shape]) {
+            let takes = { (s: Shape) in Self.takes(kernel.form, s) }
+            return (wide.filter(takes), thin.filter { CapacityModel.isThin(rows: $0.m, k: $0.k, n: $0.n) && takes($0) })
+        }
+
+        /// **The trials of a tiled kernel** (`chooseTiles`): each candidate, `MatmulTile.rounds(thin:)` rounds over its class's shapes — the
+        /// rounds a candidate in doubt is measured again are not counted (no count gives them).
+        func tileTrials(_ kernel: CapacityModel.Kernel) -> [Shape] {
+            let (wide, thin) = tileShapes(kernel)
+            let wideRound = Array(repeating: wide, count: MatmulTile.rounds(thin: false)).flatMap { $0 }
+            let thinRound = Array(repeating: thin, count: MatmulTile.rounds(thin: true)).flatMap { $0 }
+            return Array(repeating: wideRound, count: MatmulTile.candidates(for: kernel).count).flatMap { $0 }
+                + Array(repeating: thinRound, count: MatmulTile.candidates(for: kernel, thin: true).count).flatMap { $0 }
+        }
+
+        /// The stage a tiled kernel's tiles are chosen in (`probes`): bf16 before its solos, the others before theirs.
+        static func tileStage(_ kernel: CapacityModel.Kernel) -> String { kernel.form == .bf16 ? "solos fp32" : "solos 8-bit and rounded" }
+
+        /// **The seconds of the tiles' trials**, inside `projection`: each a steady figure at the kernel's rate (`formRatio`).
+        package func tileTrialSeconds(_ rates: Rates) -> [String: Double] {
+            guard rates.tiled else { return [:] }
+            var p: [String: Double] = [:]
+            for kernel in MatmulTile.kernels {
+                let rate = rates.gpu * Self.formRatio[kernel.form.rawValue]!
+                p[Self.tileStage(kernel), default: 0] += tileTrials(kernel).reduce(0) { $0 + Self.steadySeconds(2 * Double($1.m) * Double($1.k) * Double($1.n) / rate) }
+            }
+            return p
+        }
+
+        /// **The steps each stage takes through the guard** (`Context.guarded`, a pulse each), measured once: the figures `probes` times
+        /// on these sizes and the engines `rates` has, the tiles' trials and the attention's forms included.
+        package func steps(_ rates: Rates) -> [String: Int] {
+            let amx = rates.amx != nil ? 1 : 0, ane = rates.ane != nil ? 1 : 0
+            func trials(_ stage: String) -> Int {
+                rates.tiled ? MatmulTile.kernels.filter { Self.tileStage($0) == stage }.reduce(0) { $0 + tileTrials($1).count } : 0
+            }
+            var s: [String: Int] = [:]
+            // The GPU's fp32, the AMX's and the ANE's chains on the products, the ANE's fewest rows, the bf16 solos.
+            s["solos fp32"] = product.count * (1 + amx + ane) + ane * small.count + solo.count + trials("solos fp32")
+            s["stairs"] = ane * stairRows.count
+            // Six kernels at each of the tier's sequences (graph, flash, three by tiles, the CPU's heads), the pair at each of its own,
+            // the GPU's wake, the two half-precision kernels' forms.
+            s["attention"] = 6 * attention.count + Self.pairSequences.count + (attention.count > 1 ? 1 : 0)
+                + 2 * (1 + AttentionTile.candidates.count) * AttentionTile.rounds
+            let sets = amx + ane + amx * ane * 2
+            s["sharing"] = sets * pairPasses.count
+            // The rounded kernels and W8A8 on eight shapes (W8A8 on those it takes), the other four 8-bit ones on the solos, the ANE's integers.
+            s["solos 8-bit and rounded"] = 2 * (solo.count + product.count) + (solo + product).filter { Self.takes(.int8x8, $0) }.count
+                + 4 * solo.count + ane * (integers.count + small.count)
+                + trials("solos 8-bit and rounded")
+            // Ten kernels on each thin shape they take (`thinSolos`), the ANE on those of a whole unit of rows.
+            let forms: [CapacityModel.Form] = [.fp32, .bf16, .bf16act, .int8, .q8, .int8act, .int8x8, .q8act]
+            s["thin products"] = forms.reduce(0) { sum, form in sum + thin.filter { Self.takes(form, $0) }.count } + amx * thin.count
+                + ane * thin.filter { $0.m >= NeuralEngine.rowUnit }.count
+            s["sharing int8"] = ane * Diagnostic.CapacityProbes.Context.integerPairs.count * pairPasses.count
+            s["sharing rounded"] = ane * pairPasses.count
+            return s
+        }
+
+        /// **The seconds of the pulses**, inside `projection`: one per step at what one took on this Mac.
+        package func pulseSeconds(_ rates: Rates) -> [String: Double] {
+            steps(rates).mapValues { Double($0) * rates.pulse }
         }
 
         /// The chain passes of the fp32 sets (two on the short shape, one on the long), which the integer pairs take too.
@@ -269,16 +403,20 @@ extension Diagnostic.CapacityProbes {
             }
             p.merge(roundedPairSeconds(rates)) { $1 }
             p.merge(roundedProductSeconds(rates)) { $0 + $1 }
+            p.merge(quantizedSeconds(rates)) { $0 + $1 }
+            p.merge(tileTrialSeconds(rates)) { $0 + $1 }
+            p.merge(pulseSeconds(rates)) { $0 + $1 }
             return p
         }
 
         package func projectedSeconds(_ rates: Rates) -> Double { projection(rates).values.reduce(0, +) }
 
         /// The heat a run adds beyond what its start shows, and the noise of the projection: a tier is kept only while this much
-        /// of the ceiling is left (the fanless Neo lost 1.9 × of the AMX over a minute).
+        /// of the ceiling is left (the fanless Neo lost 1.9 × of the AMX over a minute). It is a margin only while the projection counts
+        /// what the stages do (`steps`, `tileTrialSeconds`): without the trials and the pulses, the runs took 1.7 to 2.1 times it.
         package static let margin = 1.6
         /// **What the guard may spend** measuring a step again (`CapacityProbes.Context.guarded`): the seconds the ceiling leaves beyond the
-        /// run as projected with `expectation` (the projection is within 5–10 % of the seconds the stages take here), at most `retryCap`.
+        /// run as projected with `expectation`, at most `retryCap`.
         package static let expectation = 1.3, retryCap = 15.0
         /// Seconds the inventory, the fit and the report take beyond the probes.
         package static let reserve = 2.0

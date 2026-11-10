@@ -120,20 +120,25 @@ struct DiagnosticSheet: View {
             if let notice {
                 Text(notice).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            } else if !app.diagnosticRunning {
+                // Said before the click that starts it (the user, 4/11/2026: a map measured on a busy Mac, with no word of it before).
+                Label("Leave the Mac at rest during the measure: no render, export, compilation or game.", systemImage: "moon.zzz")
+                    .font(.callout.weight(.medium))
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             switch app.diagnostic {
             case .ready:
                 Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Start") { app.startDiagnostic() }
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(.defaultAction).tint(Palette.control)
                     .disabled(app.diagnosticBlocker != nil)
             case .running:
                 Button("Stop") { app.cancelDiagnostic() }.keyboardShortcut(.cancelAction)
             case .failed:
                 Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Measure Again") { notice = nil; app.startDiagnostic() }
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(.defaultAction).tint(Palette.control)
                     .disabled(app.diagnosticBlocker != nil)
             case .finished(let report):
                 // Sharing the report is an option the user goes to, never the default: « Close » is.
@@ -145,7 +150,7 @@ struct DiagnosticSheet: View {
                 .help("Copies the report and opens GitHub’s form; you paste it and submit it there")
                 Button("Measure Again") { notice = nil; app.startDiagnostic() }
                     .disabled(app.diagnosticBlocker != nil)
-                Button("Close") { dismiss() }.keyboardShortcut(.defaultAction)
+                Button("Close") { dismiss() }.keyboardShortcut(.defaultAction).tint(Palette.control)
             }
         }
     }
@@ -165,7 +170,7 @@ private struct ReportView: View {
     /// published, then the attentions. A route the model measured and this list does not know follows, by its engine and form.
     private static let order: [CapacityModel.Kernel] = [
         .init(.gpu, .fp32), .init(.amx, .fp32), .init(.ane, .fp16),
-        .init(.gpu, .bf16), .init(.gpu, .bf16act), .init(.gpu, .int8), .init(.gpu, .int8act), .init(.ane, .int8), .init(.gpu, .q8), .init(.gpu, .q8act),
+        .init(.gpu, .bf16), .init(.gpu, .bf16act), .init(.gpu, .int8), .init(.gpu, .int8act), .init(.gpu, .int8x8), .init(.ane, .int8), .init(.gpu, .q8), .init(.gpu, .q8act),
         .init(.gpu, .graph), .init(.gpu, .flash), .init(.gpu, .tiles), .init(.gpu, .tiles16), .init(.gpu, .tilesbf16), .init(.cpu, .heads)]
 
     /// The label of a route, as a person reads it.
@@ -179,6 +184,7 @@ private struct ReportView: View {
         case (.gpu, .int8): String(localized: "Matrix products on the 8-bit weights, read as published")
         case (.ane, .int8): String(localized: "Matrix products on the 8-bit weights, Neural Engine")
         case (.gpu, .int8act): String(localized: "Matrix products on the 8-bit weights, GPU tensor units, bf16 activations")
+        case (.gpu, .int8x8): String(localized: "Matrix products on the 8-bit weights, GPU tensor units, 8-bit activations")
         case (.gpu, .q8): String(localized: "Matrix products on the GGUF 8-bit weights, read as published")
         case (.gpu, .q8act): String(localized: "Matrix products on the GGUF 8-bit weights, GPU tensor units, bf16 activations")
         case (.gpu, .graph): String(localized: "Attention, system kernel")

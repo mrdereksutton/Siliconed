@@ -29,7 +29,7 @@ package struct MossImageTextModule: TextModule {
         context.timings.tokenizer = Date().timeIntervalSince(begin)
         context.footprints.tokenizer = Arena.processFootprint()
         try context.check()
-        let artifact = try Artifact(path: map)
+        let artifact = try KeptEncoder.artifact(map)
         let hidden = try autoreleasepool { () throws -> [Float] in
             let encoder = try Qwen35Encoder(artifact: artifact, sequence: ids.count)
             encoder.cancellation = context.cancellation
@@ -47,6 +47,8 @@ package struct MossImageTextModule: TextModule {
 /// bf16 weights beside the products (`CacheLoRA`), never merged into them. A request's own LoRAs stack after it.
 package struct MossImageDenoisingModule: DenoisingModule {
     package var map: String
+    /// The map the plan may make resident beside the text (`MapWarmup`); the denoising opens it through `MapWarmup.open`.
+    package var inPlaceMap: String? { map }
     /// The LoRA's map (`MossImageForge.forgeLoRA`), in the family's components.
     package var turbo: String
     package var model: String { MossImageForge.model }
@@ -93,7 +95,7 @@ package struct MossImageDenoisingModule: DenoisingModule {
 
     package func denoise(_ latent: inout Latent, text: Conditioning, steps: Int, start: Int, lora: LoRA?,
                          context: Context) throws {
-        let artifact = try Artifact(path: map)
+        let artifact = try MapWarmup.open(map)
         let tokens = text.rows
         let σ = sigmas(steps: steps)
         // What the DiT is told: `σ · 1000` in fp32 (the scheduler's timesteps); no bell, the σ themselves.

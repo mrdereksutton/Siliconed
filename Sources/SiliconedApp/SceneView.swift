@@ -197,12 +197,15 @@ struct SceneView: View {
                     .disabled(!app.managementPossible)
                     .padding(.top, 4)
             } else if app.sidebarTab == .explore {
-                // Fork: on Explore, the form is the left column's and its button is « Explore », not ⌘↩.
-                Text("Sketch first, finish the one you like")
+                Image(systemName: "plusminus.circle")
+                    .font(.system(size: 38, weight: .light))
+                    .foregroundStyle(Palette.bracket)
+                Text("Bracket a series across the chain")
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(.primary)
-                Text("Choose what varies on the left, then click Explore.")
+                Text("Click ± on Seed, Detail, Solver, LoRA or a prompt word, then click Generate (⌘↩).")
                     .font(.callout).foregroundStyle(.secondary)
+                    .frame(maxWidth: 440)
             } else {
                 InteractiveEmptyStage(app: app)
             }
@@ -262,7 +265,7 @@ private struct Comparison: View {
                 .scaledToFit()
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(Color.accentColor, lineWidth: e.id == app.selectedEntry?.id ? 2 : 0))
+                    .strokeBorder(Palette.live, lineWidth: e.id == app.selectedEntry?.id ? 2 : 0))
                 .shadow(color: .black.opacity(0.3), radius: 12, y: 4)
                 .frame(maxWidth: CGFloat(e.width), maxHeight: CGFloat(e.height))
             Text(verbatim: e.legend).font(.caption).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
@@ -359,7 +362,7 @@ struct ImageActions: View {
                 if app.canCompareOriginal(e) {
                     Button { app.comparesOriginal.toggle() } label: {
                         Image(systemName: "square.lefthalf.filled")
-                            .foregroundStyle(app.comparesOriginal ? Color.accentColor : .primary)
+                            .foregroundStyle(app.comparesOriginal ? Palette.live : .primary)
                     }
                     .accessibilityLabel(Text("Compare with Original"))
                     .accessibilityAddTraits(app.comparesOriginal ? .isSelected : [])

@@ -35,7 +35,7 @@ package struct AnimaTextModule: TextModule {
         context.timings.tokenizer = Date().timeIntervalSince(begin)
         context.footprints.tokenizer = Arena.processFootprint()
         try context.check()
-        let encoder = try TextEncoder(artifact: try Artifact(path: map), sequence: qwenIds.count)
+        let encoder = try TextEncoder(artifact: try KeptEncoder.artifact(map), sequence: qwenIds.count)
         encoder.cancellation = context.cancellation
         let hidden = try encoder.encode(ids: qwenIds, realTokens: qwenIds.count)
         context.footprints.encoder = Arena.processFootprint()
@@ -53,6 +53,8 @@ package struct AnimaTextModule: TextModule {
 /// Anima Turbo's Cosmos DiT: Euler, CFG 1.
 package struct AnimaDenoisingModule: DenoisingModule {
     package var map: String
+    /// The map the plan may make resident beside the text (`MapWarmup`); the denoising opens it through `MapWarmup.open`.
+    package var inPlaceMap: String? { map }
     package var model: String { "anima" }
     package var name: String { "DiT Anima" }
     package var entry: TextFormat { .anima }
@@ -119,7 +121,7 @@ package struct AnimaDenoisingModule: DenoisingModule {
         let schedule = sigmas(steps: steps)
         let told = context.told(schedule, start: start)
         let build = { (h: Int, w: Int, range: Range<Int>) throws -> AnimaDiT in
-            let dit = try AnimaDiT(artifact: try Artifact(path: map), latentHeight: h, latentWidth: w,
+            let dit = try AnimaDiT(artifact: try MapWarmup.open(map), latentHeight: h, latentWidth: w,
                                    textLength: text.rows, accelerators: context.accelerators, lora: lora)
             dit.cancellation = context.cancellation
             try dit.tabulate(sigmas: Array(told[range]))
@@ -189,8 +191,8 @@ package struct QwenImageDecodingModule: DecodingModule {
 /// and between layers in the DiT.
 ///
 /// **Another `Solver`** (`context.solver`, Anima's since 0.10, and Krea 2's) walks the
-/// same σ through `SolverWalk` — `v` is already its `m = dx/dσ`, no negation — and the preview and a
-/// sketch read the walk's own x̂₀ with σₓ = 0, as in `Sampler`. Euler keeps the loop below: its two
+/// same σ through `SolverWalk` — `v` is already its `m = dx/dσ`, no negation — and the preview
+/// reads the walk's own x̂₀ with σₓ = 0, as in `Sampler`. Euler keeps the loop below: its two
 /// roundings (`dt` in float, then `x + dt·v`) are the reference's `scheduler.step`, to the bit.
 ///
 /// **The half-size start** (`half`, Anima's and Krea 2's; from `start` 0 only): its first `half.steps`

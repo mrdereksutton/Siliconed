@@ -363,7 +363,7 @@ private struct MasonryCard: View {
                         if isMarked {
                             Image(systemName: "checkmark.circle.fill")
                                 .symbolRenderingMode(.palette)
-                                .foregroundStyle(.white, Color.accentColor)
+                                .foregroundStyle(Palette.onLive, Palette.live)
                                 .font(.system(size: 16))
                         }
                         Spacer()
@@ -441,7 +441,7 @@ private struct MasonryCard: View {
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(
-                    isMarked ? Color.accentColor : hovering ? Color.white.opacity(0.45) : Palette.hairline,
+                    isMarked ? Palette.live : hovering ? Color.white.opacity(0.45) : Palette.hairline,
                     lineWidth: isMarked ? 2.5 : 1
                 )
         )
@@ -521,6 +521,10 @@ struct InteractiveEmptyStage: View {
         let prompt: String
         let ratio: SizeRatio
         let styleId: String
+        let cameraId: String
+        let lensId: String
+        let lightingId: String
+        let specLabel: String
         let symbol: String
         let colors: [Int]
     }
@@ -532,8 +536,12 @@ struct InteractiveEmptyStage: View {
             prompt: "White JDM sports coupe parked inside an industrial concrete warehouse at dusk, glowing crimson taillights reflecting on damp concrete, volumetric shaft of twilight through high factory windows",
             ratio: SizeRatio(16, 9),
             styleId: "film35",
+            cameraId: "alexa35",
+            lensId: "anamorphic24",
+            lightingId: "volumetric",
+            specLabel: "ALEXA 35 · 24MM ANA",
             symbol: "car.rear.and.tire.marks",
-            colors: [0x9E2A2B, 0x1D2D44]
+            colors: [0x9E2A2B, 0x131A2E]
         ),
         StarterIdea(
             id: "studio-musician",
@@ -541,8 +549,12 @@ struct InteractiveEmptyStage: View {
             prompt: "Candid medium-format portrait of an indie guitarist holding an offset electric guitar in a sunlit loft studio, natural window key light, subtle dust motes in warm air",
             ratio: SizeRatio(3, 4),
             styleId: "editorial",
+            cameraId: "portra400",
+            lensId: "portrait85",
+            lightingId: "goldenRim",
+            specLabel: "PORTRA 400 · 85MM F/1.4",
             symbol: "guitars",
-            colors: [0xB07D52, 0x2B2118]
+            colors: [0xB07D52, 0x241B14]
         ),
         StarterIdea(
             id: "neon-rain",
@@ -550,8 +562,12 @@ struct InteractiveEmptyStage: View {
             prompt: "Quiet Tokyo side street after midnight rain, glowing paper lanterns and cyan neon signage mirrored in puddles, steam rising from a tiny ramen stall, cinematic depth",
             ratio: SizeRatio(16, 9),
             styleId: "neon",
+            cameraId: "cinestill800t",
+            lensId: "prime35",
+            lightingId: "wetNeon",
+            specLabel: "800T · 35MM · NEON",
             symbol: "sparkles.tv",
-            colors: [0x1F7A8C, 0x4A1942]
+            colors: [0x0E7490, 0x4A1942]
         ),
         StarterIdea(
             id: "anime-observatory",
@@ -559,8 +575,12 @@ struct InteractiveEmptyStage: View {
             prompt: "Cliffside astronomical observatory above a sea of golden sunset clouds, warm brass telescopes catching twilight, swallows in flight, sweeping sense of wonder",
             ratio: SizeRatio(3, 2),
             styleId: "anime",
+            cameraId: "none",
+            lensId: "ultra18",
+            lightingId: "goldenRim",
+            specLabel: "ANIME · 18MM WIDE",
             symbol: "moon.stars",
-            colors: [0x5A67D8, 0xD53F8C]
+            colors: [0x4F46E5, 0xBE185D]
         ),
         StarterIdea(
             id: "watch-macro",
@@ -568,8 +588,12 @@ struct InteractiveEmptyStage: View {
             prompt: "Extreme close-up of an open-worked mechanical watch movement, blued steel screws, brushed titanium bridges, ruby jewels catching soft studio rim lighting",
             ratio: SizeRatio(1, 1),
             styleId: "macro",
+            cameraId: "hasselblad",
+            lensId: "macro100",
+            lightingId: "softbox",
+            specLabel: "X2D · 100MM MACRO",
             symbol: "dial.medium",
-            colors: [0x2D6A4F, 0x1B263B]
+            colors: [0x15803D, 0x111827]
         ),
         StarterIdea(
             id: "coastal-impasto",
@@ -577,37 +601,67 @@ struct InteractiveEmptyStage: View {
             prompt: "Dramatic Atlantic sea cliffs under breaking storm clouds, turquoise surf crashing into white foam, solitary lighthouse beam cutting through mist",
             ratio: SizeRatio(4, 3),
             styleId: "impasto",
+            cameraId: "none",
+            lensId: "cooke50",
+            lightingId: "chiaroscuro",
+            specLabel: "IMPASTO · LOW KEY",
             symbol: "paintbrush.pointed",
-            colors: [0xC86D51, 0x264653]
+            colors: [0xC2410C, 0x1E293B]
         ),
     ]
 
     private let gridColumns = [
-        GridItem(.fixed(210), spacing: 12),
-        GridItem(.fixed(210), spacing: 12),
-        GridItem(.fixed(210), spacing: 12),
+        GridItem(.fixed(216), spacing: 12),
+        GridItem(.fixed(216), spacing: 12),
+        GridItem(.fixed(216), spacing: 12),
     ]
 
     var body: some View {
-        VStack(spacing: 20) {
-            VStack(spacing: 6) {
-                Text("What do you want to see?")
-                    .font(.title.weight(.semibold))
+        let _ = StudioHub.shared.theme
+        VStack(spacing: 22) {
+            VStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "camera.aperture")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Palette.live)
+                    Text("APPLE SILICON CREATIVE STUDIO")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .tracking(1.1)
+                        .foregroundStyle(Palette.live)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(Palette.live.opacity(0.11)))
+                .overlay(Capsule().strokeBorder(Palette.live.opacity(0.32)))
+
+                Text("What do you want to direct?")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .tracking(-0.4)
                     .foregroundStyle(.primary)
                 Text(app.editingPossible
-                     ? "Describe an image, pick a starter below, or drop a photo here to edit it."
-                     : "Describe an image below or click a starter scene to load its prompt, ratio and style.")
+                     ? "Describe an image, pick a director shot below, or drop a photo here to edit it."
+                     : "Describe an image below or load a director shot with pre-dialed camera, lens and lighting.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
 
             LazyVGrid(columns: gridColumns, spacing: 12) {
                 ForEach(ideas) { idea in
-                    StarterCardButton(ideaTitle: idea.title, ratio: idea.ratio, symbol: idea.colors.isEmpty ? "sparkles" : idea.symbol, colors: idea.colors) {
+                    StarterCardButton(
+                        ideaTitle: idea.title,
+                        specLabel: idea.specLabel,
+                        ratio: idea.ratio,
+                        symbol: idea.colors.isEmpty ? "sparkles" : idea.symbol,
+                        colors: idea.colors
+                    ) {
                         withAnimation(Motion.pick(.easeOut(duration: 0.18))) {
                             app.prompt = idea.prompt
                             app.selectScale(idea.ratio, .oneK)
-                            StudioHub.shared.selectedStyleId = idea.styleId
+                            let hub = StudioHub.shared
+                            hub.selectedStyleId = idea.styleId
+                            hub.selectedCameraId = idea.cameraId
+                            hub.selectedLensId = idea.lensId
+                            hub.selectedLightingId = idea.lightingId
                         }
                     }
                 }
@@ -619,6 +673,7 @@ struct InteractiveEmptyStage: View {
 
 private struct StarterCardButton: View {
     let ideaTitle: LocalizedStringKey
+    let specLabel: String
     let ratio: SizeRatio
     let symbol: String
     let colors: [Int]
@@ -627,7 +682,7 @@ private struct StarterCardButton: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 9) {
                 ZStack(alignment: .topTrailing) {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(LinearGradient(
@@ -635,46 +690,54 @@ private struct StarterCardButton: View {
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ))
-                        .frame(height: 68)
+                        .frame(height: 74)
+                        .overlay {
+                            LinearGradient(
+                                colors: [.white.opacity(hovering ? 0.16 : 0.06), .clear, .black.opacity(0.35)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
                         .overlay(alignment: .bottomLeading) {
-                            Image(systemName: symbol)
-                                .font(.system(size: 20, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.9))
-                                .padding(10)
+                            HStack(spacing: 6) {
+                                Image(systemName: symbol)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.95))
+                                Text(verbatim: specLabel)
+                                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.88))
+                                    .lineLimit(1)
+                            }
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 7)
                         }
 
                     Text(verbatim: ratio.description)
-                        .font(.caption2.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.92))
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.95))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(.black.opacity(0.35)))
+                        .background(Capsule().fill(.black.opacity(0.45)))
                         .padding(7)
                 }
 
                 HStack(spacing: 4) {
                     Text(ideaTitle)
-                        .font(.callout.weight(.medium))
+                        .font(.callout.weight(.semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    Image(systemName: "arrow.up.left")
+                    Image(systemName: "arrow.up.right")
                         .font(.caption2.weight(.bold))
-                        .foregroundStyle(.secondary)
-                        .opacity(hovering ? 1 : 0.4)
+                        .foregroundStyle(hovering ? Palette.live : .secondary)
+                        .opacity(hovering ? 1 : 0.45)
                 }
-                .padding(.horizontal, 2)
+                .padding(.horizontal, 3)
             }
             .padding(8)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.primary.opacity(hovering ? 0.09 : 0.045))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(hovering ? Color.primary.opacity(0.28) : Palette.hairline)
-            )
-            .scaleEffect(hovering ? 1.015 : 1.0)
+            .studioCard(cornerRadius: 14, active: hovering)
+            .scaleEffect(hovering ? 1.018 : 1.0)
             .animation(Motion.pick(.easeOut(duration: 0.14)), value: hovering)
             .contentShape(Rectangle())
         }

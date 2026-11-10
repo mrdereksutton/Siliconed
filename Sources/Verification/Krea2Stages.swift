@@ -100,9 +100,9 @@ enum Krea2Stages {
     static let dit = Stage(
         model: model, name: "dit",
         proves: "one evaluation of the DiT at σ = 1, boundary by boundary, judged at the fp64 witness where it exists",
-        sizes: ["512", "1024", "768x512"], options: ["--map", "--neural-engine", "--bf16-activations", "--bf16-attention", "--fp16-attention", "--no-accelerators", "--variant"],
-        oracle: "tools/oracle/krea2.py dit --size {size}; witness --size {size}; witness-step --size {size} --step 0; draw --size {size} --step 0 --jitter 1 2 3; with --neural-engine, --bf16-activations, --bf16-attention or --fp16-attention, bf16 --size {size}; with --variant compact or light, dit, bf16, witness, witness-step --step 0, draw --step 0 --jitter 1 2 3 and draw --size {size} --step 0 --permute 1 2 3 4 5 6 7 8 --permute-kind group with --variant, at 512 \(Wording.publishers)", weights: ["DiT"],
-        rule: "the rule, floor 5e-4, at the fp64 witness where it exists, clouds of summation orders when the oracle has order draws (the same seeds drawn by the engine), of one-ulp moves when it has only those; model_out per latent plane at the witness; \(Wording.rectangle); \(Wording.halfPrecision)"
+        sizes: ["512", "1024", "768x512"], options: ["--map", "--neural-engine", "--bf16-activations", "--bf16-attention", "--fp16-attention", "--int8-activations", "--no-accelerators", "--variant"],
+        oracle: "tools/oracle/krea2.py dit --size {size}; witness --size {size}; witness-step --size {size} --step 0; draw --size {size} --step 0 --jitter 1 2 3; with --neural-engine, --bf16-activations, --bf16-attention or --fp16-attention, bf16 --size {size}; with --variant compact or light, dit, bf16, witness, witness-step --step 0, draw --step 0 --jitter 1 2 3 and draw --size {size} --step 0 --permute 1 2 3 4 5 6 7 8 --permute-kind group with --variant, at 512 \(Wording.publishers); with --int8-activations, w8a8 --size {size} --variant compact (ComfyUI's own int8 products)", weights: ["DiT"],
+        rule: "the rule, floor 5e-4, at the fp64 witness where it exists, clouds of summation orders when the oracle has order draws (the same seeds drawn by the engine), of one-ulp moves when it has only those; model_out per latent plane at the witness; \(Wording.rectangle); \(Wording.halfPrecision); with --int8-activations, against ComfyUI's W8A8 error + 25 %"
     ) { invocation in
         let version = try invocation.quantizedVariant()
         let report = Report(title: "\(model) dit\(version.map { " " + $0.rawValue } ?? "") \(invocation.size)")
@@ -131,7 +131,8 @@ enum Krea2Stages {
         let out = try dit.forward(latent: latent.baseAddress!, text: text.baseAddress!, textRows: t, sigma: sigma[0])
         if invocation.profile { printTimings(dit.timings, seconds: Date().timeIntervalSince(started)) }
         let recorded = dit.boundaries.merging(["model_out": out]) { $1 }
-        let half = try invocation.halfReference(stem + ".safetensors", script: "tools/oracle/krea2.py bf16 --size \(invocation.size)\(version.map { " --variant " + $0.rawValue } ?? "")")
+        let half = try invocation.reference(stem + ".safetensors", script: "tools/oracle/krea2.py bf16 --size \(invocation.size)\(version.map { " --variant " + $0.rawValue } ?? "")",
+                                            w8a8Script: "tools/oracle/krea2.py w8a8 --size \(invocation.size) --variant compact")
         // The oracle's draws of these inputs: `draw-krea2-R-step0-jitterN`.
         let draws = stem.replacingOccurrences(of: "goldens-krea2-dit-", with: "draw-krea2-") + "-step0"
         // Their summation-order draws, `draw-krea2-R-step0-permgroupN`, and the engine's of the same seeds: the map rewritten
@@ -207,15 +208,16 @@ enum Krea2Stages {
         if invocation.bf16Activations { try BF16ActivationRun.account(report) }
         if invocation.bf16Attention { try BF16AttentionRun.account(report) }
         if invocation.fp16Attention { try FP16AttentionRun.account(report) }
+        if invocation.int8Activations { try W8A8Run.account(report) }
         return report
     }
 
     static let trajectory = Stage(
         model: model, name: "trajectory",
         proves: "the seed's noise bit for bit, the schedule, then the 8 Euler steps: each step's velocity from the oracle's latent at that step, at the step's fp64 witness where it exists",
-        sizes: ["512", "1024"], options: ["--map"],
-        oracle: "tools/oracle/krea2.py trajectory --size {size}; witness-step --size {size} --step 0 1 2 3 4 5 6 7; draw --size {size} --step i --permute 1 2 3 4 5 6 7 8 --permute-kind group, one run per step i from 0 to 7", weights: ["DiT"],
-        rule: "σ within 1e-6; the rule on each guided velocity, floor 5e-4, at the step's fp64 witness where it exists, clouds of summation orders when the oracle has order draws of the step (the same seeds drawn by the engine), of one-ulp moves when it has only those; the free pass is shown, not judged"
+        sizes: ["512", "1024"], options: ["--map", "--free-orders"],
+        oracle: "tools/oracle/krea2.py trajectory --size {size}; witness-step --size {size} --step 0 1 2 3 4 5 6 7; draw --size {size} --step i --permute 1 2 3 4 5 6 7 8 --permute-kind group, one run per step i from 0 to 7; with --free-orders, trajectory --size {size} --permute 0 and the same seeds", weights: ["DiT"],
+        rule: "σ within 1e-6; the rule on each guided velocity, floor 5e-4, at the step's fp64 witness where it exists, clouds of summation orders when the oracle has order draws of the step (the same seeds drawn by the engine), of one-ulp moves when it has only those; the free pass is shown, not judged; --free-orders 1,2,3: the free pass again under each seed's summation order (residual stream permuted by groups of 256), shown step by step against the nominal pass and the oracle, beside the oracle's own passes under the same orders where it drew them, not judged"
     ) { invocation in
         let report = Report(title: "\(model) trajectory \(invocation.size)")
         let trajectory = try invocation.goldens.open("krea2/goldens-krea2-trajectory-\(invocation.size).safetensors")
@@ -289,14 +291,61 @@ enum Krea2Stages {
             guided.append(try clouds.arbitrate(p.measure, exact: p.exact, columns: columns, as: "model_out"))
         }
         // The free pass: the latents chain, the error amplifies; shown beside each step.
-        var latent = Array(initial)
+        var latent = Array(initial), free: [[Float]] = []
         for i in 0..<steps {
             let v = try velocity(latent, i)
             let dt = sigmas[i + 1] - sigmas[i]
             for j in 0..<latent.count { latent[j] += dt * v[j] }
+            free.append(latent)
             guard i < guided.count else { continue }
             let drift = trajectory.float32("latent_\(i + 1)").map { channelError(latent, $0, columns: columns).worst }
             report.add(drift.map { guided[i].with(note: String(format: "free latent %.2e", $0)) } ?? guided[i])
+        }
+        // `--free-orders`: the same free pass under other summation orders — the chaos of the trajectory itself, which the
+        // guided steps (each restarted from the oracle's latent) cannot show.
+        guard let list = invocation.extras["--free-orders"] else { return report }
+        let seeds = try list.split(separator: ",").map { piece -> UInt64 in
+            guard let s = UInt64(piece), s > 0 else { throw UsageError("--free-orders \(list): seeds of summation orders, 1 or more, comma-separated") }
+            return s
+        }
+        let names = (1...steps).map { "latent_\($0)" }
+        let passes = try Krea2PermutedMap.draws(source: map, requests: [seeds], text: text, outside: Set(names)) {
+            _, permutedMap, movedText in
+            let permuted = try Krea2DiT(artifact: permutedMap, latentHeight: side, latentWidth: side, maxText: t)
+            try permuted.tabulateModulation(sigmas: Array(sigmas.dropLast()))
+            var x = Array(initial), out: [String: [Float]] = [:]
+            for i in 0..<steps {
+                let v = try x.withUnsafeBufferPointer {
+                    try permuted.forward(latent: $0.baseAddress!, text: movedText.baseAddress!, textRows: t, sigma: sigmas[i])
+                }
+                let dt = sigmas[i + 1] - sigmas[i]
+                for j in 0..<x.count { x[j] += dt * v[j] }
+                out[names[i]] = x
+            }
+            return out
+        }[0]
+        // The oracle's side, where it drew the same orders (`krea2.py trajectory --permute 0 N…`; 0 is its identity along the
+        // same block-by-block calls): its own free passes against its trajectory golden — the reference's cloud.
+        let oracleSeeds = ([0] + seeds).filter {
+            invocation.goldens.optional("krea2/draw-krea2-\(invocation.size)-trajectory-permgroup\($0).safetensors") != nil
+        }
+        let oracleDraws = oracleSeeds.compactMap {
+            invocation.goldens.optional("krea2/draw-krea2-\(invocation.size)-trajectory-permgroup\($0).safetensors")
+        }
+        print("\nfree pass under summation orders \(seeds.map(String.init).joined(separator: ", ")) (residual stream permuted by groups of "
+              + "\(ResidualPermutation.group); per latent plane's channel error, worst channel), not judged:")
+        let column = { (title: String) in title.padding(toLength: 21, withPad: " ", startingAt: 0) }
+        print("step        " + seeds.map { column("engine \($0) vs engine") }.joined() + column("engine vs oracle")
+              + seeds.map { column("engine \($0) vs oracle") }.joined() + oracleSeeds.map { column("oracle \($0) vs oracle") }.joined())
+        let cell = { (v: Double) in String(format: "%-21.3e", v) }
+        for i in 0..<steps {
+            var line = seeds.map { s in cell(free[i].withUnsafeBufferPointer { channelError(passes[s]![names[i]]!, $0, columns: columns).worst }) }.joined()
+            if let oracle = trajectory.float32("latent_\(i + 1)") {
+                line += cell(channelError(free[i], oracle, columns: columns).worst)
+                line += seeds.map { s in cell(channelError(passes[s]![names[i]]!, oracle, columns: columns).worst) }.joined()
+                line += oracleDraws.map { d in d.float32(names[i]).map { cell(channelError(Array($0), oracle, columns: columns).worst) } ?? column("—") }.joined()
+            }
+            print(names[i].padding(toLength: 12, withPad: " ", startingAt: 0) + line)
         }
         return report
     }
@@ -304,10 +353,13 @@ enum Krea2Stages {
     static let vae = Stage(
         model: model, name: "vae",
         proves: "the Qwen-Image decoder with Krea's weights on the final latent of the oracle's trajectory, plane by plane",
-        sizes: ["512", "1024", "768x512"], oracle: "tools/oracle/krea2.py vae --size {size}; vae-witness --size {size}", weights: ["VAE"],
-        rule: "the rule per plane, floor 5e-4, at the fp64 witness (no floor there); on a rectangle, the transposed image must deviate"
+        sizes: ["512", "1024", "768x512"], oracle: "tools/oracle/krea2.py vae --size {size}; vae-witness --size {size}; vae-bf16 --size {size}", weights: ["VAE"],
+        rule: "the rule per plane, floor 5e-4, at the fp64 witness (no floor there); a decoder in bf16 no further from it than the reference in bf16, + 25 %; on a rectangle, the transposed image must deviate"
     ) { invocation in
         let report = Report(title: "\(model) vae \(invocation.size)")
+        let reference = try DecoderReference.image(invocation.goldens, file: "krea2/goldens-krea2-vae-\(invocation.size).safetensors",
+                                                   publishedInBF16: AnimaVAE.publishedInBF16,
+                                                   script: "tools/oracle/krea2.py vae-bf16 --size \(invocation.size)")
         let goldens = try invocation.goldens.open("krea2/goldens-krea2-vae-\(invocation.size).safetensors")
         let witness = invocation.goldens.optional("krea2/witness-krea2-vae-f64-\(invocation.size).safetensors")
         guard let entry = goldens.entries["latent_final"], let latent = goldens.float32("latent_final"),
@@ -317,7 +369,8 @@ enum Krea2Stages {
         let decoder = try AnimaVAE(path: try Library.processWide.component(.krea2, "vae.safetensors"),
                                    latentHeight: entry.shape[1], latentWidth: entry.shape[2])
         let (image, _) = try decoder.decode(latent: latent.baseAddress!)
-        report.add(Judge.planes("image RGB", engine: image, oracle: expected, witness: witness?.float32("image"), planes: 3))
+        report.add(Judge.planes("image RGB", engine: image, oracle: expected, witness: witness?.float32("image"), reference: reference,
+                                planes: 3))
         if let m = Judge.orientation(image, expected, height: decoder.imageHeight, width: decoder.imageWidth) { report.add(m) }
         return report
     }
@@ -399,6 +452,15 @@ struct Clouds {
         }
         let oracleCloud = [atWitness.reference] + moves + permuted
         let median = engineCloud.sorted()[engineCloud.count / 2], threshold = 1.25 * (oracleCloud.max() ?? 0)
+        // SILICONED_CHECK_CLOUDS=1: every draw of both clouds on stderr, one line each, for whoever wants to plot them.
+        if ProcessInfo.processInfo.environment["SILICONED_CHECK_CLOUDS"] == "1" {
+            let kinds = ["nominal"] + Array(repeating: "ulp", count: moves.count) + Array(repeating: "order", count: permuted.count)
+            var lines = zip(kinds, oracleCloud).map { "cloud\t\(m.boundary)\toracle\t\($0)\t\($1)" }
+            lines += engineCloud.enumerated().map { "cloud\t\(m.boundary)\tengine\t\($0 == 0 ? "nominal" : byOrders ? "order" : "ulp")\t\($1)" }
+            lines.append("cloud\t\(m.boundary)\tjudge\tmedian\t\(median)")
+            lines.append("cloud\t\(m.boundary)\tjudge\tthreshold\t\(threshold)")
+            FileHandle.standardError.write((lines.joined(separator: "\n") + "\n").data(using: .utf8)!)
+        }
         let note = byOrders
             ? String(format: "clouds of summation orders: engine median of %d (nominal + %d orders), oracle worst of %d (nominal + %d ulp + %d orders)",
                      engineCloud.count, engineCloud.count - 1, oracleCloud.count, moves.count, permuted.count)

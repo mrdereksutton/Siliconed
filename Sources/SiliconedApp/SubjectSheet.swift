@@ -114,7 +114,7 @@ struct SubjectSheet: View {
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button(draft.original == nil ? String(localized: "Create") : String(localized: "Save")) { save() }
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(.defaultAction).tint(Palette.control)
                     .disabled(draft.nameProblem != nil || draft.count == 0)
             }
         }
@@ -144,7 +144,7 @@ struct SubjectSheet: View {
                     Picker("Picture", selection: $shown) {
                         ForEach(draft.pictures.indices, id: \.self) { i in Text(verbatim: "\(i + 1)").tag(i) }
                     }
-                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+                    .pickerStyle(.segmented).labelsHidden().fixedSize().tint(Palette.control)
                     .help("The subject’s two pictures: each has its own frame")
                 }
                 Button("Whole Image") { draft.pictures[shown].frame = .whole }

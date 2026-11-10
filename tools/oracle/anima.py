@@ -3,27 +3,34 @@
 
     anima.py tokenizer                      the T5 tokenizer on a corpus of edge cases -> anima/t5-corpus.json
     anima.py text [--long]                  both tokenizers, Qwen3-0.6B, the conditioner -> goldens-anima-text[-long]
-    anima.py dit --size 512 [1024 768x512]  one DiT evaluation at the first sigma       -> goldens-anima-dit-<size>
-    anima.py bf16 --size 1024               the same evaluation in bfloat16             -> witness-bf16-anima-dit-<size>
+    anima.py dit --size 512 [1024 768x512 1536]  one DiT evaluation at the first sigma  -> goldens-anima-dit-<size>
+    anima.py bf16 --size 1024 [1536]        the same evaluation in bfloat16             -> witness-bf16-anima-dit-<size>
     anima.py dit|bf16 --size 512 --variant compact|light   the same, for the Compact's or the Light's published DiT
-                                            (GGUF), dequantized by gguf-py -> goldens-anima-dit-<variant>-<size>
-    anima.py trajectory --size 512 [1024]   the 8-step Euler loop                       -> goldens-anima-trajectory-<size>
+                                            (the Light's: our SQ file, decoded by `quantized.sq_decode`) -> goldens-anima-dit-<variant>-<size>
+    anima.py w8a8 --size 512 --variant compact   `bf16 --variant compact` with ComfyUI's default int8 products in the
+                                            int8 layers (the W8A8 bar)      -> witness-w8a8-anima-dit-compact-<size>
+    anima.py trajectory --size 512 [1024 1536]  the 8-step Euler loop                   -> goldens-anima-trajectory-<size>
     anima.py vae --size 512 [1024 768x512]  the decoder on the final latent             -> goldens-anima-vae-<size>
     anima.py witness --size 512 --step 0    one guided evaluation in float64            -> witness-anima-f64-<size>-step<n>
     anima.py vae-witness --size 512         the decoder in float64                      -> witness-anima-vae-f64-<size>
+    anima.py vae-bf16 --size 512            the decoder in bfloat16, as the pipeline runs it -> witness-bf16-anima-vae-<size>
     anima.py img2img --size 512             img2img at strength 0.6: the picture encoded, the start, the
                                             truncated loop (steps 3-7)                  -> goldens-anima-img2img-<size>
-    anima.py all [--size 512 1024 768x512]  all of the above, in an order that satisfies their dependencies
+    anima.py all [--size 512 1024 768x512] [1536]  all of the above, in an order that satisfies their dependencies
 
 `bf16` is the bar of a half-precision path (the ANE's fp16 products): the `dit` evaluation with the
 reference in bfloat16, on the `dit` golden's inputs. It is not part of `all` (costly, and only that path reads it).
+`w8a8` is the bar of the engine's W8A8 route (`check anima dit --variant compact --int8-activations`): the same bf16
+evaluation with every int8 layer computed as ComfyUI does by default (`quantized.Int8Products`); not part of `all` either.
 
 Goldens go in `<goldens>/anima/`; `--goldens DIR`, else `SILICONED_GOLDENS`, else `./goldens`. Each stage
 rereads what an earlier one wrote (`dit` the text, `trajectory` the text, `vae` the trajectory, a rectangle's
-`vae` the 1024 trajectory), so run them in the order above. `all` at the default size takes about
-two minutes on an M1 Pro, and about ten with `--size 512 1024 768x512`, which writes everything
-`siliconed check anima` reads. The witness of the DiT is the first step's (the only one the check reads) and
-exists for the squares: a rectangle has no trajectory to take its starting latent from.
+`vae` the 1024 trajectory), so run them in the order above. `all` without `--size` writes 512, 1024 and
+768x512: about two minutes on an M1 Pro with `--size 512`, about ten without. 1536 is asked for by name
+(`--size 1536`, alone or with the others): only the DiT's evaluation, trajectory and witness exist there (the
+decoder's goldens stop at 1024), and its fp32 trajectory is long; without its goldens, `siliconed check anima`
+skips the 1536 stages. The witness of the DiT is the first step's (the only one the check reads) and exists
+for the squares: a rectangle has no trajectory to take its starting latent from.
 
 The reference is diffusers' `CosmosTransformer3DModel`, `AnimaTextConditioner` and
 `AutoencoderKLQwenImage`, with transformers' Qwen3 and T5 tokenizer, in float32 on the CPU. The Turbo
@@ -147,8 +154,8 @@ def turbo_state_dicts() -> tuple[dict, dict]:
 
 
 def load_transformer(variant: str | None = None):
-    """The fp32 DiT. With a `variant`, the weights are the Compact's or the Light's published GGUF, dequantized
-    by gguf-py (`quantized.Variant`); only `transformer/config.json` is read from the base repository, and the
+    """The fp32 DiT. With a `variant`, the weights are the Compact's or the Light's published file (the Light's: our SQ,
+    decoded by `quantized.sq_decode`; `quantized.Variant`); only `transformer/config.json` is read from the base repository, and the
     text adapter the file also holds is left out."""
     from diffusers import CosmosTransformer3DModel
     if variant:
@@ -354,6 +361,34 @@ def stage_bf16(size: str, variant: str | None = None):
     write(quantized.stem(f"witness-bf16-anima-dit-{name}", variant), {k: v.float() for k, v in taps.items()},
           {"dtype": "bfloat16", "inputs": f"goldens-anima-dit-{name}",
            **({"weights": model.published.describe()} if variant else {})})
+
+
+def stage_w8a8(size: str, variant: str):
+    """`bf16 --variant compact` with every linear the Compact publishes in int8 convrot computed by comfy_kitchen's own
+    `int8_linear` on the published integers (`quantized.Int8Products`, the recipe cited there): the bar of the engine's
+    W8A8 route. ComfyUI's Anima (comfy/ldm/anima/model.py over comfy/ldm/cosmos/predict2.py, at the frozen commit of
+    `quant_fixtures.COMFY`) calls its linears plainly: `GPT2FeedForward` is `layer2(GELU(layer1(x)))`, the attention's
+    q, k, v and output projections and the adaLN-LoRA pairs one `Linear` each, no input activation or residual folded
+    into a product. Bedovyy quantizes 254 of them: the eight attention projections of blocks 1 to 26 and the MLP of
+    blocks 4 to 26. Blocks 0 and 27 whole, the MLPs of blocks 1 to 3, every adaLN, the embedders and the head are BF16 in
+    the file, and run in bf16 here as there: block 0's boundaries are the bf16 bar's to the bit. Inputs: the Standard's
+    dit golden, as `bf16` reads them. Writes `witness-w8a8-anima-dit-compact-<size>`, the bf16 bar's keys."""
+    if variant != "compact":
+        raise SystemExit("w8a8: the Compact only (--variant compact): its int8 convrot is what ComfyUI computes in W8A8")
+    height, width, name = common.parse_size(size)
+    golden = read(f"goldens-anima-dit-{name}", f"anima.py dit --size {name}")
+    half = torch.bfloat16
+    model = load_transformer(variant).to(half)
+    products = quantized.Int8Products(model, model.published)
+    taps = probe_dit(model)
+    out = model(hidden_states=golden["latent_in"][:, None][None].to(half), timestep=golden["timestep"].to(half),
+                encoder_hidden_states=golden["prompt_embeds"][None].to(half),
+                padding_mask=torch.zeros(1, 1, height, width, dtype=half), return_dict=False)[0]
+    taps["model_out"] = out[0, :, 0]
+    assert products.calls == len(products.layers), (products.calls, len(products.layers))
+    write(quantized.stem(f"witness-w8a8-anima-dit-{name}", variant), {k: v.float() for k, v in taps.items()},
+          {"dtype": "bfloat16", "inputs": f"goldens-anima-dit-{name}", "int8": products.describe(),
+           "weights": model.published.describe()})
 
 
 def stage_trajectory(size: str):
@@ -567,6 +602,28 @@ def stage_vae_witness(size: str):
     print(f"-> {path}")
 
 
+def stage_vae_bf16(size: str):
+    """**The decoder in bfloat16, as the modular pipeline runs it with `torch_dtype=torch.bfloat16`** on
+    `goldens-anima-vae-<size>`'s latent (`anima/decoders.py`): `latents.to(vae.dtype)`, `/ (1 / std) + mean` in bf16, then
+    `vae.decode`. The bar of the engine's bf16 decoder (invariant 3): no further from the fp64 witness than this, + 25 %. Its
+    convolutions on bf16 operands with fp32 sums (`common.bf16_convolutions_in_fp32`): call it in a process that does nothing else."""
+    from diffusers import AutoencoderKLQwenImage
+    _, _, name = common.parse_size(size)
+    common.bf16_convolutions_in_fp32()
+    bf16 = torch.bfloat16
+    decoded = read(f"goldens-anima-vae-{name}", f"anima.py vae --size {name}")
+    exact = read(f"witness-anima-vae-f64-{name}", f"anima.py vae-witness --size {name}")["image"]
+    vae = AutoencoderKLQwenImage.from_pretrained(base() / "vae", torch_dtype=bf16).eval()
+    latent = decoded["latent_final"][None, :, None].to(bf16)
+    mean = torch.tensor(vae.config.latents_mean).view(1, 16, 1, 1, 1).to(bf16)
+    inv_std = 1.0 / torch.tensor(vae.config.latents_std).view(1, 16, 1, 1, 1).to(bf16)
+    with torch.no_grad():
+        image = vae.decode(latent / inv_std + mean, return_dict=False)[0][0, :, 0].float()
+    worst, median, plane = common.per_plane(image, exact)
+    print(f"  decoder {name}: bf16 vs fp64 - worst plane {worst:.3e} (plane {plane}), median {median:.3e}")
+    write(f"witness-bf16-anima-vae-{name}", {"image": image})
+
+
 def everything(goldens: Path, sizes: list[str]) -> None:
     """Text first, then per size what the check reads: the DiT evaluation, the trajectory and the DiT's
     witness (squares), the decoder and its witness. A rectangle's decoder crops the 1024 trajectory's final
@@ -577,8 +634,10 @@ def everything(goldens: Path, sizes: list[str]) -> None:
     stages += [["dit", "--size", s] for s in sizes]
     stages += [["trajectory", "--size", s] for s in needed]
     stages += [["witness", "--size", s, "--step", "0"] for s in squares]
-    stages += [["vae", "--size", s] for s in sizes]
-    stages += [["vae-witness", "--size", s] for s in sizes]
+    decoded = [s for s in sizes if s != "1536"]   # the decoder's check stops at 1024 (`AnimaStages.vae`)
+    stages += [["vae", "--size", s] for s in decoded]
+    stages += [["vae-witness", "--size", s] for s in decoded]
+    stages += [["vae-bf16", "--size", s] for s in decoded]
     stages += [["img2img", "--size", "512"]] if "512" in squares else []
     common.run_stages(__file__, goldens, stages)
 
@@ -587,17 +646,20 @@ def main() -> None:
     global OUT
     common.unbuffered()
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("stage", choices=["tokenizer", "text", "dit", "bf16", "trajectory", "vae", "witness", "vae-witness", "img2img", "all"])
+    p.add_argument("stage", choices=["tokenizer", "text", "dit", "bf16", "w8a8", "trajectory", "vae", "witness", "vae-witness",
+                                          "vae-bf16", "img2img", "all"])
     p.add_argument("--size", nargs="+", default=None,
                    help="512, 1024 or WIDTHxHEIGHT (dit, vae: a rectangle too; default 512, all: every size)")
     p.add_argument("--step", type=int, default=0, help="witness only: the step of the trajectory (default 0, the one the check reads)")
     p.add_argument("--long", action="store_true", help="text only: the long prompt, past 512 tokens -> goldens-anima-text-long")
     p.add_argument("--variant", choices=quantized.VARIANTS,
-                   help="dit and bf16: the Compact's or the Light's published DiT instead of the Standard's")
+                   help="dit and bf16: the Compact's or the Light's published DiT instead of the Standard's; w8a8: compact, required")
     p.add_argument("--goldens", help="output folder (default: $SILICONED_GOLDENS, else ./goldens)")
     args = p.parse_args()
-    if args.variant and args.stage not in ("dit", "bf16"):
-        p.error("--variant goes with dit or bf16")
+    if args.variant and args.stage not in ("dit", "bf16", "w8a8"):
+        p.error("--variant goes with dit, bf16 or w8a8")
+    if args.stage == "w8a8" and args.variant != "compact":
+        p.error("w8a8 takes --variant compact: the Compact's int8 convrot is what ComfyUI computes in W8A8")
     OUT = common.goldens_directory(args.goldens) / "anima"
     OUT.mkdir(parents=True, exist_ok=True)
     if args.stage == "all":
@@ -609,12 +671,12 @@ def main() -> None:
     else:
         for size in args.size or ["512"]:
             if args.variant:
-                {"dit": stage_dit_variant, "bf16": stage_bf16}[args.stage](size, args.variant)
+                {"dit": stage_dit_variant, "bf16": stage_bf16, "w8a8": stage_w8a8}[args.stage](size, args.variant)
             elif args.stage == "witness":
                 stage_witness(size, args.step)
             else:
                 {"dit": stage_dit, "bf16": stage_bf16, "trajectory": stage_trajectory, "vae": stage_vae,
-                 "vae-witness": stage_vae_witness, "img2img": stage_img2img}[args.stage](size)
+                 "vae-witness": stage_vae_witness, "vae-bf16": stage_vae_bf16, "img2img": stage_img2img}[args.stage](size)
 
 
 if __name__ == "__main__":

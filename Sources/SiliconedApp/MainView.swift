@@ -1,12 +1,5 @@
-// **The app's window: the left column on demand, the canvas and composer on the right**.
-//
-// On the right, the canvas: the step-by-step preview in the frame of the coming image, then the image,
-// its actions and details (the time and memory of each stage), the history as a strip, and at the foot
-// of the canvas the composer (`Composer.swift`) with the prompt and every setting in one glass card.
-// On the left (`Sidebar.swift`), folded away by default on Generate and opened on Explore: the
-// exploration's controls (`ExplorationPanel`), or on Generate the settings laid out side by side
-// (`SettingsColumn`). The sheets: the models (`ModelsSheet.swift`), a license to accept
-// (`LicenseSheet.swift`), the diagnostic (`DiagnosticSheet.swift`).
+// **The Studio window: full-bleed borderless darkroom chrome, custom Studio Header Bar,
+// collapsible Signal-Chain Rack on the left, and the Canvas + Studio Composer on the right.**
 
 import AppKit
 import Siliconed
@@ -16,74 +9,41 @@ import UniformTypeIdentifiers
 struct MainView: View {
     @Bindable var app: AppState
     var toggleStatistics: () -> Void = {}
-    /// Fork: the left column folded away on the Generate tab (the composer has it all), shown on Explore.
-    @State private var columns: NavigationSplitViewVisibility = .detailOnly
+    @State private var showsSidebar = false
+    @State private var sidebarWidth: CGFloat = 372
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columns) {
-            Sidebar(app: app)
-                .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 520)
-        } detail: {
-            GraphCanvas(app: app)
-        }
-        .onChange(of: app.sidebarTab, initial: true) { _, tab in
-            withAnimation(Motion.pick(.easeInOut(duration: 0.25))) {
-                columns = tab == .explore ? .all : .detailOnly
-            }
-            guard tab == .explore else { return }
-            app.showsGallery = false
-            if app.explorePrompt.isEmpty { app.explorePrompt = app.prompt }
-            app.gridDefaults()
-        }
-        .toolbar {
-            ToolbarItemGroup(placement: .navigation) {
-                Button {
-                    withAnimation(Motion.pick(.easeInOut(duration: 0.25))) {
-                        columns = columns == .detailOnly ? .all : .detailOnly
-                    }
-                } label: {
-                    Label("Show or hide the left column", systemImage: "sidebar.left")
-                }
-                .help("Show or hide the left column")
+        let _ = StudioHub.shared.theme
+        VStack(spacing: 0) {
+            StudioHeaderBar(
+                app: app,
+                showsSidebar: $showsSidebar,
+                toggleStatistics: toggleStatistics
+            )
+            Rectangle().fill(Palette.hairline).frame(height: 1)
 
-                Button {
-                    withAnimation(Motion.pick(.easeInOut(duration: 0.2))) {
-                        app.showsGallery.toggle()
-                        if app.showsGallery { app.showsExploration = false }
-                    }
-                } label: {
-                    Label("Gallery", systemImage: app.showsGallery ? "rectangle.center.inset.filled" : "square.grid.2x2")
+            HStack(spacing: 0) {
+                if showsSidebar {
+                    Sidebar(app: app)
+                        .frame(width: sidebarWidth)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                    SidebarResizeHandle(width: $sidebarWidth)
                 }
-                .disabled(app.history.isEmpty && !app.showsGallery)
-                .help(app.showsGallery ? "Return to stage" : "Open masonry gallery")
+                GraphCanvas(app: app, showsSidebar: showsSidebar)
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
             }
-            // Fork: the window's two modes, in the middle of the toolbar.
-            ToolbarItem(placement: .principal) {
-                Picker("Exploration", selection: $app.sidebarTab) {
-                    Text("Generate").tag(SidebarTab.generate)
-                    Text("Explore").tag(SidebarTab.explore)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
+        }
+        .background(Palette.canvas)
+        .ignoresSafeArea(.container, edges: .top)
+        .onChange(of: app.sidebarTab, initial: true) { _, tab in
+            withAnimation(Motion.pick(.spring(response: 0.28, dampingFraction: 0.86))) {
+                showsSidebar = (tab == .explore)
             }
-            ToolbarItemGroup(placement: .primaryAction) {
-                let group = app.targets
-                Button { app.copyImages(group) } label: { Label("Copy Image", systemImage: "doc.on.doc") }
-                    .disabled(group.isEmpty)
-                    .help(group.count > 1 ? "Copy the selected images (⇧⌘C)" : "Copy the image (PNG, with its metadata)")
-                Button { app.export(group) } label: { Label("Save…", systemImage: "square.and.arrow.down") }
-                    .disabled(group.isEmpty)
-                    .help(group.count > 1 ? "Export the selected images to a folder (⇧⌘E)" : "Save the image (⌘S)")
-                ShareLink(items: group.map(app.transferable), preview: { SharePreview($0.name) }) {
-                    Label("Share…", systemImage: "square.and.arrow.up")
+            if tab == .explore {
+                app.showsGallery = false
+                if !app.welcomes, !LabModel.shared.detached {
+                    LabModel.shared.unfold()
                 }
-                    .disabled(group.isEmpty)
-                    .help("Share — AirDrop, Messages, Mail, Photos…")
-                Button(action: toggleStatistics) {
-                    Label("Statistics", systemImage: "gauge.with.dots.needle.33percent")
-                }
-                .help("Render statistics (⌥⌘I)")
             }
         }
         .sheet(isPresented: $app.managementOpen) { ModelManagement(app: app) }
@@ -97,6 +57,330 @@ struct MainView: View {
             if app.fullScreen, let image = app.selectedImage?.image { FullScreen(app: app, image: image) }
         }
         .animation(Motion.pick(.easeInOut(duration: 0.15)), value: app.fullScreen)
+    }
+}
+
+// MARK: - Custom Full-Bleed Studio Header Bar
+
+private struct StudioHeaderBar: View {
+    @Bindable var app: AppState
+    @Binding var showsSidebar: Bool
+    let toggleStatistics: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+
+    private enum WorkspaceMode {
+        case studio, gallery, series
+    }
+
+    private var activeMode: WorkspaceMode {
+        if app.showsGallery && !app.history.isEmpty { return .gallery }
+        return app.sidebarTab == .explore ? .series : .studio
+    }
+
+    var body: some View {
+        ZStack {
+            WindowDragArea()
+
+            HStack(spacing: 10) {
+                // Left: Rack toggle + Siliconed Studio Brand Badge
+                HStack(spacing: 10) {
+                    HeaderIconButton(
+                        symbol: "sidebar.left",
+                        active: showsSidebar,
+                        helpText: "Show or hide the Signal-Chain Rack"
+                    ) {
+                        withAnimation(Motion.pick(.spring(response: 0.28, dampingFraction: 0.86))) {
+                            showsSidebar.toggle()
+                        }
+                    }
+
+                    HStack(spacing: 7) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 6.5, style: .continuous)
+                                .fill(Palette.ctaGradient(for: colorScheme))
+                                .frame(width: 22, height: 22)
+                                .shadow(color: Palette.live.opacity(0.35), radius: 6, y: 1)
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 11, weight: .black))
+                                .foregroundStyle(Palette.onLive)
+                        }
+                        Text(verbatim: "Siliconed")
+                            .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                            .tracking(-0.2)
+                            .foregroundStyle(.primary)
+
+                        computeBadge
+                    }
+                    .allowsHitTesting(false)
+                }
+
+                Spacer(minLength: 8)
+
+                // Center: Luminous 3-Mode Studio Workspace Switcher
+                HStack(spacing: 3) {
+                    workspaceSegment(
+                        title: "Studio",
+                        symbol: "sparkles",
+                        active: activeMode == .studio
+                    ) {
+                        withAnimation(Motion.pick(.spring(response: 0.25, dampingFraction: 0.86))) {
+                            app.showsGallery = false
+                            app.sidebarTab = .generate
+                        }
+                    }
+
+                    workspaceSegment(
+                        title: "Gallery",
+                        symbol: "square.grid.2x2",
+                        badge: app.history.isEmpty ? nil : "\(app.history.count)",
+                        active: activeMode == .gallery,
+                        disabled: app.history.isEmpty && !app.showsGallery
+                    ) {
+                        withAnimation(Motion.pick(.spring(response: 0.25, dampingFraction: 0.86))) {
+                            app.showsExploration = false
+                            app.showsGallery = true
+                        }
+                    }
+
+                    workspaceSegment(
+                        title: "Chain & Series",
+                        symbol: "point.3.connected.trianglepath.dotted",
+                        badge: app.seriesRenders > 1 ? "±\(app.seriesRenders)" : nil,
+                        badgeTint: Palette.bracket,
+                        active: activeMode == .series
+                    ) {
+                        withAnimation(Motion.pick(.spring(response: 0.25, dampingFraction: 0.86))) {
+                            app.showsGallery = false
+                            app.sidebarTab = .explore
+                        }
+                    }
+                }
+                .padding(3)
+                .background(
+                    Capsule()
+                        .fill(Palette.well)
+                )
+                .overlay(
+                    Capsule()
+                        .strokeBorder(Palette.hairline, lineWidth: 1)
+                )
+
+                Spacer(minLength: 8)
+
+                // Right: Theme Switcher + Prompt Lab + Export/Stats Action Bar
+                HStack(spacing: 8) {
+                    StudioThemePill()
+
+                    Button {
+                        LabWindow.shared.openStudio()
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "wand.and.sparkles")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Palette.live)
+                            Text("Prompt Lab")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 28)
+                        .background(
+                            Capsule()
+                                .fill(Color.primary.opacity(0.06))
+                        )
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(Palette.hairline, lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open the Prompt Lab (⌥⌘L)")
+
+                    actionCluster
+                }
+            }
+            .padding(.leading, 78)
+            .padding(.trailing, 14)
+        }
+        .frame(height: 46)
+        .background(Palette.column.opacity(0.92))
+    }
+
+    @ViewBuilder private var computeBadge: some View {
+        if let mirror = app.mirror {
+            HStack(spacing: 4) {
+                Circle().fill(Palette.sky).frame(width: 5.5, height: 5.5)
+                Text(verbatim: mirror.macName.uppercased())
+                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Color.primary.opacity(0.06)))
+            .overlay(Capsule().strokeBorder(Palette.hairline))
+        } else if app.inProgress {
+            HStack(spacing: 4) {
+                Circle().fill(Palette.live).frame(width: 5.5, height: 5.5)
+                Text("RENDERING")
+                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                    .foregroundStyle(Palette.live)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Palette.live.opacity(0.12)))
+            .overlay(Capsule().strokeBorder(Palette.live.opacity(0.35)))
+        }
+    }
+
+    private func workspaceSegment(
+        title: LocalizedStringKey,
+        symbol: String,
+        badge: String? = nil,
+        badgeTint: Color? = nil,
+        active: Bool,
+        disabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: symbol)
+                    .font(.system(size: 11, weight: active ? .bold : .medium))
+                    .foregroundStyle(active ? Palette.live : .secondary)
+                Text(title)
+                    .font(.system(size: 12, weight: active ? .semibold : .medium))
+                    .foregroundStyle(active ? .primary : .secondary)
+                if let badge {
+                    Text(verbatim: badge)
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .foregroundStyle(badgeTint ?? (active ? Palette.live : .secondary))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill((badgeTint ?? Palette.live).opacity(0.15)))
+                }
+            }
+            .padding(.horizontal, 11)
+            .frame(height: 26)
+            .background {
+                if active {
+                    Capsule()
+                        .fill(Palette.surface)
+                        .shadow(color: .black.opacity(0.28), radius: 4, y: 1)
+                }
+            }
+            .overlay {
+                if active {
+                    Capsule()
+                        .strokeBorder(Palette.specularRim(for: colorScheme, active: true), lineWidth: 1)
+                }
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.38 : 1)
+    }
+
+    private var actionCluster: some View {
+        let group = app.targets
+        return HStack(spacing: 2) {
+            HeaderIconButton(
+                symbol: "doc.on.doc",
+                disabled: group.isEmpty,
+                helpText: group.count > 1 ? String(localized: "Copy the selected images (⇧⌘C)")
+                                          : String(localized: "Copy the image (PNG, with its metadata)")
+            ) {
+                app.copyImages(group)
+            }
+
+            HeaderIconButton(
+                symbol: "square.and.arrow.down",
+                disabled: group.isEmpty,
+                helpText: group.count > 1 ? String(localized: "Export the selected images to a folder (⇧⌘E)")
+                                          : String(localized: "Save the image (⌘S)")
+            ) {
+                app.export(group)
+            }
+
+            ShareLink(items: group.map(app.transferable), preview: { SharePreview($0.name) }) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(group.isEmpty ? .tertiary : .secondary)
+                    .frame(width: 28, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(group.isEmpty)
+            .help("Share — AirDrop, Messages, Mail, Photos…")
+
+            Divider().frame(height: 14).padding(.horizontal, 2)
+
+            HeaderIconButton(
+                symbol: "gauge.with.dots.needle.33percent",
+                helpText: String(localized: "Render statistics (⌥⌘I)"),
+                action: toggleStatistics
+            )
+        }
+        .padding(.horizontal, 4)
+        .frame(height: 28)
+        .background(Capsule().fill(Color.primary.opacity(0.05)))
+        .overlay(Capsule().strokeBorder(Palette.hairline, lineWidth: 1))
+    }
+}
+
+private struct HeaderIconButton: View {
+    let symbol: String
+    var active = false
+    var disabled = false
+    let helpText: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: active ? .bold : .medium))
+                .foregroundStyle(disabled ? Color.secondary.opacity(0.35) : (active ? Palette.live : (hovering ? .primary : .secondary)))
+                .frame(width: 28, height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(active ? Palette.live.opacity(0.14) : (hovering && !disabled ? Color.primary.opacity(0.08) : .clear))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .onHover { hovering = $0 }
+        .help(Text(verbatim: helpText))
+    }
+}
+
+private struct SidebarResizeHandle: View {
+    @Binding var width: CGFloat
+    @State private var dragStartWidth: CGFloat?
+
+    var body: some View {
+        Rectangle()
+            .fill(Palette.hairline)
+            .frame(width: 1)
+            .overlay {
+                Color.clear
+                    .frame(width: 7)
+                    .contentShape(Rectangle())
+                    .onHover { inside in
+                        if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                    }
+                    .gesture(
+                        DragGesture(minimumDistance: 1)
+                            .onChanged { value in
+                                let base = dragStartWidth ?? width
+                                if dragStartWidth == nil { dragStartWidth = width }
+                                width = min(520, max(320, base + value.translation.width))
+                            }
+                            .onEnded { _ in
+                                dragStartWidth = nil
+                            }
+                    )
+            }
     }
 }
 
@@ -126,99 +410,159 @@ extension View {
     func glass<S: Shape>(_ shape: S) -> some View {
         glassEffect(.regular, in: shape)
     }
+
+    /// **Glass with soft edges** — the Prompt Lab's plate over the image: the system's glass, its rim fading over a band
+    /// instead of stopping at a line, a vapour more than a pane.
+    func vapour(cornerRadius: CGFloat, feather: CGFloat = 14) -> some View {
+        background {
+            Color.clear
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius + feather, style: .continuous))
+                .mask {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .padding(feather)
+                        .blur(radius: feather / 2)
+                }
+                .padding(-feather)
+                .allowsHitTesting(false)
+        }
+    }
 }
 
 // MARK: - The canvas
 
+/// **The canvas**: the active stage (`SeriesCanvas`, `MasonryGalleryView`, or `SceneView`), the horizontal Studio filmstrip,
+/// and at the foot either the Studio `Composer` (on Studio mode) or the docked `LabView` plate (on Chain & Series mode).
 private struct GraphCanvas: View {
     @Bindable var app: AppState
+    let showsSidebar: Bool
 
     var body: some View {
+        let lab = LabModel.shared
         let showingGallery = app.showsGallery && !app.history.isEmpty
+        let studioMode = app.sidebarTab == .generate
+        let showsFloatingActivity = !showsSidebar && app.activityShows
+
         VStack(spacing: 0) {
-            if app.showsExploration, let run = app.explored {
-                ExplorationCanvas(app: app, run: run)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if showingGallery {
-                MasonryGalleryView(app: app)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                SceneView(app: app)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ZStack(alignment: .bottom) {
+                Group {
+                    if app.showsExploration, let run = app.explored {
+                        SeriesCanvas(app: app, run: run)
+                    } else if showingGallery {
+                        MasonryGalleryView(app: app)
+                    } else {
+                        SceneView(app: app)
+                    }
+                }
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                .clipped()
+                .simultaneousGesture(
+                    TapGesture().onEnded {
+                        if !studioMode, lab.unfolded, !lab.isWriting, !lab.detached {
+                            lab.fold()
+                        }
+                    }
+                )
             }
+
             if (!app.history.isEmpty || app.explored != nil) && !showingGallery {
-                // Fork: the strip in the composer's column, its thumbnails over the prompt.
                 Banner(app: app)
-                    .frame(maxWidth: 920)
+                    .frame(maxWidth: 960)
                     .padding(.horizontal, 24)
             }
-            // Fork: at the foot of the canvas, what goes on (`ActivityCard`) over the prompt and every
-            // setting of a render (`Composer`); the Explore tab keeps its own form in the left column.
-            if app.activityShows || app.sidebarTab == .generate {
-                VStack(spacing: 10) {
-                    if app.activityShows { ActivityCard(app: app) }
-                    if app.sidebarTab == .generate { Composer(app: app) }
+
+            if studioMode {
+                if !showingGallery || showsFloatingActivity {
+                    VStack(spacing: 10) {
+                        if showsFloatingActivity { ActivityCard(app: app) }
+                        if !showingGallery { Composer(app: app) }
+                    }
+                    .frame(maxWidth: 960)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 10)
+                    .padding(.bottom, 18)
+                    .animation(Motion.pick(.easeInOut(duration: 0.2)), value: showsFloatingActivity)
                 }
-                .frame(maxWidth: 920)
-                .padding(.horizontal, 24)
-                .padding(.top, 12)
-                .padding(.bottom, 18)
-                .animation(Motion.pick(.easeInOut(duration: 0.2)), value: app.activityShows)
+            } else if !showingGallery, !(lab.detached && lab.unfolded) {
+                LabView(model: lab)
+                    .frame(maxWidth: 960)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 8)
+                    .padding(.bottom, 16)
+                    .animation(Motion.pick(.spring(duration: 0.3)), value: lab.unfolded)
             }
         }
         .background { AmbientBackdropView(app: app) }
+        .onAppear {
+            lab.watchRender()
+            lab.refresh()
+        }
+        .onChange(of: app.welcomes) { _, welcomes in
+            if !welcomes, app.sidebarTab == .explore {
+                lab.welcomeEnded()
+            }
+        }
         .overlay(alignment: .top) {
             if let toast = app.toast {
                 Text(toast)
-                    .font(.callout)
+                    .font(.callout.weight(.medium))
                     .padding(.horizontal, 16).padding(.vertical, 9)
-                    .glass(Capsule())
+                    .studioCard(cornerRadius: 999)
                     .padding(.top, 14)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .animation(Motion.pick(.spring(duration: 0.3)), value: app.toast)
-        // A PNG Siliconed wrote brings back its settings — the canvas is where an image is opened.
-        // Any other image keeps the canvas's meaning: an edit's reference when the model edits
-        // (to edit a Siliconed image, drop it on the composer's « Images », or « Edit This Image »),
-        // or the starting image's replacement when a starting image is held.
-        .dropDestination(for: URL.self) { urls, _ in
-            let images = urls.filter { !AppState.importable($0) }
-            if images.count == 1, app.restoreSettings(fromPNG: images[0]) { return true }
-            if app.editingPossible, !images.isEmpty {
-                app.addReferences(images)
+        // Drop destination: a Siliconed PNG restores settings; otherwise routes into edit references, starting image, or Prompt Lab.
+        .dropDestination(for: DroppedImage.self) { items, _ in
+            var files: [URL] = []
+            var pasted: [Data] = []
+            for item in items {
+                switch item {
+                case .file(let url) where !AppState.importable(url): files.append(url)
+                case .file: break
+                case .png(let data): pasted.append(data)
+                }
+            }
+            if items.count == 1, files.count == 1, app.restoreSettings(fromPNG: files[0]) { return true }
+            if app.editingPossible, !(files.isEmpty && pasted.isEmpty) {
+                pasted.forEach { app.addReference(png: $0) }
+                app.addReferences(files)
                 return true
             }
-            if app.usedStart != nil, let first = images.first {
-                app.replaceStart(with: first)
-                return true
+            if app.usedStart != nil {
+                if let data = pasted.first, let image = AppState.startImage(png: data, name: String(localized: "dropped image")) {
+                    app.carryStart(image)
+                    return true
+                }
+                if let url = files.first {
+                    app.replaceStart(with: url)
+                    return true
+                }
             }
-            if images.count == 1, images[0].pathExtension.lowercased() == "png" {
-                app.flash(String(localized: "No Siliconed settings in this image"))
-            }
-            return false
+            let valid = items.filter { if case .file(let url) = $0 { !AppState.importable(url) } else { true } }
+            guard !valid.isEmpty else { return false }
+            for image in valid { lab.load(image) }
+            if studioMode { LabWindow.shared.openStudio() } else { lab.unfold() }
+            return true
         }
     }
 }
 
 // MARK: - Full screen
 
-/// The chosen image over the whole window — the app's viewer, instead of a temporary file
-/// opened in Preview (which would have kept it in its recent items). Escape, Space or a
-/// click closes it; ← → walk along the strip.
+/// The chosen image over the whole window — Escape, Space or a click closes it; ← → walk along the strip.
 private struct FullScreen: View {
     let app: AppState
     let image: CGImage
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.94)
+            Color.black.opacity(0.95)
             Image(image, scale: 1, label: Text(verbatim: app.selectedEntry?.settings.prompt ?? ""))
                 .resizable()
                 .interpolation(.high)
                 .scaledToFit()
                 .padding(24)
-            // The keys, invisible: the image is what VoiceOver reads (Esc and a click close it).
             Group {
                 Button("Close") { app.fullScreen = false }
                     .keyboardShortcut(.cancelAction)

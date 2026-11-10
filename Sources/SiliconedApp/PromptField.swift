@@ -2,7 +2,12 @@
 //
 //     typed      woman posing with @alice in @red-coat and @bob
 //     drawn      woman posing with (▣ alice) in (▣ red-coat) and @bob
-//                                  └ lavender   └ lavender       └ unknown: dotted underline
+//                                  └ rose       └ rose           └ unknown: dotted underline
+//
+// **Greyed where the model does not read it** (`reading`, the rule is `LabInputs.inert`): under a model that takes no image,
+// a subject's chip is drawn grey, its thumbnail faded; a reference to an image the render does not carry (`<image3>` with two)
+// is grey too. The hover says why. The render leaves them out (`AppState.namedJob`); the text keeps them, for when they are
+// read again.
 //
 // **The text stays text.** A chip is the characters `@alice`, styled — not an attachment: copying gives
 // `@alice`, pasting `@alice` makes a chip, the caret and the selection go through it as through a word,
@@ -15,6 +20,13 @@
 // thumbnails first, under the caret (`SubjectCompletion`); ↑ ↓ choose, Return or Tab take, Esc closes.
 // The window's key monitor leaves Esc to it while it is open (`SubjectCompletion.isOpen`).
 //
+// **A series' group is a chip too** (`{red|blue}`, `PromptAlternatives`): drawn in the series' yellow (`Palette.bracket`), its
+// braces and bars not drawn — a dot between its words. A click on it opens its bubble (`BracketBubble`), whose words rewrite the
+// group where it is typed; braces typed by hand make one as well. Words become a group by the ± at the card's right (`PromptBracketMark`: the
+// selection, or the word at the caret) or by « Vary This Word… » at the head of the right-click menu — added by the delegate
+// (`textView(_:menu:for:at:)`): with an override of `menu(for:)`, the user saw only the system's menu (4/11/2026). The
+// text stays the characters typed, as for a subject.
+//
 // TextKit 1 on purpose: `drawBackground` / `drawGlyphs` of an `NSLayoutManager` subclass are the one
 // stable place to draw behind and above given glyphs, and a prompt is a few hundred characters.
 
@@ -25,6 +37,12 @@ import SwiftUI
 extension NSAttributedString.Key {
     /// A known subject's chip: `<kind>:<key>` (`NamedSubjects.key`), read by the layout manager.
     static let subjectChip = NSAttributedString.Key("SiliconedSubjectChip")
+    /// A chip the model does not read: drawn grey (`PromptField.inert`).
+    static let subjectChipInert = NSAttributedString.Key("SiliconedSubjectChipInert")
+    /// A series' group, from `{` to `}`: its rank in the text (`SeriesKey.group`).
+    static let seriesGroup = NSAttributedString.Key("SiliconedSeriesGroup")
+    /// A group's `|`: not drawn, a dot in its place.
+    static let seriesSeparator = NSAttributedString.Key("SiliconedSeriesSeparator")
 }
 
 /// **The field, for SwiftUI**: the same font as a `TextEditor`.
@@ -34,6 +52,10 @@ struct PromptField: NSViewRepresentable {
     @Binding var focused: Bool
     /// Off while the writer writes: the text it will replace does not move under it.
     var editable = true
+    /// What the model aimed at reads of the text, or `nil`: nothing greyed.
+    var reading: PromptReading? = nil
+    /// The rack whose series the text's groups are: a group's bubble, « Vary This Word… ». `nil`: groups drawn, no bubble.
+    var series: AppState? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(text: $text, subjects: subjects, focused: $focused) }
 
@@ -58,15 +80,19 @@ struct PromptField: NSViewRepresentable {
         view.textContainerInset = NSSize(width: 0, height: 3)
         view.font = PromptStyle.font
         view.typingAttributes = PromptStyle.base
+        Palette.ink(view)
         view.delegate = context.coordinator
         view.focusChanged = { [weak coordinator = context.coordinator] typing in
             coordinator?.focused.wrappedValue = typing
             // The list leaves with the keyboard: left open, it would keep Esc from every other field.
             if !typing { coordinator?.completion.close() }
         }
+        view.listShown = { [weak coordinator = context.coordinator] in coordinator?.completion.isShown ?? false }
         view.setAccessibilityLabel(String(localized: "Prompt"))
         view.setAccessibilityHelp(String(localized: "Write @ and a subject’s name to cite it."))
         layout.thumbnail = { [weak coordinator = context.coordinator] key in coordinator?.thumbnail(key) }
+        context.coordinator.series = series
+        view.openBracket = { [weak coordinator = context.coordinator] target, rect in coordinator?.openBracket(target, at: rect) }
         context.coordinator.view = view
         PromptTextView.current = view
 
@@ -84,10 +110,15 @@ struct PromptField: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: NSViewRepresentableContext<Self>) {
         let c = context.coordinator
         guard let view = c.view else { return }
+        c.series = series
         // Read here, so that a change of either redraws: the text set elsewhere (the rack's prompt taken, a
         // rewrite), a subject created, renamed or deleted.
         let text = self.text, version = subjects.version
         if view.isEditable != editable { view.isEditable = editable }
+        if c.reading != reading, !view.hasMarkedText() {
+            c.reading = reading
+            c.restyle()
+        }
         if view.string != text, !view.hasMarkedText() {
             // Through the text system, as a paste would be: one undo step. `string =` would leave the
             // undo stack holding ranges of the old text — ⌘Z would then undo into the wrong place.
@@ -121,7 +152,9 @@ struct PromptField: NSViewRepresentable {
         let subjects: SubjectLibrary
         var focused: Binding<Bool>
         weak var view: PromptTextView?
+        weak var series: AppState?
         var styledVersion = -1
+        var reading: PromptReading?
         let completion = SubjectCompletion()
 
         init(text: Binding<String>, subjects: SubjectLibrary, focused: Binding<Bool>) {
@@ -132,6 +165,18 @@ struct PromptField: NSViewRepresentable {
 
         func thumbnail(_ key: String) -> NSImage? {
             subjects.all.first { $0.id == key }.flatMap { subjects.thumbnail($0) }
+        }
+
+        /// A group's bubble, or words to vary: over the text, where they are.
+        func openBracket(_ target: BracketTarget, at rect: NSRect) {
+            guard let series, let view else { return }
+            BracketPopover.show(series, target: target, relativeTo: rect, of: view)
+        }
+
+        /// **« Vary This Word… » at the head of the right-click menu**: the selection, or the word under the click.
+        func textView(_ textView: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
+            (textView as? PromptTextView)?.addVary(to: menu, at: charIndex)
+            return menu
         }
 
         // ── the text changes ──
@@ -166,12 +211,22 @@ struct PromptField: NSViewRepresentable {
             storage.beginEditing()
             storage.setAttributes(PromptStyle.base, range: all)
             var names: [String] = []
+            let inert = reading.map {
+                LabInputs.inert(in: text, known: Set(subjects.all.map(\.id)), capacity: $0.capacity, carried: $0.carried)
+            } ?? []
+            let greyedSubjects = Set(inert.filter { $0.why == .subject }.map(\.range.lowerBound))
             for m in NamedSubjects.mentions(in: text) {
+                let greyed = greyedSubjects.contains(m.range.lowerBound)
                 let r = NSRange(m.range, in: text)
                 if let s = subjects.subject(named: m.name) {
                     names.append(contentsOf: s.name.split(whereSeparator: { $0 == "-" || $0 == "_" }).map(String.init))
-                    storage.addAttributes([.subjectChip: "\(s.kind.rawValue):\(s.id)",
-                                           .toolTip: "@\(s.name) — \(s.kind.label)"], range: r)
+                    let why = greyed ? String(localized: "\(reading?.model ?? "") does not read subjects") : s.kind.label
+                    storage.addAttributes([.subjectChip: "\(s.kind.rawValue):\(s.id)", .toolTip: "@\(s.name) — \(why)"], range: r)
+                    if greyed {
+                        // Secondary, not tertiary as the greyed words: on the chip's fill, tertiary left the name unreadable
+                        // (seen on capture); the faded thumbnail and the grey edge already say it does not go.
+                        storage.addAttributes([.subjectChipInert: true, .foregroundColor: NSColor.secondaryLabelColor], range: r)
+                    }
                     // The `@`, not drawn: its advance makes the thumbnail's room.
                     storage.addAttributes([.foregroundColor: NSColor.clear, .kern: PromptStyle.atKern],
                                           range: NSRange(location: r.location, length: 1))
@@ -182,6 +237,26 @@ struct PromptField: NSViewRepresentable {
                                            .foregroundColor: NSColor.secondaryLabelColor,
                                            .toolTip: String(localized: "No subject is called @\(m.name).")], range: r)
                 }
+            }
+            // The series' groups: the whole group a chip, its braces and bars not drawn.
+            let groupHelp = String(localized: "A series: Generate renders each of these words. Click to change them.")
+            for (g, span) in PromptAlternatives.spans(text).enumerated() {
+                let r = NSRange(span.range, in: text)
+                storage.addAttributes([.seriesGroup: g, .toolTip: groupHelp], range: r)
+                storage.addAttributes([.foregroundColor: NSColor.clear, .kern: PromptStyle.groupPadding],
+                                      range: NSRange(location: r.location, length: 1))
+                storage.addAttribute(.foregroundColor, value: NSColor.clear, range: NSRange(location: r.upperBound - 1, length: 1))
+                for a in span.alternatives.dropLast() {
+                    let bar = NSRange(location: NSRange(a, in: text).upperBound, length: 1)
+                    storage.addAttributes([.foregroundColor: NSColor.clear, .seriesSeparator: true, .kern: PromptStyle.groupPadding],
+                                          range: bar)
+                }
+            }
+            for word in inert {
+                guard case .image(let n) = word.why else { continue }
+                storage.addAttributes([.foregroundColor: NSColor.tertiaryLabelColor,
+                                       .toolTip: String(localized: "No image \(String(n)) goes with this render: these words are left out.")],
+                                      range: NSRange(word.range, in: text))
             }
             storage.endEditing()
             view.typingAttributes = PromptStyle.base
@@ -246,6 +321,14 @@ struct PromptField: NSViewRepresentable {
     }
 }
 
+/// **What the model aimed at reads of the text**: how many images it takes (0: none), how many the render carries (the
+/// edit's images and the subjects' pictures, not an img2img's start), its name for the hover.
+struct PromptReading: Equatable {
+    var capacity: Int
+    var carried: Int
+    var model: String
+}
+
 /// The field's type: its metrics, and how much room the `@` makes for the thumbnail.
 enum PromptStyle {
     nonisolated(unsafe) static let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
@@ -259,6 +342,8 @@ enum PromptStyle {
     /// The thumbnail's side, and the chip's height around the text.
     static let thumbnail: CGFloat = 14
     static let leading: CGFloat = 2, gap: CGFloat = 4, trailing: CGFloat = 5
+    /// The room after a group's `{` and around its dots.
+    static let groupPadding: CGFloat = 3
     /// The `@`'s added advance: its own glyph is invisible, the thumbnail and its margins take its place.
     static let atKern: CGFloat = {
         let at = ("@" as NSString).size(withAttributes: [.font: font]).width
@@ -272,6 +357,95 @@ final class PromptTextView: NSTextView {
     /// The field on screen — at most one: the lab has one text.
     @MainActor static weak var current: PromptTextView?
     var focusChanged: ((Bool) -> Void)?
+    /// Whether the list of subjects is shown under the caret: Esc closes it before it leaves the field.
+    var listShown: (() -> Bool)?
+    /// A group clicked, or words to vary: the bubble, at this rectangle of the view.
+    var openBracket: ((BracketTarget, NSRect) -> Void)?
+
+    /// **A click on a group** places the caret, as in any word, and opens the group's bubble.
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        guard event.clickCount == 1, let openBracket, let storage = textStorage, selectedRange().length == 0 else { return }
+        let caret = selectedRange().location
+        guard caret < storage.length else { return }
+        var r = NSRange()
+        guard let g = storage.attribute(.seriesGroup, at: caret, effectiveRange: &r) as? Int, caret > r.location else { return }
+        openBracket(.key(.group(g)), rect(of: r))
+    }
+
+    /// **The words a series would vary**: the selection when `index` falls in it (or no index is given: the card's ±), else the
+    /// word at `index` or just before the caret — never blank. Inside a group: that group, to change its words.
+    func varyTarget(at index: Int?) -> BracketTarget? {
+        guard openBracket != nil, isEditable, let storage = textStorage, storage.length > 0 else { return nil }
+        let length = storage.length
+        let chosen = selectedRange()
+        let at = min(max(index ?? chosen.location, 0), length)
+        var r = NSRange()
+        for probe in [min(at, length - 1), max(at - 1, 0)] {
+            if let g = storage.attribute(.seriesGroup, at: probe, effectiveRange: &r) as? Int, chosen.length == 0 || index != nil {
+                return .key(.group(g))
+            }
+        }
+        let text = string as NSString
+        func blank(_ r: NSRange) -> Bool { text.substring(with: r).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        var words: NSRange
+        if chosen.length > 0, index == nil || NSLocationInRange(at, chosen) {
+            words = chosen
+        } else {
+            words = selectionRange(forProposedRange: NSRange(location: min(at, length - 1), length: 0), granularity: .selectByWord)
+            if blank(words), at > 0 {
+                words = selectionRange(forProposedRange: NSRange(location: at - 1, length: 0), granularity: .selectByWord)
+            }
+        }
+        guard !blank(words) else { return nil }
+        var inGroup = false
+        storage.enumerateAttribute(.seriesGroup, in: words) { v, _, stop in if v != nil { inGroup = true; stop.pointee = true } }
+        return inGroup ? nil : .words(words, prompt: string)
+    }
+
+    /// Adds « Vary This Word… » at the head of `menu` when there are words to vary at `index`.
+    func addVary(to menu: NSMenu, at index: Int) {
+        guard let target = varyTarget(at: index) else { return }
+        var title = String(localized: "Vary This Word…")
+        if case .key = target { title = String(localized: "Change These Words…") }
+        let item = NSMenuItem(title: title, action: #selector(varyFromMenu(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = index
+        menu.insertItem(item, at: 0)
+        menu.insertItem(.separator(), at: 1)
+    }
+
+    @objc private func varyFromMenu(_ sender: NSMenuItem) { vary(at: sender.representedObject as? Int) }
+
+    /// **The bubble for the words at `index`** (nil: the selection or the caret): `false` when there is nothing to vary there.
+    @discardableResult
+    func vary(at index: Int? = nil) -> Bool {
+        guard let target = varyTarget(at: index) else { return false }
+        switch target {
+        case let .words(words, _):
+            setSelectedRange(words)
+            openBracket?(target, rect(of: words))
+        case .key(.group(let g)):
+            var r = NSRange(location: 0, length: 0)
+            textStorage?.enumerateAttribute(.seriesGroup, in: NSRange(location: 0, length: textStorage?.length ?? 0)) { v, range, stop in
+                if v as? Int == g { r = range; stop.pointee = true }
+            }
+            openBracket?(target, rect(of: r))
+        default:
+            return false
+        }
+        return true
+    }
+
+    /// The first line's rectangle of these characters, in the view.
+    private func rect(of range: NSRange) -> NSRect {
+        guard let layout = layoutManager, let container = textContainer else { return bounds }
+        let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        var rect = NSRect.zero
+        layout.enumerateEnclosingRects(forGlyphRange: glyphs, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
+                                       in: container) { r, stop in rect = r; stop.pointee = true }
+        return rect.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+    }
 
     override func becomeFirstResponder() -> Bool {
         let ok = super.becomeFirstResponder()
@@ -313,16 +487,32 @@ final class SubjectLayoutManager: NSLayoutManager {
     var thumbnail: ((String) -> NSImage?)?
 
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
-        chips(in: glyphsToShow, at: origin) { rect, _, color, _ in
+        chips(in: glyphsToShow, at: origin) { rect, _, color, _, _ in
             color.withAlphaComponent(0.14).setFill()
             NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2).fill()
+        }
+        let accent = Palette.bracketInk
+        groups(in: glyphsToShow, at: origin) { rect in
+            accent.withAlphaComponent(0.14).setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
         }
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
     }
 
     override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
         super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
-        chips(in: glyphsToShow, at: origin) { rect, key, color, first in
+        let accent = Palette.bracketInk
+        groups(in: glyphsToShow, at: origin) { rect in
+            let edge = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 4.5, yRadius: 4.5)
+            edge.lineWidth = 1
+            accent.withAlphaComponent(0.7).setStroke()
+            edge.stroke()
+        }
+        dots(in: glyphsToShow, at: origin) { center in
+            accent.setFill()
+            NSBezierPath(ovalIn: NSRect(x: center.x - 1.75, y: center.y - 1.75, width: 3.5, height: 3.5)).fill()
+        }
+        chips(in: glyphsToShow, at: origin) { rect, key, color, first, inert in
             let edge = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: rect.height / 2 - 0.5, yRadius: rect.height / 2 - 0.5)
             edge.lineWidth = 1
             color.setStroke()
@@ -337,7 +527,7 @@ final class SubjectLayoutManager: NSLayoutManager {
                 let s = max(side / image.size.width, side / image.size.height)
                 let w = image.size.width * s, h = image.size.height * s
                 image.draw(in: NSRect(x: box.midX - w / 2, y: box.midY - h / 2, width: w, height: h),
-                           from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+                           from: .zero, operation: .sourceOver, fraction: inert ? 0.35 : 1, respectFlipped: true, hints: nil)
             } else {
                 color.withAlphaComponent(0.5).setFill()
                 box.fill()
@@ -348,15 +538,16 @@ final class SubjectLayoutManager: NSLayoutManager {
 
     /// Each chip's rectangles in the glyphs shown (a chip that wraps has one per line), centered on
     /// the text's line whatever the line spacing.
-    private func chips(in glyphs: NSRange, at origin: NSPoint, _ draw: (NSRect, String, NSColor, Bool) -> Void) {
+    private func chips(in glyphs: NSRange, at origin: NSPoint, _ draw: (NSRect, String, NSColor, Bool, Bool) -> Void) {
         guard let storage = textStorage, let container = textContainers.first else { return }
         let characters = characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
         let font = PromptStyle.font
-        var found: [(NSRect, String, NSColor, Bool)] = []
+        var found: [(NSRect, String, NSColor, Bool, Bool)] = []
         storage.enumerateAttribute(.subjectChip, in: characters) { value, range, _ in
             guard let tag = value as? String, let colon = tag.firstIndex(of: ":") else { return }
             let key = String(tag[tag.index(after: colon)...])
-            let color = (NamedSubjects.Kind(rawValue: String(tag[..<colon])) ?? .person).nsColor
+            let inert = storage.attribute(.subjectChipInert, at: range.location, effectiveRange: nil) != nil
+            let color = inert ? NSColor.secondaryLabelColor : (NamedSubjects.Kind(rawValue: String(tag[..<colon])) ?? .person).nsColor
             let glyphRange = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             var first = true
             enumerateLineFragments(forGlyphRange: glyphRange) { lineRect, _, _, lineGlyphs, _ in
@@ -367,11 +558,51 @@ final class SubjectLayoutManager: NSLayoutManager {
                 let top = baseline - font.ascender - 2, bottom = baseline - font.descender + 2
                 let rect = NSRect(x: bounds.minX + origin.x, y: top + origin.y,
                                   width: bounds.width, height: bottom - top)
-                found.append((rect, key, color, first))
+                found.append((rect, key, color, first, inert))
                 first = false
             }
         }
-        for (rect, key, color, first) in found { draw(rect, key, color, first) }
+        for (rect, key, color, first, inert) in found { draw(rect, key, color, first, inert) }
+    }
+
+    /// Each group's rectangles in the glyphs shown, one per line it spans — the line's text height and a point around.
+    private func groups(in glyphs: NSRange, at origin: NSPoint, _ draw: (NSRect) -> Void) {
+        guard let storage = textStorage, let container = textContainers.first else { return }
+        let characters = characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+        let font = PromptStyle.font
+        var found: [NSRect] = []
+        storage.enumerateAttribute(.seriesGroup, in: characters) { value, range, _ in
+            guard value != nil else { return }
+            let glyphRange = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            enumerateLineFragments(forGlyphRange: glyphRange) { lineRect, _, _, lineGlyphs, _ in
+                let part = NSIntersectionRange(lineGlyphs, glyphRange)
+                guard part.length > 0 else { return }
+                let bounds = self.boundingRect(forGlyphRange: part, in: container)
+                let baseline = lineRect.minY + self.location(forGlyphAt: part.location).y
+                let top = baseline - font.ascender - 1, bottom = baseline - font.descender + 1
+                found.append(NSRect(x: bounds.minX + origin.x, y: top + origin.y, width: bounds.width, height: bottom - top))
+            }
+        }
+        for rect in found { draw(rect) }
+    }
+
+    /// The centre of each group's `|` shown: where its dot goes, at the words' middle height.
+    private func dots(in glyphs: NSRange, at origin: NSPoint, _ draw: (NSPoint) -> Void) {
+        guard let storage = textStorage, let container = textContainers.first else { return }
+        let characters = characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+        let font = PromptStyle.font
+        var found: [NSPoint] = []
+        storage.enumerateAttribute(.seriesSeparator, in: characters) { value, range, _ in
+            guard value != nil else { return }
+            for i in range.location..<NSMaxRange(range) {
+                let glyph = glyphIndexForCharacter(at: i)
+                let bounds = boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container)
+                let line = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+                let baseline = line.minY + location(forGlyphAt: glyph).y
+                found.append(NSPoint(x: bounds.midX + origin.x, y: baseline - font.xHeight / 2 + origin.y))
+            }
+        }
+        for p in found { draw(p) }
     }
 }
 
@@ -455,7 +686,7 @@ private struct CompletionList: View {
                 }
                 .padding(.horizontal, 6).frame(height: 28)
                 .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(i == model.selected ? Color.accentColor.opacity(0.22) : .clear))
+                    .fill(i == model.selected ? Palette.live.opacity(0.22) : .clear))
                 .contentShape(Rectangle())
                 .onTapGesture { model.take?(item.subject) }
                 .onHover { if $0 { model.selected = i } }

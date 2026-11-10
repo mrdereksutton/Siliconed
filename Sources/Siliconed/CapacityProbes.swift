@@ -86,7 +86,7 @@ extension Diagnostic {
             "disk": "every volume and quality of service read at one speed: the stream's own volume, by class",
             "solos fp32": "an engine's rate guessed from one shape, or bent by one disturbed figure: the lines (fixed cost, rate, per-weight cost) of the GPU, the AMX and the ANE, each figure far over the line of the others measured once more, and the GPU's bf16 kernel at the tile chosen among candidates",
             "stairs": "the GPU's time taken as smooth in rows: its steps at the tile's edges",
-            "attention": "an attention priced as products: its kernels and fused forms timed as they run, the form chosen among candidates, and the GPU's wake a call pays after the CPU left it idle (the render's QK-norm and RoPE)",
+            "attention": "an attention priced as products: its kernels and fused forms timed as they run, the form chosen among candidates, and the GPU's wake a call pays after the CPU left it idle (the render's QK-norm and RoPE), and that pass timed on the CPU and on the GPU",
             "sharing": "two engines' rates added as if each ran alone, or one disturbed chain read as the set: what each keeps beside the other (κ), by weight length, and a third chain where two at one shape disagree beyond the map's noise",
             "solos 8-bit and rounded": "a rounded, 8-bit or K-quant product priced on the fp32 line, or on a line one disturbed figure bends: their own lines, the rounded ones on eight shapes so a disturbed figure is told apart and measured once more, their tiles chosen on rounds paired with the fastest's, a candidate in doubt measured again beside it",
             "thin products": "a product of few rows or a short side priced on the wide line, or its fixed cost traded against its streaming, or a call's completion latency read as its cost: its own per-row and per-weight costs, a shape that does almost no work to hold the fixed cost, each figure on the fast mode of fifteen calls",
@@ -311,7 +311,7 @@ extension Diagnostic {
             let truths = 160 << 20
             // The disk stage runs beside the operands: its staging slots and scratch piece are charged (`CapacityDisk.probeMemoryBytes`).
             let routes = operands + 3 * gemm + ane + aneIntegers + multiply + exact + truths + attention + 2 * bandwidthBytes
-                + CapacityDisk.probeMemoryBytes()
+                + CapacityDisk.probeMemoryBytes() + Context.convolutionBytes()
             let w = Diagnostic.blocks[0], count = w.dim * w.hidden
             let widening = [count * 4, count * 2, count * 2, count + 2 * w.hidden, count, 1 << 20].map { Arena.capacity(for: $0) }.reduce(0, +)
             return Need(steps: ["widening": widening + frameworks, "routes": routes + frameworks])
@@ -319,7 +319,7 @@ extension Diagnostic {
 
         // MARK: - The context
 
-        enum Truth: Hashable { case fp32, rounded, int8, roundedInt8, q8, roundedQ8, q4k, roundedQ4k }
+        enum Truth: Hashable { case fp32, rounded, int8, roundedInt8, quantizedInt8, q8, roundedQ8, q4k, roundedQ4k }
         struct TruthKey: Hashable { let truth: Truth; let m, k, n: Int }
 
         struct Buffers { let a, b, c: MTLBuffer }
@@ -444,7 +444,8 @@ extension Diagnostic {
                 self.validating = validating
                 let all = sizes.products + (validating ? CapacityProbes.validationShapes : [])
                 operands = Operands(Operands.sizes(products: all.map { ($0.m, $0.k, $0.n, WeightKind.q8) }))
-                alone = try GEMM(plan: .probing(bf16Weights: true, int8Weights: true, q8Weights: true, roundedActivations: true))
+                alone = try GEMM(plan: .probing(bf16Weights: true, int8Weights: true, q8Weights: true, roundedActivations: true,
+                                                 quantizedActivations: true))
                 both = try GEMM(plan: .probing(amx: true, int8Weights: true, q8Weights: true))
                 neural = try GEMM(plan: .probing(ane: true))
                 three = try GEMM(plan: .probing(amx: true, ane: true))
@@ -502,6 +503,9 @@ extension Diagnostic {
                         Diagnostic.exactRows(Array(0..<rows.count), a: $0.baseAddress!, q: operands.q.base.assumingMemoryBound(to: Int8.self),
                                              scale: Double(Diagnostic.int8Scale), group: Diagnostic.int8Group, k: k, n: n)
                     }
+                case .quantizedInt8:
+                    result = Diagnostic.exactQuantizedRows(rows, a: a, q: operands.q.base.assumingMemoryBound(to: Int8.self),
+                                                           scale: Double(Diagnostic.int8Scale), group: Diagnostic.int8Group, k: k, n: n)
                 case .q8:
                     result = Diagnostic.exactRows(rows, a: a, q: operands.q.base.assumingMemoryBound(to: Int8.self),
                                                   blockScales: operands.q8Scales.floats(), block: Diagnostic.q8Block, k: k, n: n)
@@ -536,7 +540,7 @@ extension Diagnostic {
             /// product it is the floor of — the widened weight's (`fp32`), the integers' with their rotation (`int8`), a Q8_0's (`q8`).
             func aneThreshold(_ truthKind: Truth, m: Int, k: Int, n: Int) -> Double {
                 let (exact, witnessKind, code): (Truth, Truth, Int) = switch truthKind {
-                case .int8, .roundedInt8: (.int8, .roundedInt8, 1)
+                case .int8, .roundedInt8, .quantizedInt8: (.int8, .roundedInt8, 1)
                 case .q8, .roundedQ8: (.q8, .roundedQ8, 2)
                 case .q4k, .roundedQ4k: (.q4k, .roundedQ4k, 3)
                 case .fp32, .rounded: (.fp32, .rounded, 0)
@@ -725,10 +729,11 @@ extension Diagnostic {
                 try stage("attention") { try attention(&m) }
                 try stage("sharing") { sharing(&m) }
                 try stage("solos 8-bit and rounded") {
-                    chooseTiles(.gpu_bf16act, &m); chooseTiles(.gpu_int8, &m); chooseTiles(.gpu_int8act, &m)
+                    chooseTiles(.gpu_bf16act, &m); chooseTiles(.gpu_int8, &m); chooseTiles(.gpu_int8act, &m); chooseTiles(.gpu_int8x8, &m)
                     // The rounded kernels the Standard and the Compact run on every large class take the fp32 solos' shapes too: eight points,
-                    // so that a figure the Mac disturbed is told from the line and left out (`CapacityFit.kept`) — of three, none can be.
-                    solos([.gpu_bf16act, .gpu_int8act], &m, shapes: sizes.solo + sizes.product)
+                    // so that a figure the Mac disturbed is told from the line and left out (`CapacityFit.kept`) — of three, none can be. The
+                    // Compact's W8A8 likewise.
+                    solos([.gpu_bf16act, .gpu_int8act, .gpu_int8x8], &m, shapes: sizes.solo + sizes.product)
                     solos([.gpu_int8, .gpu_q8, .gpu_q8act, .gpu_q4kact], &m)
                     solos([.ane_int8], &m, shapes: sizes.integers + sizes.small, chained: true)
                 }
@@ -826,7 +831,16 @@ extension Diagnostic {
                 func rate(_ engine: String) -> Double? { witnesses.first { $0.engine == engine }.flatMap { $0.before > 0 ? flop / $0.before : nil } }
                 guard let gpu = rate("gpu") else { return }
                 let cores = Double(machine.performanceCores + machine.efficiencyCores)
-                let rates = Rates(gpu: gpu, amx: rate("amx"), ane: rate("ane"), cpu: cores > 0 ? 0.125e12 * cores : 1.0e12)
+                // A pulse closes every step: what one takes here is counted with them, on its fast side of two (a disturbance only adds
+                // time). Not recorded among the pulses: it closes no step. The pulse's instruments are made here instead of at the first step.
+                let pulse = (0..<2).map { _ -> Double in
+                    let t = CapacityProbes.now()
+                    _ = takePulse(step: "projection", attempt: 0, record: false)
+                    return CapacityProbes.now() - t
+                }.min()!
+                regime.pulseSeconds = Diagnostic.significant(pulse, 3)
+                let rates = Rates(gpu: gpu, amx: rate("amx"), ane: rate("ane"), cpu: cores > 0 ? 0.125e12 * cores : 1.0e12, pulse: pulse,
+                                  tiled: alone.tensor != nil)
                 let left = Diagnostic.ceiling - Sizes.reserve - (CapacityProbes.now() - started)
                 let chosen = Sizes.tier(for: rates, budget: left, startingAt: sizes.tier)
                 if chosen.tier != sizes.tier {
@@ -835,7 +849,8 @@ extension Diagnostic {
                 }
                 // Preparation and the first witnesses have run: they were not projected.
                 projected = sizes.projection(rates).filter { $0.key != "preparation" && $0.key != "witnesses start" }
-                // What the ceiling leaves beyond the run as projected is what the guard may spend: none on a Mac that fills it.
+                // What the ceiling leaves beyond the run as projected is what the guard may spend: none on a Mac that fills it. The
+                // projection counts the trials and the pulses: without them the budget was set against half the run.
                 retryBudget = max(0, min(Sizes.retryCap, left - sizes.projectedSeconds(rates) * Sizes.expectation))
             }
 

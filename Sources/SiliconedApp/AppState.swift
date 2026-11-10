@@ -78,10 +78,19 @@ final class AppState {
             // A solver the models no longer offer leaves the form.
             if !developerMode {
                 solver = .euler
-                // The solver axis is the rack's choice swept: it leaves with it.
-                if gridX.kind == .solver { gridX.kind = .seed }
-                if gridY.kind == .solver { gridY.kind = .none }
             }
+        }
+    }
+    private static let stepsBetaKey = "stepsBeta"
+    /// **Choose Steps** (Settings ▸ Advanced ▸ Beta, issue 16): off by default, the steps are the model's recipe — the five are
+    /// distilled for 8, and another count only costs. On, the DiT box offers them, for a step-distilled LoRA (Krea 2 at 4)
+    /// that brings a recipe of its own. Off again, the form goes back to the recipe, as More Solvers off goes back to Euler.
+    /// `silicontrol add --steps` is not gated by it: the command line always could, and a PNG's settings reused still bring theirs.
+    var stepsBeta = UserDefaults.standard.bool(forKey: AppState.stepsBetaKey) {
+        didSet {
+            guard stepsBeta != oldValue else { return }
+            UserDefaults.standard.set(stepsBeta, forKey: Self.stepsBetaKey)
+            if !stepsBeta { steps = card?.defaultSteps ?? 8 }
         }
     }
     private static let negativeLoRAKey = "negativeLoRAStrengths"
@@ -89,15 +98,19 @@ final class AppState {
     /// the LoRA learned — meant for « slider » LoRAs, trained as a difference to be used from −x to +x;
     /// on an ordinary LoRA it mostly damages the image, hence the switch. The engine takes any finite
     /// strength (`LoRA.materialize` folds it into `down`, sign included): the gate is the app's, for
-    /// the rack, the exploration and `silicontrol` alike. Off, the strengths already set come back to 0.
+    /// the rack, a series and `silicontrol` alike. Off, the strengths already set come back to 0.
     var negativeLoRAStrengths = UserDefaults.standard.bool(forKey: AppState.negativeLoRAKey) {
         didSet {
             guard negativeLoRAStrengths != oldValue else { return }
             UserDefaults.standard.set(negativeLoRAStrengths, forKey: Self.negativeLoRAKey)
             if !negativeLoRAStrengths {
                 loras = loras.map(allowedStrength)
-                gridX.addedStrength = max(0, gridX.addedStrength)
-                gridY.addedStrength = max(0, gridY.addedStrength)
+                brackets = brackets.map { b in
+                    var b = b
+                    b.numbers = b.key == .startStrength ? b.numbers : b.numbers.map { max(0, $0) }
+                    b.strength = max(0, b.strength)
+                    return b
+                }
             }
         }
     }
@@ -157,7 +170,7 @@ final class AppState {
     /// Why Faster Rendering would do nothing for the render being set up in the form (nil: it applies).
     var fasterRenderingUnavailable: DiTSwitchUnavailable? {
         DiTSwitches.fasterRenderingUnavailable(width: format.width, height: format.height,
-                                               withLoRA: !loras.isEmpty || detail != .normal, edit: !references.isEmpty,
+                                               withLoRA: !activeLoRAs.isEmpty || detail != .normal, edit: !references.isEmpty,
                                                atRecipeSteps: steps == (card?.defaultSteps ?? 8))
     }
     func setFasterRendering(_ on: Bool, for id: String) {
@@ -247,6 +260,9 @@ final class AppState {
     var visibleCards: [ModelCard] { Self.inDisplayOrder(cards, family: \.family) }
     /// The visible models ready to render — empty at first launch: the canvas welcomes (`Welcome`).
     var visibleReady: [ModelCard] { visibleCards.filter { readySet.contains($0.id) } }
+    /// **The canvas welcomes** (`SceneView.empty`): no image shown, the library there, no model ready — the canvas is the list of
+    /// models to download.
+    var welcomes: Bool { selectedEntry == nil && libraryBlocker == nil && visibleReady.isEmpty }
     /// Z-Image first (Apache 2.0); a non-commercial model is never the default unless it is the only one.
     private var defaultIdentifier: String { visibleReady.first?.id ?? ModelCard.zImage.id }
 
@@ -263,16 +279,12 @@ final class AppState {
     var orientation = RecommendedFormat.Orientation.square { didSet { orientationChanged() } }
     var format = ModelCard.recommendedFormats[0]
     var loras: [LoRASlot] = []
-    /// The edit's references, numbered from 1 in this order: **image 1 is the one edited** (it sets
-    /// the output's format), the others are what the prompt borrows from (« the dog of image 2 »).
-    /// At most the denoiser's `maxReferences`. Added by the box, a drop, « Edit This Image », or carried by
-    /// the Prompt Lab (the starting image, the references, the subjects the text cites: `Lab.swift`).
-    var references: [ReferenceImage] = []
-    /// **The image the render starts from** (img2img: Z-Image, Anima, Krea 2 — `startsFromImage`), carried by the Prompt Lab
-    /// (`Lab.swift`) or `silicontrol start-image`, shown with its strength in the rack's Images box. `nil`: from noise. Dropped
-    /// when the rack takes a model that does not start from an image, as the references a model does not read are.
-    var startImage: ReferenceImage?
-    /// **Its strength** (diffusers' `strength`, `StartImage`): how far the render moves from the image — retouched in the rack
+    /// **The render's images, each with its role** (`AppState+Inputs.swift`): the image edited and the references
+    /// (Qwen-Image-2.1), the image an img2img starts from (Z-Image, Anima, Krea 2), the neutral ones waiting to be described
+    /// or given a role. Brought by the Prompt Lab, a drop, « Edit This Image », ⌘V or the remote control; `references` and
+    /// `startImage` read them.
+    var inputs: [InputImage] = []
+    /// **The start's strength** (diffusers' `strength`, `StartImage`): how far the render moves from the image — retouched in the rack
     /// between two renders. In hundredths. The family's default (`StartImage.defaultStrength`) until one is chosen; forgotten
     /// when the rack changes family.
     var startStrength: Double {
@@ -312,22 +324,22 @@ final class AppState {
     var previews = true
     /// **The named subjects** (`Subjects.swift`): the Prompt Lab's library, in memory. The rack does not read them.
     let subjects: SubjectLibrary
-    /// **The exploration's form** (`Exploration.swift`): its own prompt, a small format, the two axes.
-    var explorePrompt = ""
-    var exploreShape = ExploreShape.square
-    var gridX = GridAxisForm(kind: .seed)
-    var gridY = GridAxisForm(kind: .none)
-    /// **The exploration shown**: its cells as they arrive, kept once ended — until the next one.
+    /// **The knobs bracketed** (`Series.swift`), in the order bracketed — the words are the text's groups, the seeds the lot.
+    var brackets: [Bracket] = []
+    /// Where the hand put the series' axes, `[columns, rows]` (`SeriesLayout`).
+    var seriesPlaced: [SeriesKey?] = [nil, nil]
+    /// The knob whose « Bracket… » bubble is open.
+    var bracketing: SeriesKey?
+    /// **Where `silicontrol rack` asks the rack's column to scroll**, and a count so that the same place asked twice scrolls again.
+    var rackScroll: (place: GestureOrder.RackPlace, count: Int)?
+    /// **The series shown**: its cells as they arrive, kept once ended — until the next one.
     var explored: GridRun?
-    /// The canvas shows the exploration's grid rather than an image (`ExplorationCanvas`).
+    /// The canvas shows the series' grid rather than an image (`SeriesCanvas`).
     var showsExploration = false
     /// Whether the Masonry Gallery wall is shown instead of the single-image stage.
     var showsGallery = false
     /// A grid cell's long side on the canvas, in points: the slider, the pinch, ⌘+ ⌘−.
     var exploreCellSide: CGFloat = 220
-    /// **Where the exploration's sketches stop**: 0, where the image is readable (`Sketch`); n, after n
-    /// evaluations — more for a LoRA, whose style can settle late; at the plan's count, finished images.
-    var exploreStop = 0
     static let cellSides: ClosedRange<CGFloat> = 96...1024
     static func clampedCellSide(_ s: CGFloat) -> CGFloat { min(max(s, cellSides.lowerBound), cellSides.upperBound) }
 
@@ -405,8 +417,8 @@ final class AppState {
     func canCompareOriginal(_ e: Entry) -> Bool {
         e.grid == nil && (e.references.contains { if case .remote = $0.source { false } else { true } } || e.enlargedFrom != nil)
     }
-    /// The thumbnails' height in the strip (the slider at its end); in memory, like the rest.
-    var thumbnailSide: Double = 64
+    /// The thumbnails' side in the history column (the slider at its foot); in memory, like the rest.
+    var thumbnailSide: Double = 96
     /// Where a ⇧-run starts: the last image clicked without ⇧.
     var anchor: Entry.ID?
     /// **The images that left the app** — saved, exported, written by `silicontrol save`. The others
@@ -640,8 +652,10 @@ final class AppState {
     /// **Checks a finished render against the model it ran under**: its note is shown by the report and kept beside it.
     /// Never changes the plan itself: a new measure, taken by the user, does — from the next render.
     func checkMap(_ render: Engine.Render, model: Model, references: Int) {
+        // The classes follow the installed tensors, not the name of the version (our 4-bit Light is int8 products).
+        let format = model.library.flatMap { try? Artifact.header($0.map($0.ditMap(model.family))) }.map { Artifact.weightFormat(header: $0) }
         guard let map = mapInUse,
-              let check = RenderLoop.check(render, variant: model.library?.variant(of: model.family) ?? .standard,
+              let check = RenderLoop.check(render, variant: model.library?.variant(of: model.family) ?? .standard, weightFormat: format,
                                            references: references, plan: EngineSettings.effective.plan, mapDate: map.date,
                                            thresholds: .init(uncertainty: map)) else { return }
         renderNote = check.note
@@ -695,6 +709,12 @@ final class AppState {
             settingsWarnings = EngineSettings.effective.warnings.map(Library.withoutHome)
             mapInUse = map
             planGeneration = EngineSettings.generation
+        } catch .settingsAlreadyLoaded {
+            // **Something read the defaults before the measure ended**: the writer's Describe or Rewrite, which plans its own
+            // products, used before this Mac was measured (4/11/2026: a map measured, then refused, and the render after it
+            // without the Neural Engine). A finished measure always applies: it replaces them as a second measure would.
+            EngineSettings.adopt(map: map)
+            syncPlan()
         } catch {
             settingsWarnings = [Library.withoutHome(error.localizedDescription)]
         }
@@ -710,7 +730,7 @@ final class AppState {
     }
 
     /// **The models, read once per catalog**: `Model.named` reads the map headers on disk, and the
-    /// exploration's footer asks for each cell's model at every drawing. Emptied by `refreshCatalog`.
+    /// views ask for the chosen model at every drawing (`offersDetail`, the formats). Emptied by `refreshCatalog`.
     @ObservationIgnored var modelsRead: [String: Model?] = [:]
 
     /// **B, this Mac's memory budget** (`MemoryBudget.machineCeiling()`: ¾ · RAM − 2 GiB, or

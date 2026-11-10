@@ -1,6 +1,7 @@
-// Studio personalization: Style Presets, LoRA visual thumbnails & trigger words, Favorites,
-// Inline Prompt Auto-Polish, Main-Composer @Subject Vault & Autocomplete, Ambient Canvas Backlight,
-// and Living Latent Shimmer.
+// Studio personalization: Signature Studio Themes (Cinema Lime, Electric Studio, Indigo & Mint),
+// Higgsfield-inspired Cinema Camera & Optics Rig, Style Presets, LoRA visual thumbnails & trigger words,
+// Favorites, Inline Prompt Auto-Polish, Main-Composer @Subject Vault & Autocomplete, Ambient Canvas
+// Backlight, and Living Latent Shimmer.
 
 import AppKit
 import CryptoKit
@@ -16,11 +17,285 @@ final class StudioHub {
 
     private static let customStylesKey = "studio.customStyles"
     private static let selectedStyleKey = "studio.selectedStyle"
+    private static let selectedCameraKey = "studio.selectedCamera"
+    private static let selectedLensKey = "studio.selectedLens"
+    private static let selectedLightingKey = "studio.selectedLighting"
     private static let loraTriggersKey = "studio.loraTriggers"
     private static let loraAutoTriggersKey = "studio.loraAutoTriggers"
     private static let favoritesKey = "studio.favorites"
     private static let ambientBacklightKey = "studio.ambientBacklight"
     private static let autoPolishKey = "studio.autoPolish"
+
+    // MARK: Studio Theme
+
+    var theme: StudioTheme = Palette.activeTheme {
+        didSet {
+            guard theme != oldValue else { return }
+            Palette.activeTheme = theme
+            UserDefaults.standard.set(theme.rawValue, forKey: Palette.themeKey)
+            MainWindow.shared.refreshChrome()
+            LabWindow.shared.refreshChrome()
+            SettingsWindow.shared.refreshChrome()
+        }
+    }
+
+    // MARK: Cinema Camera & Optics Rig (Higgsfield-Inspired)
+
+    struct GearPreset: Identifiable, Equatable {
+        let id: String
+        let name: String
+        let badge: String
+        let specTag: String
+        let promptPhrase: String
+        let symbol: String
+        let paletteHex: [Int]
+    }
+
+    static let cameraBodies: [GearPreset] = [
+        GearPreset(
+            id: "none",
+            name: "Default Sensor",
+            badge: "AUTO",
+            specTag: "MODEL NATIVE",
+            promptPhrase: "",
+            symbol: "camera",
+            paletteHex: [0x2B2F3C, 0x171922]
+        ),
+        GearPreset(
+            id: "alexa35",
+            name: "ARRI Alexa 35",
+            badge: "ALEXA 35",
+            specTag: "SUPER 35 · 17 STOPS",
+            promptPhrase: "shot on ARRI Alexa 35 cinema camera, 17 stops of dynamic range, organic cinema color science, creamy highlight roll-off",
+            symbol: "video.fill",
+            paletteHex: [0x2F6F6D, 0x132A31]
+        ),
+        GearPreset(
+            id: "vraptor",
+            name: "RED V-Raptor 8K",
+            badge: "V-RAPTOR",
+            specTag: "8K VV · RAZOR",
+            promptPhrase: "shot on RED V-Raptor 8K VV, tack-sharp micro-detail, crisp cinema contrast, deep shadow separation",
+            symbol: "camera.metering.center.weighted",
+            paletteHex: [0xB91C1C, 0x381219]
+        ),
+        GearPreset(
+            id: "venice2",
+            name: "Sony Venice 2",
+            badge: "VENICE 2",
+            specTag: "FULL FRAME · IMAX",
+            promptPhrase: "shot on Sony Venice 2 full-frame cinema camera, lush natural skin tones, clean low-light fidelity",
+            symbol: "film.stack",
+            paletteHex: [0x4338CA, 0x1E1B4B]
+        ),
+        GearPreset(
+            id: "portra400",
+            name: "Kodak Portra 400",
+            badge: "PORTRA 400",
+            specTag: "35MM FILM · WARM",
+            promptPhrase: "shot on 35mm Kodak Portra 400 color negative film, fine organic silver grain, warm golden highlights",
+            symbol: "film",
+            paletteHex: [0xD97706, 0x542B14]
+        ),
+        GearPreset(
+            id: "cinestill800t",
+            name: "CineStill 800T",
+            badge: "800T",
+            specTag: "TUNGSTEN · HALATION",
+            promptPhrase: "shot on CineStill 800T tungsten motion picture film, glowing red halation around practical lights, moody nocturnal palette",
+            symbol: "sparkles.tv",
+            paletteHex: [0x0EA5E9, 0x7F1D1D]
+        ),
+        GearPreset(
+            id: "hasselblad",
+            name: "Hasselblad X2D",
+            badge: "X2D 100C",
+            specTag: "MEDIUM FORMAT",
+            promptPhrase: "shot on Hasselblad X2D 100C medium format camera, sculptural tonal depth, museum-grade clarity",
+            symbol: "camera.aperture",
+            paletteHex: [0x78716C, 0x262422]
+        ),
+    ]
+
+    static let lenses: [GearPreset] = [
+        GearPreset(
+            id: "none",
+            name: "Default Lens",
+            badge: "AUTO",
+            specTag: "UNCONSTRAINED",
+            promptPhrase: "",
+            symbol: "circle.dashed",
+            paletteHex: [0x2B2F3C, 0x171922]
+        ),
+        GearPreset(
+            id: "ultra18",
+            name: "18mm Ultra-Wide",
+            badge: "18MM",
+            specTag: "RECTILINEAR · DEEP",
+            promptPhrase: "18mm ultra-wide cinema prime lens, dramatic spatial perspective, strong leading lines",
+            symbol: "arrow.up.left.and.down.right.magnifyingglass",
+            paletteHex: [0x0284C7, 0x172554]
+        ),
+        GearPreset(
+            id: "anamorphic24",
+            name: "24mm Anamorphic",
+            badge: "24MM ANA",
+            specTag: "2.39:1 · OVAL BOKEH",
+            promptPhrase: "24mm Panavision C-Series anamorphic lens, oval bokeh, subtle horizontal optical flare, widescreen cinema framing",
+            symbol: "rectangle.compress.vertical",
+            paletteHex: [0x0D9488, 0x312E81]
+        ),
+        GearPreset(
+            id: "prime35",
+            name: "35mm Director’s Prime",
+            badge: "35MM",
+            specTag: "T1.3 · NATURAL",
+            promptPhrase: "35mm Master Prime cinema lens at T1.4, natural human perspective, crisp subject separation",
+            symbol: "smallcircle.filled.circle",
+            paletteHex: [0x65A30D, 0x1A2E05]
+        ),
+        GearPreset(
+            id: "cooke50",
+            name: "50mm Cooke S4/i",
+            badge: "50MM",
+            specTag: "COOKE LOOK · WARM",
+            promptPhrase: "50mm Cooke S4/i prime lens, warm velvety focus rolloff, dimensional cinema character",
+            symbol: "camera.macro",
+            paletteHex: [0xCA8A04, 0x422006]
+        ),
+        GearPreset(
+            id: "portrait85",
+            name: "85mm f/1.4 Portrait",
+            badge: "85MM F/1.4",
+            specTag: "CREAMY BOKEH",
+            promptPhrase: "85mm f/1.4 portrait prime lens, razor-thin focal plane, creamy circular bokeh",
+            symbol: "person.crop.square",
+            paletteHex: [0xDB2777, 0x4A044E]
+        ),
+        GearPreset(
+            id: "macro100",
+            name: "100mm Macro Probe",
+            badge: "100MM MACRO",
+            specTag: "1:1 EXTREME DETAIL",
+            promptPhrase: "100mm macro probe lens, extreme tactile surface micro-texture, intimate shallow depth of field",
+            symbol: "scope",
+            paletteHex: [0x059669, 0x064E3B]
+        ),
+    ]
+
+    static let lightings: [GearPreset] = [
+        GearPreset(
+            id: "none",
+            name: "Natural / Prompted",
+            badge: "AUTO",
+            specTag: "SCENE DEFAULT",
+            promptPhrase: "",
+            symbol: "sun.max",
+            paletteHex: [0x2B2F3C, 0x171922]
+        ),
+        GearPreset(
+            id: "chiaroscuro",
+            name: "Sculpted Chiaroscuro",
+            badge: "LOW KEY",
+            specTag: "SINGLE KEY + SHADOW",
+            promptPhrase: "dramatic chiaroscuro cinema lighting, sculpted directional key light, deep rich shadows",
+            symbol: "circle.lefthalf.filled",
+            paletteHex: [0xB45309, 0x1C1917]
+        ),
+        GearPreset(
+            id: "volumetric",
+            name: "Volumetric Haze",
+            badge: "ATMOS",
+            specTag: "LIGHT BEAMS · DEPTH",
+            promptPhrase: "atmospheric cinema haze, volumetric light shafts, layered aerial perspective",
+            symbol: "sun.haze.fill",
+            paletteHex: [0x6366F1, 0x1E1B4B]
+        ),
+        GearPreset(
+            id: "goldenRim",
+            name: "Golden Hour Rim",
+            badge: "GOLDEN",
+            specTag: "WARM BACKLIGHT",
+            promptPhrase: "low golden-hour sun backlight, luminous edge rim light, warm atmospheric bounce",
+            symbol: "sun.horizon.fill",
+            paletteHex: [0xF59E0B, 0x7C2D12]
+        ),
+        GearPreset(
+            id: "wetNeon",
+            name: "Wet Neon Practical",
+            badge: "NEON",
+            specTag: "CYAN & TUNGSTEN",
+            promptPhrase: "practical neon signage lighting, wet specular reflections, moody cyan and warm tungsten contrast",
+            symbol: "bolt.horizontal.fill",
+            paletteHex: [0x06B6D4, 0x701A75]
+        ),
+        GearPreset(
+            id: "softbox",
+            name: "Commercial Softbox",
+            badge: "STUDIO",
+            specTag: "DIFFUSED KEY",
+            promptPhrase: "large overhead diffused studio softbox, crisp eye catchlights, clean editorial fill",
+            symbol: "light.cylindrical.ceiling.fill",
+            paletteHex: [0x64748B, 0x1E293B]
+        ),
+    ]
+
+    var selectedCameraId: String = UserDefaults.standard.string(forKey: StudioHub.selectedCameraKey) ?? "none" {
+        didSet {
+            guard selectedCameraId != oldValue else { return }
+            if EveryImage.shared.folder != nil {
+                UserDefaults.standard.set(selectedCameraId, forKey: Self.selectedCameraKey)
+            }
+        }
+    }
+
+    var selectedLensId: String = UserDefaults.standard.string(forKey: StudioHub.selectedLensKey) ?? "none" {
+        didSet {
+            guard selectedLensId != oldValue else { return }
+            if EveryImage.shared.folder != nil {
+                UserDefaults.standard.set(selectedLensId, forKey: Self.selectedLensKey)
+            }
+        }
+    }
+
+    var selectedLightingId: String = UserDefaults.standard.string(forKey: StudioHub.selectedLightingKey) ?? "none" {
+        didSet {
+            guard selectedLightingId != oldValue else { return }
+            if EveryImage.shared.folder != nil {
+                UserDefaults.standard.set(selectedLightingId, forKey: Self.selectedLightingKey)
+            }
+        }
+    }
+
+    var activeCamera: GearPreset {
+        Self.cameraBodies.first { $0.id == selectedCameraId } ?? Self.cameraBodies[0]
+    }
+
+    var activeLens: GearPreset {
+        Self.lenses.first { $0.id == selectedLensId } ?? Self.lenses[0]
+    }
+
+    var activeLighting: GearPreset {
+        Self.lightings.first { $0.id == selectedLightingId } ?? Self.lightings[0]
+    }
+
+    var hasActiveOptics: Bool {
+        selectedCameraId != "none" || selectedLensId != "none" || selectedLightingId != "none"
+    }
+
+    var opticsSummaryBadge: String {
+        var tags: [String] = []
+        if activeCamera.id != "none" { tags.append(activeCamera.badge) }
+        if activeLens.id != "none" { tags.append(activeLens.badge) }
+        if activeLighting.id != "none" { tags.append(activeLighting.badge) }
+        return tags.joined(separator: " · ")
+    }
+
+    func resetOptics() {
+        selectedCameraId = "none"
+        selectedLensId = "none"
+        selectedLightingId = "none"
+    }
 
     // MARK: Style Presets
 
@@ -274,7 +549,7 @@ final class StudioHub {
         return nil
     }
 
-    /// Combines the user's prompt with any auto-enabled LoRA trigger words and the active Style Preset.
+    /// Combines the user's prompt with any auto-enabled LoRA trigger words, Cinema Camera & Optics Rig, and Style Preset.
     func decoratedPrompt(_ basePrompt: String, loras: [LoRASlot]) -> String {
         var parts: [String] = []
         let trimmed = basePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -287,6 +562,13 @@ final class StudioHub {
             }
         }
         parts.append(trimmed)
+
+        for gear in [activeCamera, activeLens, activeLighting] where !gear.promptPhrase.isEmpty {
+            if !trimmed.localizedCaseInsensitiveContains(gear.promptPhrase) {
+                parts.append(gear.promptPhrase)
+            }
+        }
+
         let style = activeStyle
         if !style.promptSuffix.isEmpty, !trimmed.localizedCaseInsensitiveContains(style.promptSuffix) {
             parts.append(style.promptSuffix)
@@ -362,7 +644,7 @@ final class StudioHub {
             space: CGColorSpace(name: CGColorSpace.sRGB)!,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else {
-            return AuraColors(primary: .accentColor.opacity(0.3), secondary: .purple.opacity(0.2))
+            return AuraColors(primary: Palette.live.opacity(0.3), secondary: .purple.opacity(0.2))
         }
         ctx.interpolationQuality = .low
         ctx.draw(cg, in: CGRect(x: 0, y: 0, width: side, height: side))
@@ -385,7 +667,7 @@ final class StudioHub {
                 }
             }
         }
-        let c1 = w1 > 0 ? Color(red: r1 / w1, green: g1 / w1, blue: b1 / w1) : Color.accentColor
+        let c1 = w1 > 0 ? Color(red: r1 / w1, green: g1 / w1, blue: b1 / w1) : Palette.live
         let c2 = w2 > 0 ? Color(red: r2 / w2, green: g2 / w2, blue: b2 / w2) : c1
         return AuraColors(primary: c1, secondary: c2)
     }
@@ -495,6 +777,393 @@ final class StudioHub {
     }
 }
 
+// MARK: - Studio Theme Switcher Pill & Popover
+
+struct StudioThemePill: View {
+    @State private var open = false
+    @State private var hovering = false
+    private var hub: StudioHub { .shared }
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let theme = hub.theme
+        Button { open.toggle() } label: {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(Palette.ctaGradient(for: scheme))
+                    .frame(width: 9, height: 9)
+                    .shadow(color: Palette.live.opacity(0.6), radius: 4)
+                Text(theme.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(Capsule().fill(hovering || open ? Palette.surfaceElevated : Palette.surface))
+            .overlay(Capsule().strokeBorder(Palette.specularRim(for: scheme, active: open), lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            StudioThemePopover { open = false }
+        }
+        .help("Switch Studio Theme & Atmosphere")
+        .accessibilityLabel(Text("Studio Theme"))
+    }
+}
+
+struct StudioThemePopover: View {
+    let done: () -> Void
+    private var hub: StudioHub { .shared }
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let _ = hub.theme
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Studio Theme")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(verbatim: "SILICONED STUDIO")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+
+            VStack(spacing: 8) {
+                ForEach(StudioTheme.allCases) { item in
+                    let selected = hub.theme == item
+                    Button {
+                        withAnimation(Motion.pick(.easeInOut(duration: 0.2))) {
+                            hub.theme = item
+                        }
+                    } label: {
+                        HStack(spacing: 12) {
+                            ThemeMiniatureSwatch(theme: item)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.title)
+                                    .font(.callout.weight(.semibold))
+                                Text(item.subtitle)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 6)
+                            if selected {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(Palette.live)
+                                    .imageScale(.medium)
+                            }
+                        }
+                        .padding(9)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(selected ? Palette.live.opacity(0.12) : Palette.well)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(selected ? Palette.live.opacity(0.75) : Palette.hairline, lineWidth: selected ? 1.5 : 1)
+                        )
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            Divider()
+
+            Toggle(isOn: Bindable(hub).ambientBacklight) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Ambient Backlight").font(.callout.weight(.medium))
+                    Text("Samples atmospheric color glow from the active canvas image")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .tint(Palette.control)
+        }
+        .padding(14)
+        .frame(width: 320)
+    }
+}
+
+private struct ThemeMiniatureSwatch: View {
+    let theme: StudioTheme
+
+    var body: some View {
+        let hexes = theme.swatchHexes
+        ZStack(alignment: .bottomTrailing) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(hex: hexes[0]))
+                .frame(width: 44, height: 34)
+                .overlay(alignment: .topLeading) {
+                    HStack(spacing: 2.5) {
+                        Circle().fill(.white.opacity(0.28)).frame(width: 4, height: 4)
+                        Circle().fill(.white.opacity(0.28)).frame(width: 4, height: 4)
+                    }
+                    .padding(5)
+                }
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(.white.opacity(0.16), lineWidth: 1)
+                )
+
+            Capsule()
+                .fill(LinearGradient(
+                    colors: [Color(hex: hexes[1]), Color(hex: hexes[2])],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                ))
+                .frame(width: 22, height: 9)
+                .padding(5)
+        }
+    }
+}
+
+// MARK: - Higgsfield-Style Cinema Camera & Optics Rig Pill & Popover
+
+struct CameraPill: View {
+    @Bindable var app: AppState
+    @State private var open = false
+    private var hub: StudioHub { .shared }
+
+    var body: some View {
+        let _ = hub.theme
+        let active = hub.hasActiveOptics
+        Pill(isPresented: $open) {
+            if active {
+                Circle()
+                    .fill(Palette.live)
+                    .frame(width: 7, height: 7)
+                Text(verbatim: hub.opticsSummaryBadge)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .lineLimit(1)
+            } else {
+                Image(systemName: "camera.aperture").imageScale(.small)
+                Text("Optics")
+            }
+        } choices: {
+            OpticsPopover { open = false }
+        }
+        .help("Cinema Camera, Lens & Lighting Rig — composes authentic optical look into the prompt")
+    }
+}
+
+private struct OpticsPopover: View {
+    let done: () -> Void
+    private var hub: StudioHub { .shared }
+    @State private var tab: RigTab = .camera
+
+    enum RigTab: String, CaseIterable, Identifiable {
+        case camera
+        case lens
+        case lighting
+
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .camera: String(localized: "Camera & Stock")
+            case .lens: String(localized: "Lens & Focal")
+            case .lighting: String(localized: "Lighting")
+            }
+        }
+        var symbol: String {
+            switch self {
+            case .camera: "video.fill"
+            case .lens: "camera.aperture"
+            case .lighting: "sun.haze.fill"
+            }
+        }
+    }
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 8),
+        GridItem(.flexible(), spacing: 8),
+    ]
+
+    var body: some View {
+        let _ = hub.theme
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "camera.aperture")
+                    .foregroundStyle(Palette.live)
+                    .font(.callout.weight(.semibold))
+                Text("Cinema Optics Rig")
+                    .font(.callout.weight(.semibold))
+                Spacer()
+                if hub.hasActiveOptics {
+                    Button("Reset") { hub.resetOptics() }
+                        .buttonStyle(.chartLink)
+                        .font(.caption.weight(.semibold))
+                }
+            }
+
+            // Active rig readout bar
+            HStack(spacing: 8) {
+                RigReadoutChip(label: "BODY", value: hub.activeCamera.badge, active: hub.activeCamera.id != "none") {
+                    tab = .camera
+                }
+                RigReadoutChip(label: "LENS", value: hub.activeLens.badge, active: hub.activeLens.id != "none") {
+                    tab = .lens
+                }
+                RigReadoutChip(label: "LIGHT", value: hub.activeLighting.badge, active: hub.activeLighting.id != "none") {
+                    tab = .lighting
+                }
+            }
+
+            // Tab selector
+            HStack(spacing: 4) {
+                ForEach(RigTab.allCases) { item in
+                    let selected = tab == item
+                    Button {
+                        withAnimation(Motion.pick(.easeInOut(duration: 0.15))) { tab = item }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: item.symbol).font(.system(size: 11, weight: .semibold))
+                            Text(item.title).font(.caption.weight(.semibold))
+                        }
+                        .foregroundStyle(selected ? Palette.onLive : .secondary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(selected ? AnyShapeStyle(Palette.live) : AnyShapeStyle(Color.clear))
+                        )
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(3)
+            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Palette.well))
+            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Palette.hairline))
+
+            // Gear grid
+            LazyVGrid(columns: columns, spacing: 8) {
+                switch tab {
+                case .camera:
+                    ForEach(StudioHub.cameraBodies) { gear in
+                        GearCardTile(gear: gear, selected: hub.selectedCameraId == gear.id) {
+                            hub.selectedCameraId = gear.id
+                        }
+                    }
+                case .lens:
+                    ForEach(StudioHub.lenses) { gear in
+                        GearCardTile(gear: gear, selected: hub.selectedLensId == gear.id) {
+                            hub.selectedLensId = gear.id
+                        }
+                    }
+                case .lighting:
+                    ForEach(StudioHub.lightings) { gear in
+                        GearCardTile(gear: gear, selected: hub.selectedLightingId == gear.id) {
+                            hub.selectedLightingId = gear.id
+                        }
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .frame(width: 400)
+    }
+}
+
+private struct RigReadoutChip: View {
+    let label: String
+    let value: String
+    let active: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: label)
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                Text(verbatim: value)
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundStyle(active ? Palette.live : .secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(active ? Palette.live.opacity(0.10) : Palette.well)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(active ? Palette.live.opacity(0.55) : Palette.hairline, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct GearCardTile: View {
+    let gear: StudioHub.GearPreset
+    let selected: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 7) {
+                ZStack(alignment: .bottomLeading) {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(LinearGradient(
+                            colors: gear.paletteHex.map { Color(hex: $0) },
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ))
+                        .frame(height: 40)
+
+                    HStack {
+                        Text(verbatim: gear.badge)
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.95))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(.black.opacity(0.42)))
+                        Spacer()
+                    }
+                    .padding(6)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: gear.name)
+                        .font(.caption.weight(selected ? .semibold : .medium))
+                        .lineLimit(1)
+                    Text(verbatim: gear.specTag)
+                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .padding(6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(selected ? Palette.live.opacity(0.13)
+                                   : hovering ? Color.primary.opacity(0.08) : Color.primary.opacity(0.035))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .strokeBorder(selected ? Palette.live : hovering ? Color.primary.opacity(0.25) : Palette.hairline,
+                                  lineWidth: selected ? 1.6 : 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(gear.promptPhrase.isEmpty ? Text("No optical modifier added") : Text(verbatim: gear.promptPhrase))
+    }
+}
+
 // MARK: - Style Presets Pill & Popover
 
 struct StylePill: View {
@@ -503,6 +1172,7 @@ struct StylePill: View {
     private var hub: StudioHub { .shared }
 
     var body: some View {
+        let _ = hub.theme
         let style = hub.activeStyle
         let active = style.id != "none"
         Pill(isPresented: $open) {
@@ -541,6 +1211,7 @@ private struct StylePopover: View {
     ]
 
     var body: some View {
+        let _ = hub.theme
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Style")
@@ -549,7 +1220,7 @@ private struct StylePopover: View {
                 Spacer()
                 if hub.selectedStyleId != "none" {
                     Button("Reset") { hub.selectedStyleId = "none" }
-                        .buttonStyle(.link)
+                        .buttonStyle(.chartLink)
                         .font(.caption)
                 }
             }
@@ -587,7 +1258,7 @@ private struct StylePopover: View {
                             customSuffix = ""
                             addingCustom = false
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.prominent)
                         .controlSize(.small)
                         .disabled(customName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                   || customSuffix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -637,12 +1308,12 @@ private struct StyleCardTile: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(selected ? Color.primary.opacity(0.15)
+                    .fill(selected ? Palette.live.opacity(0.14)
                                    : hovering ? Color.primary.opacity(0.08) : Color.primary.opacity(0.035))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .strokeBorder(selected ? Color.accentColor : hovering ? Color.primary.opacity(0.25) : Palette.hairline,
+                    .strokeBorder(selected ? Palette.live : hovering ? Color.primary.opacity(0.25) : Palette.hairline,
                                   lineWidth: selected ? 1.6 : 1)
             )
             .contentShape(Rectangle())
@@ -690,6 +1361,7 @@ private struct SubjectsVaultPopover: View {
     var body: some View {
         let subjects = MainWindow.shared.local.subjects
         let _ = subjects.version
+        let _ = hub.theme
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Subjects")
@@ -703,7 +1375,7 @@ private struct SubjectsVaultPopover: View {
                         Text(verbatim: "→ \(qwen.name)")
                             .font(.caption)
                     }
-                    .buttonStyle(.link)
+                    .buttonStyle(.chartLink)
                     .help("Switch to Qwen-Image-2.1 to render @subjects")
                 }
             }
@@ -748,7 +1420,7 @@ private struct SubjectsVaultPopover: View {
                 } label: {
                     Label("New Subject…", systemImage: "plus")
                 }
-                .buttonStyle(.link)
+                .buttonStyle(.chartLink)
                 .font(.callout)
 
                 Spacer()
@@ -760,7 +1432,7 @@ private struct SubjectsVaultPopover: View {
                     } label: {
                         Label("From Canvas", systemImage: "sparkles.rectangle.stack")
                     }
-                    .buttonStyle(.link)
+                    .buttonStyle(.chartLink)
                     .font(.callout)
                 }
             }
@@ -971,10 +1643,6 @@ struct AmbientBackdropView: View {
     private var hub: StudioHub { .shared }
     @Environment(\.colorScheme) private var colorScheme
 
-    private var baseColor: Color {
-        colorScheme == .dark ? Color(white: 0.075) : Color(white: 0.91)
-    }
-
     private var activeAura: StudioHub.AuraColors? {
         guard hub.ambientBacklight else { return nil }
         if app.inProgress, app.followsRender, let preview = app.preview {
@@ -983,26 +1651,51 @@ struct AmbientBackdropView: View {
         return hub.aura(for: app.selectedEntry)
     }
 
+    private var studioAmbientColors: (Color, Color) {
+        switch hub.theme {
+        case .cinemaLime:
+            return (Color(hex: 0xD4FF33), Color(hex: 0x10B981))
+        case .electricStudio:
+            return (Color(hex: 0xEC4899), Color(hex: 0x6366F1))
+        case .siliconedIndigo:
+            return (Color(hex: 0x56C0B0), Color(hex: 0x6660CB))
+        }
+    }
+
     var body: some View {
+        let _ = hub.theme
         ZStack {
-            baseColor
-            if let aura = activeAura {
-                GeometryReader { geo in
-                    let w = geo.size.width
-                    let h = geo.size.height
+            Palette.canvas
+            GeometryReader { geo in
+                let w = geo.size.width
+                let h = geo.size.height
+                if let aura = activeAura {
                     ZStack {
                         Circle()
-                            .fill(aura.primary.opacity(colorScheme == .dark ? 0.24 : 0.16))
+                            .fill(aura.primary.opacity(colorScheme == .dark ? 0.25 : 0.15))
                             .frame(width: max(w, h) * 0.72, height: max(w, h) * 0.72)
                             .position(x: w * 0.36, y: h * 0.42)
                         Circle()
-                            .fill(aura.secondary.opacity(colorScheme == .dark ? 0.20 : 0.13))
+                            .fill(aura.secondary.opacity(colorScheme == .dark ? 0.20 : 0.12))
                             .frame(width: max(w, h) * 0.65, height: max(w, h) * 0.65)
                             .position(x: w * 0.66, y: h * 0.62)
                     }
+                    .blur(radius: 115)
+                    .transition(.opacity)
+                } else if hub.ambientBacklight {
+                    let (c1, c2) = studioAmbientColors
+                    ZStack {
+                        Ellipse()
+                            .fill(c1.opacity(colorScheme == .dark ? 0.065 : 0.04))
+                            .frame(width: w * 0.62, height: h * 0.40)
+                            .position(x: w * 0.50, y: h * 0.08)
+                        Ellipse()
+                            .fill(c2.opacity(colorScheme == .dark ? 0.055 : 0.035))
+                            .frame(width: w * 0.50, height: h * 0.42)
+                            .position(x: w * 0.78, y: h * 0.85)
+                    }
                     .blur(radius: 110)
                 }
-                .transition(.opacity)
             }
         }
         .animation(Motion.pick(.easeInOut(duration: 0.55)), value: app.selectedEntry?.id)
@@ -1017,14 +1710,15 @@ struct LatentShimmerView: View {
     @State private var phase = false
 
     var body: some View {
+        let _ = StudioHub.shared.theme
         ZStack {
             Palette.well
             LinearGradient(
                 colors: [
-                    Color.accentColor.opacity(0.12),
-                    Color.purple.opacity(0.10),
-                    Color.cyan.opacity(0.08),
-                    Color.accentColor.opacity(0.12),
+                    Palette.live.opacity(0.16),
+                    Palette.sky.opacity(0.10),
+                    Palette.rose.opacity(0.09),
+                    Palette.live.opacity(0.16),
                 ],
                 startPoint: phase ? .topLeading : .bottomTrailing,
                 endPoint: phase ? .bottomTrailing : .topLeading
@@ -1040,7 +1734,7 @@ struct LatentShimmerView: View {
             VStack(spacing: 10) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 24, weight: .light))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Palette.live)
                     .symbolEffect(.pulse, options: .repeating, isActive: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
                 Text(stage?.label ?? String(localized: "Preparing…"))
                     .font(.callout.weight(.medium))

@@ -34,19 +34,9 @@ extension AppState {
     /// The starting image the next render reads: the one carried, where the model starts from one.
     var usedStart: ReferenceImage? { startsFromImage ? startImage : nil }
 
-    /// How many pictures cited `@subjects` add when the chosen model reads images.
-    var citedSubjectPicturesCount: Int {
-        guard promptNamesImages, !NamedSubjects.mentions(in: prompt).isEmpty else { return 0 }
-        let cap = maxReferences
-        if case .success(let r)? = rewrite(prompt, model: model(identifier), capacity: cap, editImages: references.count) {
-            return r.placed.count
-        }
-        return 0
-    }
-
-    /// The images the next render encodes: the edit's references, cited subjects, or the starting image — what its memory need counts
+    /// The images the next render encodes: the edit's references, or the starting image — what its memory need counts
     /// (`MemoryNeed.Request.references`: a start at the render's format).
-    var sentImages: Int { references.count + citedSubjectPicturesCount + (usedStart == nil ? 0 : 1) }
+    var sentImages: Int { references.count + (usedStart == nil ? 0 : 1) }
 
     /// **The steps the strength leaves to the render**, of all those of the schedule — the plain words under the slider.
     /// `nil` without a starting image, or before the model is read.
@@ -95,7 +85,7 @@ extension AppState {
     /// the scale the rack had and among the sizes this Mac renders. The size stays free afterwards: the engine crops the centre.
     func carryStart(_ image: ReferenceImage, strength: Double? = nil) {
         guard startsFromImage else { return }
-        startImage = image
+        setStart(image)
         if let strength { startStrength = StartImage.snapped(strength) }
         if let f = recommendedFormat(width: image.width, height: image.height), f != format { useFormat(f) }
     }
@@ -107,7 +97,7 @@ extension AppState {
                                             current: format)
     }
 
-    func removeStart() { startImage = nil }
+    func removeStart() { setStart(nil) }
 
     /// The strength, as the slider and the remote control set it: in hundredths.
     func setStartStrength(_ s: Double) { startStrength = StartImage.snapped(s) }
@@ -145,21 +135,6 @@ extension AppState {
                           name: name)
     }
 
-    /// A file dropped on the rack's Images box, or chosen by its « Replace… »: it takes the place of the starting image, its strength
-    /// kept.
-    func replaceStart(with url: URL) {
-        guard let image = startImage(file: url) else { return }
-        carryStart(image)
-    }
-
-    func chooseStartReplacement() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.image]
-        panel.prompt = String(localized: "Choose")
-        panel.message = String(localized: "The image the render starts from: it keeps its composition, the strength says how far it moves away.")
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        replaceStart(with: url)
-    }
 }
 
 /// **The starting image in words**: its strength as a percentage, and what it means.

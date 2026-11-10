@@ -133,9 +133,9 @@ enum ZImageStages {
     static let dit = Stage(
         model: "z-image", name: "dit",
         proves: "one evaluation of the DiT, latent to velocity: embedders, refiners, 30 blocks, head, unpatchify",
-        sizes: ["512", "1024", "768x512", "832x1216"], options: ["--map", "--neural-engine", "--bf16-activations", "--bf16-attention", "--fp16-attention", "--no-accelerators", "--variant"],
-        oracle: "tools/oracle/z-image.py dit --size {size}; witness --size {size}; with --neural-engine, --bf16-activations, --bf16-attention or --fp16-attention, bf16 --size {size}; with --variant compact or light, the same three with --variant, at 512 \(Wording.publishers)", weights: ["DiT"],
-        rule: "the rule, floor 5e-4; \(Wording.rectangle); \(Wording.halfPrecision)"
+        sizes: ["512", "1024", "768x512", "832x1216"], options: ["--map", "--neural-engine", "--bf16-activations", "--bf16-attention", "--fp16-attention", "--int8-activations", "--no-accelerators", "--variant"],
+        oracle: "tools/oracle/z-image.py dit --size {size}; witness --size {size}; with --neural-engine, --bf16-activations, --bf16-attention or --fp16-attention, bf16 --size {size}; with --variant compact or light, the same three with --variant, at 512 \(Wording.publishers); with --int8-activations, w8a8 --size {size} --variant compact (ComfyUI's own int8 products)", weights: ["DiT"],
+        rule: "the rule, floor 5e-4; \(Wording.rectangle); \(Wording.halfPrecision); with --int8-activations, against ComfyUI's W8A8 error + 25 %"
     ) { invocation in
         let version = try invocation.quantizedVariant()
         let report = Report(title: "z-image dit\(version.map { " " + $0.rawValue } ?? "") \(invocation.size)")
@@ -158,7 +158,8 @@ enum ZImageStages {
 
         var produced = dit.boundaries
         produced["model_out"] = out
-        let half = try invocation.halfReference(file, script: "tools/oracle/z-image.py bf16 --size \(invocation.size)\(version.map { " --variant " + $0.rawValue } ?? "")")
+        let half = try invocation.reference(file, script: "tools/oracle/z-image.py bf16 --size \(invocation.size)\(version.map { " --variant " + $0.rawValue } ?? "")",
+                                            w8a8Script: "tools/oracle/z-image.py w8a8 --size \(invocation.size) --variant compact")
         let widths: [String: Int] = ["t_embedder_out": dit.config.adalnDim, "block_freqs_cis": 2,
                                      "final_layer_out": dit.config.patch * dit.config.patch * dit.config.channels,
                                      "model_out": height * width]
@@ -177,6 +178,7 @@ enum ZImageStages {
         if invocation.bf16Activations { try BF16ActivationRun.account(report) }
         if invocation.bf16Attention { try BF16AttentionRun.account(report) }
         if invocation.fp16Attention { try FP16AttentionRun.account(report) }
+        if invocation.int8Activations { try W8A8Run.account(report) }
         return report
     }
 
@@ -240,10 +242,13 @@ enum ZImageStages {
         model: "z-image", name: "vae",
         proves: "Flux's decoder on a rectangular latent (the centered crop of the final 1024² latent), plane by plane: what a square cannot see",
         sizes: ["768x512"],
-        oracle: "tools/oracle/z-image.py vae --size {size}; vae-witness --size {size}", weights: ["VAE"],
-        rule: "the rule per plane, floor 5e-4, at the fp64 witness (no floor there); on a rectangle, the transposed image must deviate"
+        oracle: "tools/oracle/z-image.py vae --size {size}; vae-witness --size {size}; vae-bf16 --size {size}", weights: ["VAE"],
+        rule: "the rule per plane, floor 5e-4, at the fp64 witness (no floor there); a decoder in bf16 no further from it than the reference in bf16, + 25 %; on a rectangle, the transposed image must deviate"
     ) { invocation in
         let report = Report(title: "z-image vae \(invocation.size)")
+        let reference = try DecoderReference.image(invocation.goldens, file: "goldens-vae-\(invocation.size).safetensors",
+                                                   publishedInBF16: VAE.publishedInBF16,
+                                                   script: "tools/oracle/z-image.py vae-bf16 --size \(invocation.size)")
         let goldens = try invocation.goldens.open("goldens-vae-\(invocation.size).safetensors")
         let witness = invocation.goldens.optional("witness-vae-f64-\(invocation.size).safetensors")
         guard let entry = goldens.entries["latent"], let latent = goldens.float32("latent"),
@@ -253,7 +258,8 @@ enum ZImageStages {
         let decoder = try VAE(path: try Library.processWide.component(.zImage, "vae.safetensors"),
                               latentHeight: entry.shape[1], latentWidth: entry.shape[2])
         let (image, _) = try decoder.decode(latent: latent.baseAddress!)
-        report.add(Judge.planes("image RGB", engine: image, oracle: expected, witness: witness?.float32("image"), planes: 3))
+        report.add(Judge.planes("image RGB", engine: image, oracle: expected, witness: witness?.float32("image"), reference: reference,
+                                planes: 3))
         if let m = Judge.orientation(image, expected, height: decoder.imageHeight, width: decoder.imageWidth) { report.add(m) }
         return report
     }

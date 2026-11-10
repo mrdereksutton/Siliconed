@@ -14,6 +14,7 @@ struct Composer: View {
 
     var body: some View {
         let hub = StudioHub.shared
+        let _ = hub.theme
         VStack(alignment: .leading, spacing: 12) {
             if app.editingPossible, !app.references.isEmpty {
                 references
@@ -26,7 +27,7 @@ struct Composer: View {
                 HStack(spacing: 8) {
                     Image(systemName: "sparkles")
                         .font(.caption2)
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Palette.live)
                     Text("Prompt polished")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -37,40 +38,46 @@ struct Composer: View {
                             .lineLimit(1)
                     }
                     Button("Revert") { hub.revertPolish(on: app) }
-                        .buttonStyle(.link)
+                        .buttonStyle(.chartLink)
                         .font(.caption.weight(.medium))
                     Spacer()
                 }
                 .padding(.horizontal, 4)
             }
-            HStack(alignment: .center, spacing: 8) {
-                if app.editingPossible { AttachPill(app: app) }
-                SubjectsVaultPill(app: app)
-                ModelPill(app: app)
-                if app.references.isEmpty {
-                    SizePills(app: app)
-                } else {
-                    // An edit keeps image 1's framing: its size, not a choice.
-                    let f = app.outputFormat
-                    PillFace {
-                        Text(verbatim: "\(f.width) × \(f.height)").monospacedDigit()
-                        Image(systemName: "lock.fill").imageScale(.small).foregroundStyle(.secondary)
+            SeriesSummary(app: app)
+            ScrollView(.horizontal) {
+                HStack(alignment: .center, spacing: 7) {
+                    if app.editingPossible { AttachPill(app: app) }
+                    SubjectsVaultPill(app: app)
+                    ModelPill(app: app)
+                    if app.references.isEmpty {
+                        SizePills(app: app)
+                    } else {
+                        // An edit keeps image 1's framing: its size, not a choice.
+                        let f = app.outputFormat
+                        PillFace {
+                            Text(verbatim: "\(f.width) × \(f.height)").monospacedDigit()
+                            Image(systemName: "lock.fill").imageScale(.small).foregroundStyle(.secondary)
+                        }
+                        .help("An edit keeps the framing of image 1: about 1 megapixel at its proportions, each side at least 512, 1024² at most")
                     }
-                    .help("An edit keeps the framing of image 1: about 1 megapixel at its proportions, each side at least 512, 1024² at most")
+                    StylePill(app: app)
+                    CameraPill(app: app)
+                    if app.missing == nil, app.card != nil {
+                        LoRAPill(app: app)
+                        SettingsPill(app: app)
+                    }
+                    BatchPill(app: app)
                 }
-                StylePill(app: app)
-                if app.missing == nil, app.card != nil {
-                    LoRAPill(app: app)
-                    SettingsPill(app: app)
-                }
-                BatchPill(app: app)
-                Spacer(minLength: 8)
+            }
+            .scrollIndicators(.never)
+            .safeAreaInset(edge: .trailing, spacing: 10) {
                 GenerateButton(app: app)
             }
             StatusLine(app: app)
         }
         .padding(16)
-        .glass(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .studioCard(cornerRadius: 22, elevated: true)
         // As on the canvas: a PNG Siliconed wrote brings back its settings; on a model that edits, any
         // other image joins the edit; when a starting image is held, a dropped image replaces it.
         .dropDestination(for: DroppedImage.self) { items, _ in
@@ -162,13 +169,13 @@ struct Composer: View {
                                 } else {
                                     Image(systemName: "sparkles")
                                         .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(hub.autoPolish ? .white : Color.accentColor)
+                                        .foregroundStyle(hub.autoPolish ? Palette.onLive : Palette.live)
                                 }
                             }
                             .frame(width: 26, height: 26)
                             .background(
                                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .fill(hub.autoPolish ? Color.accentColor : Color.primary.opacity(0.08))
+                                    .fill(hub.autoPolish ? Palette.live : Color.primary.opacity(0.08))
                             )
                             .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Palette.hairline))
                             .contentShape(Rectangle())
@@ -186,7 +193,7 @@ struct Composer: View {
                               : "Polish prompt with the local AI writer (right-click to enable Auto-Polish)")
                         .accessibilityLabel(Text("Polish Prompt"))
 
-                        Button { LabWindow.shared.show() } label: {
+                        Button { LabWindow.shared.openStudio() } label: {
                             Image(systemName: "wand.and.sparkles")
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(WireKind.text.color)
@@ -341,7 +348,7 @@ private struct ModelPill: View {
 
     var body: some View {
         Pill(isPresented: $open) {
-            Circle().fill(Color.accentColor).frame(width: 7, height: 7)
+            Circle().fill(Palette.live).frame(width: 7, height: 7)
             Text(verbatim: app.card?.name ?? "—").lineLimit(1)
             Image(systemName: "chevron.up.chevron.down")
                 .font(.system(size: 9, weight: .semibold))
@@ -466,9 +473,9 @@ private struct LoRAPill: View {
             if !app.loras.isEmpty {
                 Text(verbatim: "\(app.loras.count)")
                     .font(.caption.weight(.bold)).monospacedDigit()
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Palette.onLive)
                     .frame(minWidth: 16, minHeight: 16)
-                    .background(Circle().fill(Color.accentColor))
+                    .background(Circle().fill(Palette.live))
             }
         } choices: {
             LoRAStack(app: app) { open = false }
@@ -536,36 +543,51 @@ private struct BatchPill: View {
 
 // MARK: - Generate
 
-/// **« Generate »**: the accent, the key under it; greyed while something stops the render (said in
-/// the status line under it). During a render it adds to the queue, as upstream's.
+/// **« Generate »**: luminous Studio CTA with theme gradient, high-contrast ink, and outer glow;
+/// greyed while something stops the render (said in the status line under it).
 private struct GenerateButton: View {
     @Bindable var app: AppState
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var hovering = false
 
     var body: some View {
         let blocked = app.formBlocker != nil || app.memoryRefusal != nil
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
         Button { app.render() } label: {
-            HStack(spacing: 10) {
-                Text(label).font(.system(size: 14, weight: .semibold))
-                Text(verbatim: "⌘↩").font(.system(size: 12, weight: .medium)).opacity(0.65)
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 12, weight: .bold))
+                Text(GenerateControls.title(app))
+                    .font(.system(size: 14, weight: .bold))
+                Text(verbatim: "⌘↩")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .opacity(0.68)
             }
-            .foregroundStyle(.white)
+            .foregroundStyle(Palette.onLive)
             .padding(.horizontal, 18)
             .frame(height: 38)
-            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Color.accentColor))
-            .opacity(blocked ? 0.4 : 1)
+            .background(shape.fill(Palette.ctaGradient(for: colorScheme)))
+            .overlay(
+                shape.strokeBorder(
+                    LinearGradient(
+                        colors: [.white.opacity(0.45), .white.opacity(0.08)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 1
+                )
+            )
+            .shadow(color: blocked ? .clear : Palette.live.opacity(hovering ? 0.46 : 0.28),
+                    radius: hovering ? 14 : 9, y: 2)
+            .scaleEffect(hovering && !blocked ? 1.015 : 1.0)
+            .opacity(blocked ? 0.38 : 1)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(blocked)
+        .onHover { hovering = $0 }
+        .animation(Motion.pick(.easeOut(duration: 0.14)), value: hovering)
         .help(app.plannedCost.map { Text(verbatim: "≈ " + Figures.duration($0)) } ?? Text(verbatim: "⌘↩"))
-    }
-
-    private var label: String {
-        let n = app.variantCount
-        if app.busy { return n > 1 ? String(localized: "Add \(n) Renders to Queue") : String(localized: "Add to Queue") }
-        if !app.references.isEmpty { return n > 1 ? String(localized: "Edit Image \(n) Ways") : String(localized: "Edit Image") }
-        let images = n * max(1, app.batch)
-        return images > 1 ? String(localized: "Generate \(images) Images") : String(localized: "Generate")
     }
 }
 

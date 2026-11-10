@@ -152,14 +152,14 @@ extension RenderLoop {
 
     /// **The whole check of a render**, from its record to its note: the request it stands for, the prediction under `plan`, the
     /// comparison, the verdict. `nil` for a render the catalogue does not describe (an unknown family, a version that does not
-    /// exist, a sketch, a render with references or a LoRA: classes the catalogue does not carry).
+    /// exist, a render with references or a LoRA: classes the catalogue does not carry).
     ///
     /// `mapDate`: the report whose model `plan` was made of (`Report.date`), written in the note.
-    package static func check(_ render: Engine.Render, variant: Variant, references: Int = 0, plan: CapacityPlan = EngineSettings.effective.plan,
+    package static func check(_ render: Engine.Render, variant: Variant, weightFormat: CapacityClasses.WeightFormat? = nil, references: Int = 0, plan: CapacityPlan = EngineSettings.effective.plan,
                               mapDate: String = "", thresholds: Thresholds = Thresholds())
         -> (comparison: Comparison, verdict: Verdict, note: Note)? {
-        guard !render.classes.isEmpty, render.sketch == nil, render.loras.isEmpty, references == 0,
-              let request = request(of: render, variant: variant),
+        guard !render.classes.isEmpty, render.loras.isEmpty, references == 0,
+              let request = request(of: render, variant: variant, weightFormat: weightFormat),
               CapacityClasses.classes(for: request) != nil else { return nil }
         let predicted = predictions(for: request, plan: plan, aneBroughtUp: render.neuralEngine,
                                     accelerators: render.accelerators) ?? []

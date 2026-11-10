@@ -110,9 +110,6 @@ extension Engine {
         context.cache = cache
         context.accelerators = admitted.accelerators
         context.fasterRendering = admitted.fasterRendering
-        // A sketch that reaches the plan's last evaluation is the whole render: no stop, no estimate.
-        let sketch = request.sketch.map { max(1, $0) }.flatMap { $0 < plan.evaluations ? $0 : nil }
-        context.stopAfter = sketch
         context.detail = request.detail
         context.detailScale = Detail.scale(width: request.width, height: request.height)
         context.solver = request.solver
@@ -132,6 +129,10 @@ extension Engine {
         // are its caller's — the lean plan, no check.
         let need = memoryPlan.need
         if need == nil, model.library != nil { throw EngineError.memoryNeedUnknown(model: model.card.id) }
+        // What this plan does not keep of the text encoder held by the last render goes back before the phases' ledger opens: the
+        // base was read without it (`OperatorFootprint.processBase`). A read left unfinished is not held after the render.
+        KeptEncoder.settle(for: memoryPlan)
+        defer { KeptEncoder.renderEnded() }
         // A hand-composed chain is the caller's: said in the render's warnings, so that nobody takes it for the product's.
         let outsideContract = model.library == nil
         PhaseBoundary.begin()
@@ -145,15 +146,18 @@ extension Engine {
             let totalStart = Date()
             context.footprints.start = Arena.processFootprint()
             PhaseBoundary.mark("start")
-            // A sketch announces the evaluations it will do: the progress reaches 1 at its image.
             context.emit(.start(Plan(
-                denoising: sketch.map { plan.sketched($0) } ?? plan, seeds: seeds,
+                denoising: plan, seeds: seeds,
                 stages: request.image != nil || !request.references.isEmpty ? [.text, .image, .denoising, .decoding]
                                                                             : [.text, .denoising, .decoding])))
 
             // ── The references at the denoiser's size, once: a text stage that reads images and the
             //    image encoder below receive this same copy. ──
             let prepared = request.references.isEmpty ? [] : try chain.denoising.preparedReferences(request.references)
+
+            // ── The DiT's map read in place: wired for the GPU on its own thread, beside the text (`MapWarmup`). ──
+            if memoryPlan.warmsMap, let map = chain.denoising.inPlaceMap { MapWarmup.begin(path: map) }
+            defer { MapWarmup.end() }
 
             // ── The text, once for the whole batch. The module returns its memory on exit. ──
             try context.check()
@@ -245,15 +249,11 @@ extension Engine {
                 let denoisingStart = Date()
                 // The classes this image's evaluations ran, by route (`ProductLedger`): armed for the denoising alone.
                 let ledger = ProductLedger()
-                do {
-                    try autoreleasepool {
-                        try ProductLedger.recording(into: ledger) {
-                            try chain.denoising.denoise(&latent, text: text, steps: steps, start: start,
-                                                        references: references, lora: stack, context: context)
-                        }
+                try autoreleasepool {
+                    try ProductLedger.recording(into: ledger) {
+                        try chain.denoising.denoise(&latent, text: text, steps: steps, start: start,
+                                                    references: references, lora: stack, context: context)
                     }
-                } catch is Context.Sketched {
-                    latent.values = context.estimate!
                 }
                 context.timings.denoising = Date().timeIntervalSince(denoisingStart)
                 PhaseBoundary.mark("denoising")
@@ -261,7 +261,7 @@ extension Engine {
             }
 
             context.keptDenoiser = nil
-            PhaseBoundary.returned()
+            PhaseBoundary.returnedDenoiser()
             PhaseBoundary.mark("denoiser released")
 
             var renderResults: [Render] = []
@@ -287,7 +287,7 @@ extension Engine {
 
                 var renderResult = Render(model: chain.denoising.model, prompt: request.prompt, seed: seed,
                                   steps: steps, loras: request.loras, loraSummary: stack?.summary, image: image,
-                                  evaluations: sketch ?? plan.evaluations, sketch: sketch, spectral: plan.reduced,
+                                  evaluations: plan.evaluations, spectral: plan.reduced,
                                   strength: request.image != nil ? request.strength : nil, startStep: plan.startStep,
                                   startSigma: plan.startSigma,
                                   timings: context.timings, footprints: context.footprints, tokens: text.tokens,

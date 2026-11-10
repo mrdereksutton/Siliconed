@@ -1,34 +1,18 @@
-// What `silicontrol` asks of the app for the window's other gestures — the history's (remove, undo, again, reuse, crop), the exploration's
-// (finish a cell, add the sheet), the models' (import, uninstall), Compute On and the library — kept here, pure, so that the tests read
-// the arguments, the way a cell is named, a crop's frame and the `--yes` guard without an app.
+// What `silicontrol` asks of the app for the window's other gestures — the history's (remove, undo, again, reuse, crop), the series'
+// (add its sheet, a knob's bubble), the models' (import, uninstall), Compute On, the library, the Prompt Lab's bar, the rack's scroll
+// and the Settings window — kept here, pure, so that the tests read the
+// arguments, the way a cell is named, a crop's frame and the `--yes` guard without an app.
 //
 // The gestures themselves are the app's (`AppState`, `MainWindow`): a command calls the function the button calls.
 
 // MARK: - Naming a cell
 
-/// **A cell of an exploration**, as `finish` names it: `g2c3` — the grid and the cell's rank in the sheet's reading order, from 0
-/// (row by row: `row · columns + column`, the same numbers the job's `column` and `row` give) — or `t5`, the job that renders it:
-/// every cell is an ordinary job, so the name `wait` and `cancel` already know is one more way to say it.
+/// **A cell of a grid**, as the answers name it: `g2c3` — the grid and the cell's rank in the sheet's reading order, from 0 (row by
+/// row: `row · columns + column`, the same numbers the job's `column` and `row` give). Every cell is also an ordinary job, `t5`.
 ///
 /// One letter and a number for each kind of thing (`t3` a job, `i7` an image, `g2` a grid), and a cell is a part of a grid: `g2`, then
 /// `c` and its rank. A pair of coordinates (`g2:1,0`) would need quotes in some shells and a sheet's width to be read right.
-package enum CellName: Equatable, Sendable {
-    case cell(grid: Int, index: Int)
-    case job(Int)
-
-    package init?(_ word: String) {
-        if let rest = word.first == "g" ? word.dropFirst() : nil, let c = rest.firstIndex(of: "c"),
-           let grid = Int(rest[..<c]), let index = Int(rest[rest.index(after: c)...]), grid >= 0, index >= 0,
-           rest.allSatisfy({ $0.isNumber || $0 == "c" }) {
-            self = .cell(grid: grid, index: index)
-        } else if word.first == "t", let n = Int(word.dropFirst()), n >= 0 {
-            self = .job(n)
-        } else {
-            return nil
-        }
-    }
-
-    /// How the answers say it.
+package enum CellName {
     package static func name(grid: Int, cell: Int) -> String { "g\(grid)c\(cell)" }
 }
 
@@ -83,8 +67,6 @@ package enum GestureOrder: Equatable, Sendable {
     case reuse(String)
     /// `crop i7 --box X,Y,W,H | --ratio P:Q`.
     case crop(image: String, CropSpec)
-    /// `finish g2c3|t5`: Finish This Image.
-    case finish(CellName)
     /// `sheet g2`: Add Sheet to History.
     case sheet(grid: Int)
     /// `import FILE …`: Import a Model or LoRA.
@@ -97,8 +79,17 @@ package enum GestureOrder: Equatable, Sendable {
     case compute(ComputeTarget)
     /// `library …`.
     case library(LibraryAction, confirmed: Bool)
-    /// `start-image …`: the rack's starting image (img2img), as the Prompt Lab carries it and the Images box retouches it.
+    /// `start-image …`: the rack's starting image (img2img) — an image of the Prompt Lab given the start's role, and its strength.
     case startImage(StartImageAction)
+    /// `lab …`: the Prompt Lab, the bar under the image — what it holds, folded or unfolded, an image in, a role, an image out, and its
+    /// two buttons, Rewrite and Describe, written in its text.
+    case lab(LabAction)
+    /// `settings …`: Siliconed › Settings… (⌘,), on a pane — and, on Prompt Lab, on one instruction.
+    case settings(SettingsAction)
+    /// `bracket KNOB` · `bracket close`: a knob's ± clicked (or right-click › « Bracket… »), its bubble open — or closed.
+    case bracket(BracketAction)
+    /// `rack top|dit`: the rack's column scrolled to its head, or to the DiT's settings (the chain then pinned in small at the top).
+    case rack(RackPlace)
 
     package enum Removal: Equatable, Sendable {
         /// A model's id: a publisher's family is uninstalled, an imported model removed.
@@ -129,6 +120,72 @@ package enum GestureOrder: Equatable, Sendable {
         case remove
     }
 
+    /// What `lab` does. The images are numbered as the bar shows them, from 1.
+    package enum LabAction: Equatable, Sendable {
+        case status
+        case unfold, fold
+        /// The unfolded plate in a window of its own (`detach`), or back over the image (`attach`).
+        case detach, attach
+        /// Files, or `i7` of the history: each takes the role a newcomer takes.
+        case add([String])
+        case role(image: Int, LabInputs.Role)
+        case remove(image: Int)
+        /// The bar's « Rewrite », written in its text. `wait`: the answer comes when the text is written, not when it starts.
+        case rewrite(wait: Bool)
+        /// Image N's « Describe », written in the text at the caret.
+        case describe(image: Int, wait: Bool)
+
+        /// A role as the command names it: `edited`, `reference`, `start`, `none`.
+        package static func role(named word: String) -> LabInputs.Role? {
+            switch word.lowercased() {
+            case "edited": .edited
+            case "reference": .reference
+            case "start": .start
+            case "none": .neutral
+            default: nil
+            }
+        }
+
+        package static func name(_ role: LabInputs.Role) -> String { role == .neutral ? "none" : role.rawValue }
+    }
+
+    /// **A knob of the rack, as `bracket` names it** — the ± the bubble opens from. The text's groups have their own bubble, over
+    /// the words (`Vary This Word…`), and no name here.
+    package enum BracketKnob: Equatable, Sendable {
+        /// The Seed line's ±: the lot.
+        case seeds
+        case detail
+        case solver
+        /// The starting image's strength.
+        case start
+        /// The LoRA stack's ±: « Compare LoRAs… ».
+        case compareLoRAs
+        /// One LoRA's strength, by its name in the stack (as `lab` and `status` print it), or its path.
+        case lora(String)
+
+        package static func named(_ word: String) -> BracketKnob? {
+            switch word.lowercased() {
+            case "seed", "seeds", "batch": .seeds
+            case "detail": .detail
+            case "solver": .solver
+            case "start", "strength": .start
+            case "loras", "compare": .compareLoRAs
+            default: nil
+            }
+        }
+    }
+    package enum BracketAction: Equatable, Sendable { case open(BracketKnob), close }
+    package enum RackPlace: String, Equatable, Sendable { case top, dit }
+
+    /// What `settings` opens: a pane, or Settings › Prompt Lab on one instruction — the model and the gesture its two menus show,
+    /// each left as it is when not named.
+    package enum SettingsAction: Equatable, Sendable {
+        /// `nil`: the pane last shown, as ⌘, opens it.
+        case show(SettingsPane?)
+        /// `target`: a model's id or a family, as typed (the app resolves it).
+        case instruction(PromptWriterInstructions.Gesture?, target: String?)
+    }
+
     package enum Failure: Error, Equatable, Sendable {
         /// Not the syntax; the associated value is the usage line.
         case usage(String)
@@ -138,8 +195,8 @@ package enum GestureOrder: Equatable, Sendable {
         case badValue(String, String)
     }
 
-    package static let verbs: Set<String> = ["remove", "undo", "again", "reuse", "crop", "finish", "sheet", "import", "uninstall",
-                                             "macs", "compute", "library", "start-image"]
+    package static let verbs: Set<String> = ["remove", "undo", "again", "reuse", "crop", "sheet", "import", "uninstall",
+                                             "macs", "compute", "library", "start-image", "lab", "settings", "bracket", "rack"]
 
     package static func usage(_ command: String) -> String {
         switch command {
@@ -148,13 +205,16 @@ package enum GestureOrder: Equatable, Sendable {
         case "again": "again <i7|file.png>"
         case "reuse": "reuse <i7|file.png>"
         case "crop": "crop <i7> --box X,Y,W,H | --ratio P:Q"
-        case "finish": "finish <g2c3|t5>"
         case "sheet": "sheet <g2>"
         case "import": "import <file.safetensors|file.gguf> …"
         case "uninstall": "uninstall <model-id> [--yes] · uninstall lora <name> [--yes] · uninstall downloads [--yes]"
         case "macs": "macs [connect|disconnect NAME]"
         case "compute": "compute <NAME|this>"
         case "start-image": "start-image [<image|i7>] [--strength 0.65] · start-image --remove"
+        case "lab": "lab [open|close] · lab add <image|i7> … · lab role <n> edited|reference|start|none · lab remove <n> · lab rewrite [--wait] · lab describe <n> [--wait]"
+        case "settings": "settings [general|macs|lab|advanced] · settings lab [rewrite|describe] [--for ID]"
+        case "bracket": "bracket seed|detail|solver|start|loras · bracket lora <name> · bracket close"
+        case "rack": "rack top|dit"
         default: "library [move DIR|home|open DIR|local] [--yes]"
         }
     }
@@ -174,7 +234,12 @@ package enum GestureOrder: Equatable, Sendable {
         var words: [String] = []
         var yes = false
         var values: [String: String] = [:]
-        let valued: Set<String> = command == "crop" ? ["--box", "--ratio"] : command == "start-image" ? ["--strength"] : []
+        let valued: Set<String> = switch command {
+        case "crop": ["--box", "--ratio"]
+        case "start-image": ["--strength"]
+        case "settings": ["--for"]
+        default: []
+        }
         var i = 0
         while i < arguments.count {
             let a = arguments[i]
@@ -188,6 +253,7 @@ package enum GestureOrder: Equatable, Sendable {
             if a == "--yes", takesYes(command, arguments) { yes = true; i += 1; continue }
             if command == "undo", a == "--redo" { values[a] = ""; i += 1; continue }
             if command == "start-image", a == "--remove" { values[a] = ""; i += 1; continue }
+            if command == "lab", a == "--wait" { values[a] = ""; i += 1; continue }
             if a.hasPrefix("--"), a.count > 2, !a.contains(" ") { return .failure(.unknownFlag(a)) }
             words.append(a)
             i += 1
@@ -212,9 +278,6 @@ package enum GestureOrder: Equatable, Sendable {
             let sides = v.split(separator: ":", omittingEmptySubsequences: false).map { Int($0) }
             guard sides.count == 2, let w = sides[0], let h = sides[1], w > 0, h > 0 else { return .failure(.badValue("--ratio", v)) }
             return .success(.crop(image: image, .ratio(Crop.Ratio(w, h))))
-        case "finish":
-            guard let word = one() else { return .failure(.usage(line)) }
-            return CellName(word).map { .success(.finish($0)) } ?? .failure(.badValue("cell", word))
         case "sheet":
             guard let word = one() else { return .failure(.usage(line)) }
             guard word.first == "g", let n = Int(word.dropFirst()), n >= 0 else { return .failure(.badValue("grid", word)) }
@@ -248,6 +311,62 @@ package enum GestureOrder: Equatable, Sendable {
             case (1, let s): return .success(.startImage(.carry(words[0], strength: s)))
             default: return .failure(.usage(line))
             }
+        case "lab":
+            let rest = Array(words.dropFirst())
+            func number(_ word: String) -> Int? { Int(word).flatMap { $0 >= 1 ? $0 : nil } }
+            // `--wait` belongs to the two gestures that write; anywhere else it is a mistake, never ignored.
+            let wait = values["--wait"] != nil
+            if wait, !["rewrite", "describe"].contains(words.first ?? "") { return .failure(.usage(line)) }
+            switch words.first {
+            case nil: return .success(.lab(.status))
+            case "open"?: return rest.isEmpty ? .success(.lab(.unfold)) : .failure(.usage(line))
+            case "close"?: return rest.isEmpty ? .success(.lab(.fold)) : .failure(.usage(line))
+            case "detach"?: return rest.isEmpty ? .success(.lab(.detach)) : .failure(.usage(line))
+            case "attach"?: return rest.isEmpty ? .success(.lab(.attach)) : .failure(.usage(line))
+            case "add"?: return rest.isEmpty ? .failure(.usage(line)) : .success(.lab(.add(rest)))
+            case "role"?:
+                guard rest.count == 2 else { return .failure(.usage(line)) }
+                guard let n = number(rest[0]) else { return .failure(.badValue("image", rest[0])) }
+                guard let role = LabAction.role(named: rest[1]) else { return .failure(.badValue("role", rest[1])) }
+                return .success(.lab(.role(image: n, role)))
+            case "remove"?:
+                guard rest.count == 1 else { return .failure(.usage(line)) }
+                return number(rest[0]).map { .success(.lab(.remove(image: $0))) } ?? .failure(.badValue("image", rest[0]))
+            case "rewrite"?: return rest.isEmpty ? .success(.lab(.rewrite(wait: wait))) : .failure(.usage(line))
+            case "describe"?:
+                guard rest.count == 1 else { return .failure(.usage(line)) }
+                return number(rest[0]).map { .success(.lab(.describe(image: $0, wait: wait))) } ?? .failure(.badValue("image", rest[0]))
+            default: return .failure(.usage(line))
+            }
+        case "settings":
+            guard words.count <= 2 else { return .failure(.usage(line)) }
+            var pane: SettingsPane?
+            if let word = words.first {
+                guard let p = SettingsPane(rawValue: word.lowercased()) else { return .failure(.badValue("pane", word)) }
+                pane = p
+            }
+            let target = values["--for"]
+            guard words.count == 2 || target != nil else { return .success(.settings(.show(pane))) }
+            // A gesture and a model are the Prompt Lab pane's two menus: no other pane has them.
+            guard pane == .lab else { return .failure(.usage(line)) }
+            var gesture: PromptWriterInstructions.Gesture?
+            if words.count == 2 {
+                guard let g = PromptWriterInstructions.Gesture(rawValue: words[1].lowercased()) else { return .failure(.badValue("gesture", words[1])) }
+                gesture = g
+            }
+            return .success(.settings(.instruction(gesture, target: target)))
+        case "bracket":
+            switch words.first?.lowercased() {
+            case "close"?: return words.count == 1 ? .success(.bracket(.close)) : .failure(.usage(line))
+            case "lora"?: return words.count == 2 ? .success(.bracket(.open(.lora(words[1])))) : .failure(.usage(line))
+            case let w?:
+                guard words.count == 1 else { return .failure(.usage(line)) }
+                return BracketKnob.named(w).map { .success(.bracket(.open($0))) } ?? .failure(.badValue("knob", words[0]))
+            case nil: return .failure(.usage(line))
+            }
+        case "rack":
+            guard words.count == 1 else { return .failure(.usage(line)) }
+            return RackPlace(rawValue: words[0].lowercased()).map { .success(.rack($0)) } ?? .failure(.badValue("place", words[0]))
         default:
             switch words.first {
             case nil: return .success(.library(.status, confirmed: false))
@@ -259,6 +378,14 @@ package enum GestureOrder: Equatable, Sendable {
             }
         }
     }
+}
+
+// MARK: - The panes of Settings
+
+/// **The Settings window's four panes**, in the order of its tabs, by the word `settings` takes — the window draws them
+/// (`SettingsWindow.Pane`) from this one list.
+package enum SettingsPane: String, CaseIterable, Sendable {
+    case general, macs, lab, advanced
 }
 
 // MARK: - A Mac by name

@@ -120,12 +120,14 @@ package final class MossImageDiT: BoundaryRecording, PhaseTiming {
     /// bound of precision, which the tiled kernels keep too until a check lifts it) — the memory need reads the same function.
     package static func attentionAssignment(_ plan: CapacityPlan, sequence: Int, heads: Int, headDim: Int) -> AttentionAssignment {
         let a = plan.assign(AttentionKey(sequence: sequence, heads: heads, headDim: headDim))
-        return (a.usesTiles || a.splits) && sequence >= headSplitRows ? a : .graph
+        return (a.usesTiles || a.splits) && sequence >= headSplitRows ? a : AttentionAssignment.graph.normRope(onGPU: a.normRopeOnGPU)
     }
     package static let headSplitRows = 2048
 
     private let x, normed, q, k, v, merged, o, h1, h2: UnsafeMutablePointer<Float>
     private let reserve, tokens, projected, freqs, textIn, modulationSlot: UnsafeMutablePointer<Float>
+    /// The block's two norm weights where the GPU's modulated norm reads them — only where the denoiser streams (`blockStreamed`).
+    private let norms: UnsafeMutablePointer<Float>?
     /// The floats each slice reserves, by address: a Metal wrapper is always made at the slice's size.
     private let reserved: [UnsafeMutablePointer<Float>: Int]
     private var reserveCapacity: Int { config.dim * 2 * config.hidden }
@@ -176,6 +178,7 @@ package final class MossImageDiT: BoundaryRecording, PhaseTiming {
         merged = slot("merged"); o = slot("o"); h1 = slot("h1"); h2 = slot("h2")
         modulationSlot = slot("modulation"); reserve = slot("reserve"); tokens = slot("tokens")
         projected = slot("projected"); freqs = slot("freqs"); textIn = slot("textIn")
+        norms = slots["norms"]
         self.lora = r > 0 ? lora : nil
         if let lora, r > 0 {
             let unapplied = lora.rankPerTarget.keys.filter { !MossImageDiT.appliesLoRA($0) }.sorted()
@@ -386,7 +389,8 @@ package final class MossImageDiT: BoundaryRecording, PhaseTiming {
 
     /// A main block: attention then SITU feed-forward, modulated by the shared vectors.
     private func block(_ layer: Int, rows n: Int, text t: Int) throws {
-        let d = config.dim, f = config.hidden, heads = config.heads, dh = config.headDim
+        if try blockStreamed(layer, rows: n) { return }
+        let d = config.dim, f = config.hidden
         let prefix = MossImageDiT.layerPrefix(layer)
         let tag: String? = recordBoundaries && layer == 0 ? "block0_" : nil
         let m = modulationSlot
@@ -401,13 +405,8 @@ package final class MossImageDiT: BoundaryRecording, PhaseTiming {
             recordRows("block0_k_out", k, width: d, text: t)
             recordRows("block0_v_out", v, width: d, text: t)
         }
-        try headNorm(prefix + "q_norm.weight", q, rows: n * heads)
-        try headNorm(prefix + "k_norm.weight", k, rows: n * heads)
-        if tag != nil { recordRows("block0_q_norm_out", q, width: d, text: t) }
-        timed("rope") {
-            MossImageRope.apply(q, freqs: freqs, sequence: n, heads: heads, headDim: dh)
-            MossImageRope.apply(k, freqs: freqs, sequence: n, heads: heads, headDim: dh)
-        }
+        try headNormRope(prefix + "q_norm.weight", prefix + "k_norm.weight", rows: n,
+                         between: tag == nil ? nil : { self.recordRows("block0_q_norm_out", self.q, width: d, text: t) })
         try attend(rows: n)
         try linearGPU(prefix + "proj.o.weight", a: merged, into: o, m: n, k: d, n: d)
         if tag != nil { recordRows("block0_o_out", o, width: d, text: t) }
@@ -432,9 +431,119 @@ package final class MossImageDiT: BoundaryRecording, PhaseTiming {
         }
     }
 
+    // MARK: - the block as one stream of GPU work
+
+    private lazy var normGPU: MossImageNormGPU? = try? MossImageNormGPU(device: gemm.device, queue: gemm.queue)
+
+    /// **A main block as one stream of GPU work** (`GPUStream`, `SILICONED_STREAM`), on the model of Z-Image's `Block.forwardStreamed`:
+    /// the two modulated norms on the GPU (`MossImageNormGPU`), the products' bf16 weights read in place where the map allows it
+    /// (`WeightProducts`), the ANE's rows beside them waited for on the GPU (`GPUStream.neuralEngine`, not a `DispatchGroup` on the CPU), the
+    /// LoRA's stack queued (`GEMM.lora`), the QK-norm and RoPE chained to the tiled attention, SITU and the gated residuals queued; one
+    /// drain, at the block's end. Not the CPU norms' bits (the sum's order): judged against the oracle. `false` where it does not run (a
+    /// boundary recorded inside the block, a LoRA product the plan shares with a CPU engine, no GPU kernel): the block runs as before.
+    ///
+    /// What the CPU still does inside the block, and why: it widens the norms' and the QK-norm's weights (into the `norms` slot and a local
+    /// array, which no queued work reads yet — never the reserve, which the queued products' rounded operands occupy); and where the plan
+    /// gives the attention to the graph or to a cut by heads (below `headSplitRows`, at 512²), or the QK-norm to the CPU, it drains before
+    /// them — they wait on their own, or read Q and K on the CPU.
+    private func blockStreamed(_ layer: Int, rows n: Int) throws -> Bool {
+        // Block 0 records inside itself (`block0_*`); the others' outputs are read after the block's drain (`recordedBlocks`).
+        guard GPUStream.policy != .off, !(recordBoundaries && layer == 0), let norms, let normGPU else { return false }
+        let d = config.dim, f = config.hidden, heads = config.heads, dh = config.headDim
+        let prefix = MossImageDiT.layerPrefix(layer)
+        if let lora {
+            // `WeightProducts.lora`: a stack the plan shares with the AMX or the ANE accumulates through the reserve on the CPU.
+            let shapes = [(d, d), (d, d), (d, d), (d, d), (d, 2 * f), (f, d)]
+            for (module, (k, out)) in zip(MossImageDiT.blockLinears, shapes) {
+                let r = lora.rank(prefix + module)
+                guard r == 0 || (gemm.runsOnGPUAlone(k: k, n: r, m: n, weight: .loraDown)
+                                 && gemm.runsOnGPUAlone(k: r, n: out, m: n, weight: .loraUp)) else { return false }
+            }
+        }
+        let cut = MossImageDiT.attentionAssignment(gemm.plan, sequence: n, heads: heads, headDim: dh)
+        var tiled: TiledAttention?
+        if cut.usesTiles, !cut.splits {
+            tiled = tiles[n] ?? TiledAttention.make(cut, device: gemm.device, queue: gemm.queue, heads: heads, sequence: n, headDim: dh)
+            tiles[n] = tiled
+        }
+        let pass = cut.normRopeOnGPU && QKNormRope.runs(headDim: dh) ? QKNormRope.shared(device: gemm.device, queue: gemm.queue) : nil
+
+        let stream = gemm.queue.stream
+        stream.drain()                                       // nothing of the block before may still read the norms' slot
+        let m = modulationSlot
+        let mb = try slice(m), xb = try slice(x), ob = try slice(o), nb = try slice(normed), wb = try slice(norms)
+        let (h1b, h2b) = (try slice(h1), try slice(h2))
+        let table = try gemm.region(freqs, bytes: n * dh * 4, name: "freqs")
+        let eps = MossImageDiT.eps
+        if ProcessInfo.processInfo.environment["SILICONED_STREAM_WAIT"] == nil { stream.isOn = true }
+        defer { stream.isOn = false }                        // drains: the next block, the head, read `x` after it
+
+        // ── attention: shift_a m[0], scale_a m[1], gate_a m[2]
+        try artifact.materialize(prefix + "norm1.weight", into: norms, capacity: d)
+        // The norms and the SITU write the next products' operand rounded too, where they read it so (`WeightProducts.RoundedOperand`);
+        // the norms, quantized to int8 for W8A8.
+        let normed1 = try products.roundedOperand(prefix + "proj.q.weight", m: n, k: d, n: d, quantizes: true)
+        timed("norm") {
+            normGPU.normModulate((xb, 0), weight: (wb, 0), scale: (mb, d), shift: (mb, 0), into: (nb, 0), rows: n, columns: d, eps: eps,
+                                 rounded: normed1)
+        }
+        try linearGPU(prefix + "proj.q.weight", a: normed, into: q, m: n, k: d, n: d, rounded: normed1)
+        try linearGPU(prefix + "proj.k.weight", a: normed, into: k, m: n, k: d, n: d, rounded: normed1)
+        try linearGPU(prefix + "proj.v.weight", a: normed, into: v, m: n, k: d, n: d, rounded: normed1)
+        var weights: [[Float]] = []
+        for name in [prefix + "q_norm.weight", prefix + "k_norm.weight"] {
+            var w = [Float](repeating: 0, count: dh)
+            _ = try w.withUnsafeMutableBufferPointer { try artifact.materialize(name, into: $0) }
+            weights.append(w)
+        }
+        let queued = tiled != nil && pass != nil && stream.isOn
+        if !queued { stream.drain() }                        // the graph and the cut by heads wait on their own; the CPU's pass reads Q, K
+        let clock = ProductLedger.pass(sequence: n, heads: heads, headDim: dh)
+        // Where the tiled attention follows, Q and K written rounded straight into its copies, the fp32 left unwritten: it reads
+        // nothing else (`attend`, the same instance).
+        let copies = pass != nil && TiledAttention.fusesRounding ? tiled?.operands : nil
+        if let pass {
+            let (qb, kb) = (try slice(q), try slice(k))
+            let precision = tiled?.precision ?? .fp32
+            timed("qk-norm + rope") {
+                pass.run([.init(qb, heads: heads, weight: weights[0], rounded: copies.map { ($0.q, precision) }, keepsFP32: false),
+                          .init(kb, heads: heads, weight: weights[1], rounded: copies.map { ($0.k, precision) }, keepsFP32: false)],
+                         rows: n, headDim: dh, eps: eps, freqs: table, layout: .halfSplit, wait: !queued)
+            }
+        } else {
+            for (w, tensor) in zip(weights, [q, k]) {
+                timed("qk-norm + rope") {
+                    Ops.rmsNormRope(tensor, weight: w, freqs: freqs, sequence: n, heads: heads, headDim: dh, eps: eps, halfSplit: true)
+                }
+            }
+        }
+        clock?.finish()
+        // The attention writes `proj.o`'s operand rounded too, where it reads it so: no pass of the product's own.
+        let attended = tiled?.writesRounded == true ? try products.roundedOperand(prefix + "proj.o.weight", m: n, k: d, n: d) : nil
+        try attend(rows: n, prerounded: copies == nil ? [] : [.q, .k], rounded: attended)
+        try linearGPU(prefix + "proj.o.weight", a: merged, into: o, m: n, k: d, n: d, rounded: attended)
+        timed("residual") { elementwise.residual((xb, 0), plus: (ob, 0), carries: (mb, 2 * d), rows: n, columns: d) }
+
+        // ── feed-forward: shift_f m[3], scale_f m[4], gate_f m[5]
+        try artifact.materialize(prefix + "norm2.weight", into: norms + d, capacity: d)
+        let normed2 = try products.roundedOperand(prefix + "proj.ffn_up_gate.weight", m: n, k: d, n: 2 * f, quantizes: true)
+        timed("norm") {
+            normGPU.normModulate((xb, 0), weight: (wb, d), scale: (mb, 4 * d), shift: (mb, 3 * d), into: (nb, 0), rows: n, columns: d,
+                                 eps: eps, rounded: normed2)
+        }
+        try linearGPU(prefix + "proj.ffn_up_gate.weight", a: normed, into: h1, m: n, k: d, n: 2 * f, rounded: normed2)
+        let gated = try products.roundedOperand(prefix + "proj.ffn_down.weight", m: n, k: f, n: d)
+        timed("situ") {
+            kernels.situ(hidden: (h1b, 0), gate: (h1b, f), into: (h2b, 0), rows: n, columns: f, strides: (2 * f, 2 * f, f), rounded: gated)
+        }
+        try linearGPU(prefix + "proj.ffn_down.weight", a: h2, into: o, m: n, k: f, n: d, rounded: gated)
+        timed("residual") { elementwise.residual((xb, 0), plus: (ob, 0), carries: (mb, 5 * d), rows: n, columns: d) }
+        return true
+    }
+
     /// A text block: plain pre-norm transformer block with biases, over the text rows `[0, T)` alone.
     private func textBlock(_ index: Int, rows t: Int) throws {
-        let d = config.dim, f = config.hidden, heads = config.heads
+        let d = config.dim, f = config.hidden
         let prefix = "text_embedder.blocks.\(index)."
         // ── attention: the fused QKV, split row by row into q, k, v ─────────────────────────
         try plainNorm(prefix + "norm1.weight", x, rows: t)
@@ -449,12 +558,7 @@ package final class MossImageDiT: BoundaryRecording, PhaseTiming {
                 (vOut + row * d).update(from: source + 2 * d, count: d)
             }
         }
-        try headNorm(prefix + "q_norm.weight", q, rows: t * heads)
-        try headNorm(prefix + "k_norm.weight", k, rows: t * heads)
-        timed("rope") {
-            MossImageRope.apply(q, freqs: freqs, sequence: t, heads: heads, headDim: config.headDim)
-            MossImageRope.apply(k, freqs: freqs, sequence: t, heads: heads, headDim: config.headDim)
-        }
+        try headNormRope(prefix + "q_norm.weight", prefix + "k_norm.weight", rows: t, between: nil)
         try attend(rows: t)
         try linearGPU(prefix + "proj.weight", a: merged, into: o, m: t, k: d, n: d)
         try addBias(prefix + "proj.bias", to: o, rows: t, columns: d)
@@ -496,6 +600,57 @@ package final class MossImageDiT: BoundaryRecording, PhaseTiming {
     }
 
     /// QK-Norm: RMSNorm over `head_dim`.
+    /// **QK-Norm then the half-split RoPE** over `rows` rows, Q and K on all the heads: on the CPU in one pass per row
+    /// (`Ops.rmsNormRope(halfSplit:)`, the same operations in the same order as `headNorm` then `MossImageRope.apply`, so the same bits),
+    /// or on the GPU, chained to the attention, where the plan says (`QKNormRope`, `.halfSplit`). `between`: a boundary recorded
+    /// after the norm and before the rotation — two passes then, waited for.
+    private func headNormRope(_ normQ: String, _ normK: String, rows n: Int, between: (() -> Void)?) throws {
+        let heads = config.heads, dh = config.headDim
+        let cut = MossImageDiT.attentionAssignment(gemm.plan, sequence: n, heads: heads, headDim: dh)
+        let clock = ProductLedger.pass(sequence: n, heads: heads, headDim: dh)
+        defer { clock?.finish() }
+        if cut.normRopeOnGPU, QKNormRope.runs(headDim: dh), let pass = QKNormRope.shared(device: gemm.device, queue: gemm.queue) {
+            var weights: [[Float]] = []
+            for name in [normQ, normK] {
+                try artifact.materialize(name, into: reserve, capacity: reserveCapacity)
+                weights.append(Array(UnsafeBufferPointer(start: reserve, count: dh)))
+            }
+            let (qb, kb) = (try slice(q), try slice(k))
+            let table = try gemm.region(freqs, bytes: n * dh * 4, name: "freqs")
+            let eps = MossImageDiT.eps
+            timed("qk-norm + rope") {
+                if let between {
+                    pass.run([.init(qb, heads: heads, weight: weights[0]), .init(kb, heads: heads, weight: weights[1])],
+                             rows: n, headDim: dh, eps: eps, freqs: nil, layout: .halfSplit)
+                    between()
+                    pass.run([.init(qb, heads: heads, weight: nil), .init(kb, heads: heads, weight: nil)],
+                             rows: n, headDim: dh, eps: eps, freqs: table, layout: .halfSplit)
+                } else {
+                    pass.run([.init(qb, heads: heads, weight: weights[0]), .init(kb, heads: heads, weight: weights[1])],
+                             rows: n, headDim: dh, eps: eps, freqs: table, layout: .halfSplit, wait: cut.splits)
+                }
+            }
+            return
+        }
+        if let between {
+            try headNorm(normQ, q, rows: n * heads)
+            try headNorm(normK, k, rows: n * heads)
+            between()
+            timed("rope") {
+                MossImageRope.apply(q, freqs: freqs, sequence: n, heads: heads, headDim: dh)
+                MossImageRope.apply(k, freqs: freqs, sequence: n, heads: heads, headDim: dh)
+            }
+            return
+        }
+        for (name, tensor) in [(normQ, q), (normK, k)] {
+            try artifact.materialize(name, into: reserve, capacity: reserveCapacity)
+            timed("qk-norm + rope") {
+                Ops.rmsNormRope(tensor, weight: reserve, freqs: freqs, sequence: n, heads: heads, headDim: dh, eps: MossImageDiT.eps,
+                                halfSplit: true)
+            }
+        }
+    }
+
     private func headNorm(_ name: String, _ tensor: UnsafeMutablePointer<Float>, rows: Int) throws {
         try artifact.materialize(name, into: reserve, capacity: reserveCapacity)
         timed("norm") { Ops.rmsNorm(tensor, weight: reserve, into: tensor, rows: rows,
@@ -507,9 +662,12 @@ package final class MossImageDiT: BoundaryRecording, PhaseTiming {
         Ops.addBias(c, bias: reserve, rows: rows, columns: columns)
     }
 
-    private func attend(rows n: Int) throws {
+    /// `rounded`: the output also written rounded where `proj.o` reads its operand so (`TiledAttention.run(…rounded:)`) — handed only
+    /// where the block found the tiles (the same instance, `tiles[n]`).
+    private func attend(rows n: Int, prerounded: TiledAttention.Prerounded = [], rounded: WeightProducts.RoundedOperand? = nil) throws {
         let qb = try slice(q), kb = try slice(k), vb = try slice(v), ob = try slice(merged)
         let cut = MossImageDiT.attentionAssignment(gemm.plan, sequence: n, heads: config.heads, headDim: config.headDim)
+        precondition(rounded == nil || (cut.usesTiles && !cut.splits), "the output rounded by an attention that is not the tiles")
         if cut.splits {
             let split: HeadSplitAttention
             if let s = splits[n] { split = s } else {
@@ -529,10 +687,13 @@ package final class MossImageDiT: BoundaryRecording, PhaseTiming {
                                                         headDim: config.headDim)
             if let tiled {
                 tiles[n] = tiled
-                timed("sdpa wall") { ownTimings["sdpa GPU", default: 0] += tiled.run(q: qb, k: kb, v: vb, into: ob) }
+                timed("sdpa wall") {
+                    ownTimings["sdpa GPU", default: 0] += tiled.run(q: qb, k: kb, v: vb, into: ob, prerounded: prerounded, rounded: rounded?.bf16)
+                }
                 return
             }
         }
+        precondition(rounded == nil, "the output rounded by an attention that is not the tiles")
         let attention: Attention
         if let a = attentions[n] { attention = a } else {
             attention = Attention(device: gemm.device, queue: gemm.queue, heads: config.heads,
@@ -544,10 +705,10 @@ package final class MossImageDiT: BoundaryRecording, PhaseTiming {
 
     /// `C[m, n] = A[m, k] · W`, W laid out `[k, n]` by the forge. Both buffers wrapped at their slice's size.
     private func linearGPU(_ name: String, a: UnsafeMutablePointer<Float>, into c: UnsafeMutablePointer<Float>,
-                           m: Int, k: Int, n: Int) throws {
+                           m: Int, k: Int, n: Int, rounded: WeightProducts.RoundedOperand? = nil) throws {
         let ab = try gemm.wrap(UnsafeMutableRawPointer(a), bytes: reserved[a]! * 4, name: "a")
         let cb = try gemm.wrap(UnsafeMutableRawPointer(c), bytes: reserved[c]! * 4, name: "c")
-        try products.linear(name, a: ab, c: cb, m: m, k: k, n: n)
+        try products.linear(name, a: ab, c: cb, m: m, k: k, n: n, rounded: rounded)
     }
 }
 
@@ -737,26 +898,52 @@ package final class MossImageKernels {
         float value = 25.0f * precise::tanh(hv / 25.0f);
         out[p.y * strides.z + p.x] = gate * value;
     }
+
+    \(BFloatKernels.roundingSource)
+
+    // The same, and the value rounded to bf16 where the next product reads its operand (`WeightProducts.RoundedOperand`), at `out`'s
+    // place (the operand is `out`'s compact rows).
+    kernel void situ_rounded(device const float *h [[buffer(0)]], device const float *g [[buffer(1)]],
+                             device float *out [[buffer(2)]], constant uint &cols [[buffer(3)]],
+                             constant uint4 &strides [[buffer(4)]], constant uint2 &offsets [[buffer(5)]],
+                             device ushort *r [[buffer(6)]], uint2 p [[thread_position_in_grid]]) {
+        #pragma METAL fp contract(off)
+        if (p.x >= cols) return;
+        float hv = h[offsets.x + p.y * strides.x + p.x];
+        float gv = g[offsets.y + p.y * strides.y + p.x];
+        float gate = 4.0f * precise::tanh(gv / 4.0f) * precise::divide(1.0f, 1.0f + precise::exp(-gv));
+        float value = 25.0f * precise::tanh(hv / 25.0f);
+        float y = gate * value;
+        out[p.y * strides.z + p.x] = y;
+        r[p.y * strides.z + p.x] = ushort(rounded(y));
+    }
     """
 
     private let queue: MTLCommandQueue
-    private let pipeline: MTLComputePipelineState
+    private let pipeline, roundedPipeline: MTLComputePipelineState
 
     package init(device: MTLDevice, queue: MTLCommandQueue) throws {
         self.queue = queue
         let options = MTLCompileOptions()
         options.mathMode = .safe
         let library = try device.makeLibrary(source: Self.source, options: options)
-        guard let function = library.makeFunction(name: "situ") else { throw GEMM.Failure.noDevice }
+        guard let function = library.makeFunction(name: "situ"), let rounded = library.makeFunction(name: "situ_rounded") else {
+            throw GEMM.Failure.noDevice
+        }
         pipeline = try device.makeComputePipelineState(function: function)
+        roundedPipeline = try device.makeComputePipelineState(function: rounded)
     }
 
     /// `out[r, j] = SITU(hidden[r, j], gate[r, j])` for `rows × columns`; each operand is a buffer and an offset
-    /// in floats, `strides` the row strides in floats of `(hidden, gate, out)`. Returns the GPU time.
+    /// in floats, `strides` the row strides in floats of `(hidden, gate, out)`. Returns the GPU time — 0 on the stream (`GPUStream`),
+    /// where it is queued behind the products and waited for at the drain.
     @discardableResult
+    /// `rounded`: `out` also written rounded to bf16 there, as the next product reads its operand (`WeightProducts.roundedOperand`).
     package func situ(hidden: ElementwiseGPU.BufferSlice, gate: ElementwiseGPU.BufferSlice, into out: ElementwiseGPU.BufferSlice,
-                      rows: Int, columns: Int, strides: (Int, Int, Int)) -> Double {
-        guard rows > 0, columns > 0, let commands = queue.makeCommandBuffer(),
+                      rows: Int, columns: Int, strides: (Int, Int, Int), rounded operand: WeightProducts.RoundedOperand? = nil) -> Double {
+        let rounded = operand?.bf16                        // an int8 operand is its first product's to quantize
+        precondition(rounded == nil || strides.2 == columns, "the rounded operand is out's compact rows")
+        guard rows > 0, columns > 0, case let commands = queue.checkedCommandBuffer(),
               let encoder = commands.makeComputeCommandEncoder() else {
             Attention.report("GPU SITU: no command buffer, so nothing ran")
             return 0
@@ -764,7 +951,8 @@ package final class MossImageKernels {
         var cols = UInt32(columns)
         var s = SIMD4<UInt32>(UInt32(strides.0), UInt32(strides.1), UInt32(strides.2), 0)
         var offsets = SIMD2<UInt32>(UInt32(hidden.offset), UInt32(gate.offset))
-        encoder.setComputePipelineState(pipeline)
+        encoder.setComputePipelineState(rounded == nil ? pipeline : roundedPipeline)
+        if let rounded { encoder.setBuffer(rounded.buffer, offset: rounded.offset, index: 6) }
         encoder.setBuffer(hidden.buffer, offset: 0, index: 0)
         encoder.setBuffer(gate.buffer, offset: 0, index: 1)
         encoder.setBuffer(out.buffer, offset: out.offset * 4, index: 2)
@@ -774,8 +962,6 @@ package final class MossImageKernels {
         encoder.dispatchThreads(MTLSize(width: columns, height: rows, depth: 1),
                                 threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
         encoder.endEncoding()
-        commands.commit()
-        commands.waitUntilCompleted()
-        return Attention.verdict(commands, what: "GPU SITU")
+        return commands.commitSettled(label: "elementwise GPU", what: "GPU SITU")
     }
 }

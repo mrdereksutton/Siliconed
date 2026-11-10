@@ -75,8 +75,12 @@ extension MemoryNeed {
         package let ditUnitStaging: Int
         /// Each DiT layer's bytes in the map and the map's, from the header (`Artifact.layerSpans`): what the stream reads per evaluation.
         package let ditLayerSpans: [Int], ditMapBytes: Int
+        /// What the DiT's map costs read in place (`MemoryNeed.inPlaceBytes`, `Request.mapInPlace`).
+        package let ditInPlaceBytes: Int
         /// The largest encoder layer's staging run: what one of its buffers holds.
         package let encoderLayerStaging: Int
+        /// What the encoder costs kept (`MemoryNeed.keptEncoderBytes(header:)`, `Request.encoderKept`).
+        package let encoderKeptBytes: Int
         /// The largest timestep weight the tabulation widens (`Krea2Exact.linears`: a weight not
         /// published in fp32); 0 when the three are fp32.
         package let timestepWidening: Int
@@ -101,7 +105,9 @@ extension MemoryNeed {
                                                  fileSize: ditSize)
             ditLayerSpans = Artifact.layerSpans(header: dit, prefixes: (0..<config.layers).map(Krea2DiT.layerPrefix), fileSize: ditSize)
             ditMapBytes = Artifact.mapBytes(header: dit)
+            ditInPlaceBytes = MemoryNeed.inPlaceBytes(header: dit, fileSize: ditSize)
             ditLayerStaging = ditStaging; encoderLayerStaging = encoderStaging
+            encoderKeptBytes = MemoryNeed.keptEncoderBytes(header: encoder)
             timestepWidening = Krea2DiT.timestepWidening(header: dit, config: config)
             encoderRotationScratch = Widen.rotationScratchBytes(header: encoder, prefixes: TextEncoder.layerPrefixes(encoderConfig))
             ditRotationScratch = Widen.rotationScratchBytes(header: dit, prefixes: (0..<config.layers).map(Krea2DiT.layerPrefix))
@@ -208,6 +214,7 @@ extension MemoryNeed {
             Term("DiT arena", Krea2DiT.arenaBytes(config: dit, latentHeight: latentHeight, latentWidth: latentWidth,
                                                   maxText: t, rank: rank)),
             Term("map staging", streamed ? TailStream.unitSlots * maps.ditUnitStaging : 0),
+            Term(inPlaceTerm, request.mapInPlace && request.mapInPlaceAvailable ? maps.ditInPlaceBytes : 0),
             Term("LoRA cache", rank > 0 ? CacheLoRA.arenaBytes(CacheLoRA.bytes(modules: modules.map { ($0.k, $0.n, rank) })) : 0),
             Term("LoRA down staging", request.loraRanks.count > 1
                 ? LoRA.downBytes(k: modules.map(\.k).max() ?? 0, rank: request.loraRanks.max() ?? 0) : 0),
@@ -236,13 +243,16 @@ extension MemoryNeed {
         let denoising = Phase(kind: .denoising, terms: terms)
 
         // ── decoding: the decoder's two heaps and the image it returns; the latent it reads crosses ──
-        let plan = krea2DecoderPlans([latentHeight, latentWidth]) {
-            AnimaVAE.plan(latentHeight: latentHeight, latentWidth: latentWidth)
+        let half = VAEPrecision.half(plan: request.ditPlan, publishedInBF16: AnimaVAE.publishedInBF16)
+        let plan = krea2DecoderPlans([latentHeight, latentWidth, half ? 1 : 0]) {
+            AnimaVAE.plan(latentHeight: latentHeight, latentWidth: latentWidth, half: half)
         }
         let decoding = Phase(kind: .decoding, terms: vae("Qwen-Image decoder", plan) + [batchImages(request)])
 
         return MemoryNeed(phases: [textPhase] + references + [fusionPhase, denoising, decoding], crossing: crossing,
                           base: request.base)
+            .keeping(request, encoder: maps.encoderKeptBytes)
+            .carryingSurfaces()
     }
 }
 

@@ -25,7 +25,7 @@ import Foundation
 ///
 /// What the formula has to know and a port by analogy with Z-Image would miss:
 ///
-///   - **the DiT's map is never in the need, whatever its type** — Standard (bf16), Compact (Q8_0),
+///   - **the DiT's map is never in the need, whatever its type** — Standard (bf16), Compact (int8 convrot),
 ///     Light (Q4_K_M): `AnimaDiT` reads it through the page cache (the prefetcher's `madvise`, no
 ///     streamed tail, no staging buffer) and widens each weight into one fp32 `reserve` of `d·h`. The
 ///     three versions have **the same denoising need**; the map's type shows only through the text
@@ -67,8 +67,13 @@ extension MemoryNeed {
         /// The largest tensor's run in the encoder's layers (`Artifact.largestRun`): what one of its buffers holds.
         package let encoderLayerStaging: Int
         /// What widening the DiT's largest int8 convrot weight allocates outside every arena
-        /// (`Widen.rotationScratchBytes`): an imported Comfy-style convrot DiT; 0 otherwise.
+        /// (`Widen.rotationScratchBytes`): the Compact's int8 convrot, or an imported Comfy-style one; 0 otherwise.
         package let ditRotationScratch: Int
+        /// What the DiT's map costs read in place (`MemoryNeed.inPlaceBytes`, `Request.mapInPlace`): its header's extent.
+        package let ditInPlaceBytes: Int
+        /// What the encoder costs kept (`MemoryNeed.keptEncoderBytes(header:)`, `Request.encoderKept`), and every tensor of the
+        /// DiT's map (`Artifact.mapBytes`).
+        package let encoderKeptBytes: Int, ditMapBytes: Int
         /// The formats the two maps' products are published in (`Artifact.weightFormat`): the plan's keys.
         package let ditFormat: CapacityClasses.WeightFormat, encoderFormat: CapacityClasses.WeightFormat
 
@@ -81,6 +86,8 @@ extension MemoryNeed {
             guard staging > 0 else { return nil }
             self.dit = AnimaDiT.Config(header: dit); self.encoder = config; encoderLayerStaging = staging
             ditRotationScratch = Widen.rotationScratchBytes(header: dit)
+            ditInPlaceBytes = MemoryNeed.inPlaceBytes(header: dit, fileSize: .max)
+            encoderKeptBytes = MemoryNeed.keptEncoderBytes(header: encoder); ditMapBytes = Artifact.mapBytes(header: dit)
             ditFormat = Artifact.weightFormat(header: dit); encoderFormat = Artifact.weightFormat(header: encoder)
         }
 
@@ -169,6 +176,7 @@ extension MemoryNeed {
             // The velocity the DiT returns (`forward`'s `[C, h, w]`); Euler keeps no history.
             Term("sampler", latent + request.solver.historyBytes(count: latent / f)),
             Term("DiT rotation scratch", maps.ditRotationScratch),
+            Term(inPlaceTerm, request.mapInPlace && request.mapInPlaceAvailable ? maps.ditInPlaceBytes : 0),
         ] + attention("self-attention", heads: dit.heads, rows: s, keys: s, headDim: dit.headDim, causal: false,
                       assignment: request.ditPlan.assign(AttentionKey(sequence: s, heads: dit.heads, headDim: dit.headDim), flash: true),
                       threads: request.threads)
@@ -183,11 +191,14 @@ extension MemoryNeed {
                  plan: request.ditPlan, weight: maps.ditFormat))
 
         // ── decoding: the decoder's two heaps and the image it returns; the latent it reads crosses ──
-        let plan = animaDecoderPlans([latentHeight, latentWidth]) {
-            AnimaVAE.plan(latentHeight: latentHeight, latentWidth: latentWidth)
+        let half = VAEPrecision.half(plan: request.ditPlan, publishedInBF16: AnimaVAE.publishedInBF16)
+        let plan = animaDecoderPlans([latentHeight, latentWidth, half ? 1 : 0]) {
+            AnimaVAE.plan(latentHeight: latentHeight, latentWidth: latentWidth, half: half)
         }
         let decoding = Phase(kind: .decoding, terms: vae("Qwen-Image decoder", plan) + [batchImages(request)])
 
         return MemoryNeed(phases: [textPhase] + references + [denoising, decoding], crossing: crossing, base: request.base)
+            .keeping(request, encoder: maps.encoderKeptBytes)
+            .carryingSurfaces()
     }
 }

@@ -67,6 +67,10 @@ final class PromptWriterLabTests: XCTestCase {
             XCTAssertTrue(text.contains("unless the user wrote it"), "\(family)")
             XCTAssertTrue(text.contains("even a single word"), "\(family)")
         }
+        // Z-Image's ran into « no visible wear on bike … » up to the loop guard (5/11/2026): the same rule, in second place.
+        let z = PromptWriterInstructions.instruction(for: .zImage, .rewrite)
+        XCTAssertTrue(z.contains("never what is absent") && z.contains("unless the user wrote it"))
+        XCTAssertLessThan(z.range(of: "never what is absent")!.lowerBound, z.range(of: "Where the text leaves them open")!.lowerBound)
     }
 
     func testDescribeNamesWhatIsVisiblePlainly() {
@@ -74,6 +78,41 @@ final class PromptWriterLabTests: XCTestCase {
             let text = PromptWriterInstructions.instruction(for: family, .describe)
             XCTAssertTrue(text.contains("nudity and violence included"), "\(family)")
         }
+    }
+
+    /// **The user's own instruction** (Settings › Prompt Lab): theirs is sent for its family and gesture only; equal to ours, it
+    /// is not kept (it would stop following ours); blank, it stays in the field but ours is sent; a key this version
+    /// does not know is dropped on reading.
+    func testTheUsersInstructionReplacesOursForItsFamilyAndGestureOnly() {
+        typealias I = PromptWriterInstructions
+        var edits = I.Edits()
+        XCTAssertEqual(edits.instruction(for: .krea2, .rewrite), I.instruction(for: .krea2, .rewrite))
+        edits.set("Rewrite it as a haiku.", for: .krea2, .rewrite)
+        XCTAssertEqual(edits.instruction(for: .krea2, .rewrite), "Rewrite it as a haiku.")
+        XCTAssertTrue(edits.isEdited(.krea2, .rewrite))
+        XCTAssertEqual(edits.sent(.krea2, .rewrite), "Rewrite it as a haiku.")
+        XCTAssertEqual(edits.instruction(for: .krea2, .describe), I.instruction(for: .krea2, .describe))
+        XCTAssertEqual(edits.instruction(for: .zImage, .rewrite), I.instruction(for: .zImage, .rewrite))
+        XCTAssertNil(edits.sent(.zImage, .rewrite))
+
+        // Blank: the field keeps it, ours is sent.
+        edits.set(" \n", for: .anima, .describe)
+        XCTAssertTrue(edits.isEdited(.anima, .describe))
+        XCTAssertEqual(edits.text(.anima, .describe), " \n")
+        XCTAssertNil(edits.sent(.anima, .describe))
+        XCTAssertEqual(edits.instruction(for: .anima, .describe), I.instruction(for: .anima, .describe))
+
+        // Ours typed back, or restored: not theirs any more.
+        edits.set(I.instruction(for: .krea2, .rewrite), for: .krea2, .rewrite)
+        XCTAssertFalse(edits.isEdited(.krea2, .rewrite))
+        edits.set(nil, for: .anima, .describe)
+        XCTAssertEqual(edits.texts, [:])
+
+        // Read back from the preferences: what this version cannot send is dropped.
+        let read = I.Edits(["moss-image.describe": "Mine.", "z-image.rewrite": I.instruction(for: .zImage, .rewrite),
+                            "flux.rewrite": "gone", "krea2.caption": "gone"])
+        XCTAssertEqual(read.texts, ["moss-image.describe": "Mine."])
+        XCTAssertEqual(I.Edits.key(.qwenImage21, .describe), "qwen-image-2.1.describe")
     }
 
     // ── the image ──────────────────────────────────────────────────────────────────────────────

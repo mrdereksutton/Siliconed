@@ -1,3 +1,4 @@
+import Metal
 import Darwin
 import Foundation
 
@@ -72,6 +73,11 @@ package final class Artifact {
         /// layout: `N` rows (outputs), each `K / values` blocks in file order. The engine transposes
         /// while it dequantizes. No `scale` entry: the scales are inside the blocks.
         case q4_0, q4_1, q5_0, q5_1, q4_k, q5_k, q6_k
+        /// **Siliconed's own 4 and 5 bits** (`SQ`): groups of 16 that decode to an exact int8 under one fp32 scale per output. The
+        /// map's shape is `[K, N]`, the bytes stay by output row as the quantizer wrote them (`SQ.rowBytes`: the row's codes, then
+        /// its group bytes), then the fp32 scale `[N]` (`scale`) and the convrot rotation of 256 (`rotation`) — the int8 convrot of a
+        /// Compact once decoded (`SQ.decodeTransposed`), never widened in the map.
+        case sq4, sq5
         /// Bytes per value — **not for a packed type**, whose values have no size of their own
         /// (`packedBlock`); every caller branches on that first.
         package var size: Int {
@@ -81,8 +87,12 @@ package final class Artifact {
             case .int8, .float8_e4m3: return 1
             case .q4_0, .q4_1, .q5_0, .q5_1, .q4_k, .q5_k, .q6_k:
                 preconditionFailure("\(self): packed blocks, no size per value")
+            case .sq4, .sq5:
+                preconditionFailure("\(self): SQ groups, no size per value")
             }
         }
+        /// The bits of an SQ code (4 or 5); `nil`: not SQ.
+        package var sqBits: Int? { self == .sq4 ? 4 : self == .sq5 ? 5 : nil }
         /// An 8-bit type, with a `scale` beside its values. Not the packed GGUF types.
         package var isQuantized: Bool { self == .int8 || self == .float8_e4m3 }
         /// One ggml block: its values along a row and its bytes (`ggml-common.h`: `block_q4_0`…
@@ -322,6 +332,16 @@ package final class Artifact {
                 }
                 let total = (count / block.values).multipliedReportingOverflow(by: block.bytes)
                 expected = (total.partialValue, total.overflow)
+            } else if let bits = dtype.sqBits {
+                // `[K, N]`, stored as N rows of `SQ.rowBytes(K)`, then the fp32 scale `[N]`, rotated by 256.
+                guard shape.count == 2, shape[0] % SQ.rotationGroup == 0, let scale, scale.dtype == .float32,
+                      scale.shape == [shape[1]], scale.offset >= shape[1] * SQ.rowBytes(k: shape[0], bits: bits),
+                      entry["rotation"] != nil else {
+                    throw Failure.badHeader("\(name): \(raw) on \(shape) — only a `[K, N]` whose K is a multiple of 256, with its "
+                                            + "fp32 scale per column after its rows and a rotation")
+                }
+                let total = scale.offset.addingReportingOverflow(4 * shape[1])
+                expected = (total.partialValue, total.overflow)
             } else if let scale {
                 let (scaleBytes, overflow) = scale.count.multipliedReportingOverflow(by: scale.dtype.size)
                 let total = scale.offset.addingReportingOverflow(scaleBytes)
@@ -348,7 +368,7 @@ package final class Artifact {
     /// An 8-bit tensor's `scale` entry, checked against its shape: a scale read with the wrong
     /// period would give every weight a plausible, wrong factor.
     private static func scale(_ raw: Any, of name: String, shape: [Int], dtype: DType) throws -> Scale {
-        guard dtype.isQuantized, let s = raw as? [String: Any], let offset = s["offset"] as? Int,
+        guard dtype.isQuantized || dtype.sqBits != nil, let s = raw as? [String: Any], let offset = s["offset"] as? Int,
               let t = s["dtype"] as? String, let scaleType = DType(rawValue: t),
               [.bfloat16, .float16, .float32].contains(scaleType),
               let scaleShape = s["shape"] as? [Int] else {
@@ -366,7 +386,8 @@ package final class Artifact {
                     && elementCount([scaleShape[0], block!]) == shape[0]
         default: fits = false
         }
-        guard fits, offset >= count, offset % 16 == 0 else {
+        // An SQ tensor's values are fewer bytes than values: its own check, in `parse`, places the scale after its rows.
+        guard fits, offset >= (dtype.sqBits == nil ? count : 0), offset % 16 == 0 else {
             throw Failure.badHeader("\(name): a scale \(scaleShape) (block \(block.map(String.init) ?? "-")) "
                                     + "at \(offset) does not fit \(shape)")
         }
@@ -382,8 +403,8 @@ package final class Artifact {
         guard kind == "convrot" else {
             throw Failure.badHeader("\(name): rotation \"\(kind)\" unknown — refused rather than read without it")
         }
-        guard dtype == .int8, shape.count == 2, let scale, scale.block == nil, scale.shape.count <= 1,
-              Widen.isRotationGroup(group), shape[0] % group == 0 else {
+        guard dtype == .int8 || dtype.sqBits != nil && group == SQ.rotationGroup, shape.count == 2, let scale, scale.block == nil,
+              scale.shape.count <= 1, Widen.isRotationGroup(group), shape[0] % group == 0 else {
             throw Failure.badHeader("\(name): rotation convrot of group \(group) on \(dtype.rawValue) \(shape) — not read")
         }
         return Rotation(kind: kind, group: group)
@@ -393,6 +414,10 @@ package final class Artifact {
         stream = nil   // its reads finish before the descriptor closes
         through = nil
         resident = nil
+        // The GPU's hold on the pages goes before the pages do.
+        residency?.endResidency()
+        residency = nil
+        wrapped = nil
         munmap(UnsafeMutableRawPointer(mutating: base), size)
         close(descriptor)
     }
@@ -407,6 +432,57 @@ package final class Artifact {
         if let through { return through.read(name, t, page: page) }
         return base.advanced(by: t.offset)
     }
+
+    /// **The tensor's offset in the mapping, when it is read straight from it** — no tail stream, no resident copy, no read-through:
+    /// the bytes a product may read in place, wrapped (`wrappedMap`), instead of a copy into a reserve (`stage`). `nil` otherwise.
+    package func mappedOffset(_ name: String) -> Int? {
+        guard stream == nil, resident == nil, through == nil, let t = tensors[name] else { return nil }
+        return t.offset
+    }
+
+    /// **The whole mapping as one GPU buffer, not copied** (`newBuffer(bytesNoCopy:)` over the read-only file pages, rounded to the
+    /// page): made on first use for `device`, `nil` where Metal refuses it or the map is larger than a buffer may be. The map's pages
+    /// then stay clean and file-backed, never swapped (the map counts in the memory budget); what the GPU's first read of each page costs is paid
+    /// once per load.
+    package func wrappedMap(on device: MTLDevice) -> MTLBuffer? {
+        wrapLock.lock(); defer { wrapLock.unlock() }
+        if let wrapped, wrapped.device === device { return wrapped }
+        let pageSize = Int(getpagesize())
+        let length = (size + pageSize - 1) / pageSize * pageSize
+        guard length <= device.maxBufferLength,
+              let b = device.makeBuffer(bytesNoCopy: UnsafeMutableRawPointer(mutating: base), length: length,
+                                        options: .storageModeShared, deallocator: nil) else { return nil }
+        b.label = "map"
+        MetalWraps.track(b)
+        wrapped = b
+        return b
+    }
+    private var wrapped: MTLBuffer?
+    private let wrapLock = NSLock()
+
+    /// **The wrapped map made resident for the GPU now, on the calling thread** (`MapWarmup`): what the GPU's first read of the
+    /// wrapped map would otherwise cost inside the first command buffer that names it. That cost is the kernel's, not the GPU's:
+    /// the first residency of a `bytesNoCopy` buffer wires and maps **every page of it** for the GPU, whatever the command reads
+    /// (measured on the M5 Pro, 5/11, the 14.2 GB map of Qwen-Image-2.1 from a warm page cache: one page read costs 0.96 s of
+    /// system time on the committing thread and 1 ms of GPU; the whole map read again, 1 ms; from a cold cache, 2.9 s with the
+    /// file's reads). Wired pages are not in `phys_footprint` (the same measure: +0 MB). Kept until the map goes (`deinit`):
+    /// ending the residency gives back part of it (a first read after it, 0.24 s). `false` where the map cannot be wrapped.
+    @discardableResult
+    package func makeResident(on device: MTLDevice) -> Bool {
+        guard let buffer = wrappedMap(on: device) else { return false }
+        wrapLock.lock(); defer { wrapLock.unlock() }
+        if residency != nil { return true }
+        let descriptor = MTLResidencySetDescriptor()
+        descriptor.label = "map"
+        descriptor.initialCapacity = 1
+        guard let set = try? device.makeResidencySet(descriptor: descriptor) else { return false }
+        set.addAllocation(buffer)
+        set.commit()
+        set.requestResidency()
+        residency = set
+        return true
+    }
+    private var residency: MTLResidencySet?
 
     /// **Never through the page cache — for a tool that reads a whole map once** (a developer
     /// check, never the engine). Every `pointer` then returns a copy of the tensor read
@@ -477,6 +553,45 @@ package final class Artifact {
         }
         resident = resident.map { $0.joined(with: store) } ?? store
     }
+
+    /// **The same region, read ahead of its use instead of before it** (`KeptEncoder`): returns once the region is mapped, the reads
+    /// running on `TailStream.lanes` threads of their own, in file order, in pieces of at most `TailStream.piece` — the stream's
+    /// reads (`pread` + `F_NOCACHE`), kept instead of handed back. `pointer` serves each tensor from the region once it is read and
+    /// waits for it before: a reader in file order computes behind the reads as it did behind the stream's. A read that fails
+    /// leaves the tensors not read yet to the mapping (`pointer` falls back to it: slower, never another weight) and says so
+    /// (`residentLoad`). Given back with the artifact or `releaseResident`: the lanes stop between two pieces and are waited for
+    /// before the region is unmapped. Only on an artifact that keeps nothing yet.
+    package func keepResidentAhead(prefixes: [String]) throws {
+        precondition(resident == nil, "keepResidentAhead on an artifact that already keeps tensors")
+        let wanted = order.filter { name in prefixes.contains { name.hasPrefix($0) } }
+        guard !wanted.isEmpty else { return }
+        let fd = open(path, O_RDONLY)
+        guard fd >= 0 else { throw Failure.cannotOpen(path, errno) }
+        _ = fcntl(fd, F_NOCACHE, 1)
+        let sizes = wanted.map { (tensors[$0]!.bytes + page - 1) / page * page }
+        let store = ResidentTensors(names: wanted, sizes: sizes)
+        var pieces: [ResidentLoad.Piece] = []
+        for name in wanted {
+            let t = tensors[name]!, destination = store.writable(name)!
+            var at = 0
+            repeat {
+                let length = min(TailStream.piece, t.bytes - at)
+                pieces.append(.init(name: name, file: t.offset + at, bytes: length, destination: destination + at))
+                at += length
+            } while at < t.bytes
+        }
+        store.load = ResidentLoad(descriptor: fd, pieces: pieces, lanes: TailStream.lanes)
+        resident = store
+    }
+
+    /// **Where a read-ahead keep stands** (`keepResidentAhead`): `nil` without one.
+    package var residentLoad: ResidentLoadState? { resident?.load?.state }
+
+    /// Waits until a read-ahead keep has read everything, or failed (`residentLoad` then says which).
+    package func waitForResidentLoad() { resident?.load?.waitForAll() }
+
+    /// Whether `name` is kept in the process's pages (`keepResident`, `keepResidentAhead`): the prefetcher leaves it alone.
+    package func isResident(_ name: String) -> Bool { resident?.holds(name) ?? false }
 
     /// Gives the kept tensors back (their pages are unmapped at once).
     package func releaseResident() { resident = nil }
@@ -573,6 +688,16 @@ package final class Artifact {
         case .q4_0, .q4_1, .q5_0, .q5_1, .q4_k, .q5_k, .q6_k:
             Widen.dequantizePacked(source, kind: tensor.dtype, rows: tensor.shape[1], columns: tensor.shape[0],
                                         transposing: true, into: destination)
+        case .sq4, .sq5:
+            // Decoded to the int8 `[K, N]` it is, then widened as the Compact's convrot. The integers' buffer (`K · N` bytes) is
+            // outside every arena: the widened route is the fallback of a test version, the products decode into the reserve.
+            guard let scale = tensor.scale, let rotation = tensor.rotation else { throw Failure.badHeader("\(name): SQ without its scale") }
+            let (k, n) = (tensor.shape[0], tensor.shape[1])
+            let integers = UnsafeMutablePointer<Int8>.allocate(capacity: k * n)
+            defer { integers.deallocate() }
+            SQ.decodeTransposed(source, rows: n, columns: k, bits: tensor.dtype.sqBits!, into: integers)
+            Widen.dequantizeRotated(UnsafeRawPointer(integers), rows: k, columns: n, group: rotation.group,
+                                    scale: source + scale.offset, scaleType: .float32, layout: scale.layout, into: destination)
         case .int8, .float8_e4m3:
             if let rotation = tensor.rotation, let scale = tensor.scale {
                 Widen.dequantizeRotated(source, rows: tensor.shape[0], columns: tensor.shape[1], group: rotation.group,
@@ -648,6 +773,19 @@ package final class Artifact {
         }
     }
 
+    /// **An SQ weight decoded on the CPU into the int8 it is** (`SQ.decodeTransposed`): the integers `[K, N]` at `destination`, the
+    /// fp32 scales at `destination + scalesAt` — what `stageInt8` writes for the Compact's convrot, the product after it the same.
+    /// The caller checked the dtype and that both fit.
+    package func stageSQ(_ name: String, into destination: UnsafeMutableRawPointer, scalesAt: Int) throws {
+        guard let tensor = tensors[name], let source = pointer(name), let bits = tensor.dtype.sqBits, let scale = tensor.scale else {
+            throw Failure.badHeader("\(name): not an SQ tensor")
+        }
+        defer { spent(name) }
+        SQ.decodeTransposed(source, rows: tensor.shape[1], columns: tensor.shape[0], bits: bits,
+                            into: destination.assumingMemoryBound(to: Int8.self))
+        (destination + scalesAt).copyMemory(from: source + scale.offset, byteCount: 4 * scale.count)
+    }
+
     /// `materialize` into a whole buffer: its count is the capacity.
     @discardableResult
     package func materialize(_ name: String, into buffer: UnsafeMutableBufferPointer<Float>) throws -> Int {
@@ -687,7 +825,7 @@ package final class Artifact {
             destination.update(from: (source + 4 * start).assumingMemoryBound(to: Float.self), count: n)
         case .float16:
             Widen.float16ToFloat32(source + 2 * start, count: n, into: destination)
-        case .q4_0, .q4_1, .q5_0, .q5_1, .q4_k, .q5_k, .q6_k:
+        case .q4_0, .q4_1, .q5_0, .q5_1, .q4_k, .q5_k, .q6_k, .sq4, .sq5:
             preconditionFailure("refused above")
         case .int8, .float8_e4m3:
             Widen.dequantize(source + start, kind: tensor.dtype, count: n,
@@ -714,15 +852,112 @@ private final class ResidentTensors {
         self.regions = regions; self.offsets = offsets
     }
 
+    /// The reads still running, for a region read ahead (`Artifact.keepResidentAhead`); stopped and waited for before the
+    /// region goes.
+    var load: ResidentLoad?
+
+    deinit { load?.stop() }
+
     var capacity: Int { regions.reduce(0) { $0 + $1.capacity } }
     func writable(_ name: String) -> UnsafeMutableRawPointer? { offsets[name].map { regions[$0.region].base + $0.offset } }
-    func pointer(_ name: String) -> UnsafeRawPointer? { writable(name).map { UnsafeRawPointer($0) } }
+    func holds(_ name: String) -> Bool { offsets[name] != nil }
+    /// The kept tensor, once read: a region read ahead waits for it, and gives `nil` (the mapping) where its read failed.
+    func pointer(_ name: String) -> UnsafeRawPointer? {
+        guard let place = writable(name) else { return nil }
+        if let load, !load.wait(for: name) { return nil }
+        return UnsafeRawPointer(place)
+    }
 
     /// Both stores' regions, neither copied.
     func joined(with other: ResidentTensors) -> ResidentTensors {
         var table = offsets
         for (name, place) in other.offsets { table[name] = (place.region + regions.count, place.offset) }
-        return ResidentTensors(regions: regions + other.regions, offsets: table)
+        let joined = ResidentTensors(regions: regions + other.regions, offsets: table)
+        // A read still running moves with its region: the store left behind must not stop it.
+        joined.load = load ?? other.load
+        load = nil; other.load = nil
+        return joined
+    }
+}
+
+/// Where a read-ahead keep stands (`Artifact.residentLoad`).
+package enum ResidentLoadState: Sendable, Equatable { case reading, complete, failed }
+
+/// **`Artifact.keepResidentAhead`'s reads**: pieces taken in file order by `lanes` threads, each tensor ready once all its pieces
+/// are read. One condition guards the counts: `wait(for:)` sleeps on it until its tensor is ready, or the load failed or stopped.
+final class ResidentLoad: @unchecked Sendable {
+    struct Piece { let name: String; let file: Int; let bytes: Int; let destination: UnsafeMutableRawPointer }
+    private let descriptor: Int32
+    private let pieces: [Piece]
+    private let condition = NSCondition()
+    private var left: [String: Int] = [:]               // tensor → pieces not read yet
+    private var next = 0, running: Int, failed = false, stopped = false
+    private let lanes = DispatchGroup()
+
+    init(descriptor: Int32, pieces: [Piece], lanes count: Int) {
+        self.descriptor = descriptor
+        self.pieces = pieces
+        for piece in pieces { left[piece.name, default: 0] += 1 }
+        running = max(1, min(count, pieces.count))
+        let queue = DispatchQueue.global(qos: .userInitiated)
+        for _ in 0..<running { queue.async(group: lanes) { [self] in lane() } }
+    }
+
+    deinit { close(descriptor) }
+
+    private func lane() {
+        while let i = take() {
+            let p = pieces[i]
+            var read = 0
+            while read < p.bytes {
+                let n = pread(descriptor, p.destination + read, p.bytes - read, off_t(p.file + read))
+                guard n > 0 else { break }
+                read += n
+            }
+            condition.lock()
+            if read == p.bytes {
+                left[p.name]! -= 1
+                if left[p.name] == 0 { left[p.name] = nil }
+            } else {
+                failed = true
+            }
+            condition.broadcast()
+            condition.unlock()
+        }
+        condition.lock(); running -= 1; condition.broadcast(); condition.unlock()
+    }
+
+    private func take() -> Int? {
+        condition.lock(); defer { condition.unlock() }
+        guard !failed, !stopped, next < pieces.count else { return nil }
+        next += 1
+        return next - 1
+    }
+
+    /// Whether `name` is read — waiting for it while it is not and the reads go on.
+    func wait(for name: String) -> Bool {
+        condition.lock(); defer { condition.unlock() }
+        while left[name] != nil {
+            if failed || stopped || running == 0 { return false }
+            condition.wait()
+        }
+        return true
+    }
+
+    func waitForAll() {
+        condition.lock(); defer { condition.unlock() }
+        while running > 0 { condition.wait() }
+    }
+
+    var state: ResidentLoadState {
+        condition.lock(); defer { condition.unlock() }
+        return failed || (running == 0 && !left.isEmpty) ? .failed : left.isEmpty ? .complete : .reading
+    }
+
+    /// No piece taken from now on; returns once the lanes are out (the region may then go).
+    func stop() {
+        condition.lock(); stopped = true; condition.broadcast(); condition.unlock()
+        lanes.wait()
     }
 }
 
