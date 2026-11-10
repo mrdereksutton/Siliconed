@@ -203,10 +203,10 @@ struct LabView: View {
                 }
                 detachButton
             }
-            .padding(.leading, 84)
-            .padding(.trailing, 12)
+            .padding(.leading, 96)
+            .padding(.trailing, 18)
         }
-        .frame(height: 40)
+        .frame(height: 52)
         .background(Palette.column)
     }
 

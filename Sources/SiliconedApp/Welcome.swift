@@ -24,35 +24,35 @@ struct Welcome: View {
         let families = AppState.frontFamilies
         GeometryReader { geo in
             ScrollView(.vertical) {
-                VStack(spacing: 24) {
-                    VStack(spacing: 8) {
+                VStack(spacing: 30) {
+                    VStack(spacing: 10) {
                         if outdated.isEmpty {
                             Text("Welcome to Siliconed")
-                                .font(.system(size: 28, weight: .semibold))
-                                .tracking(-0.4)
+                                .font(.system(size: 32, weight: .semibold))
+                                .tracking(-0.5)
                             Text("Choose a model to begin. Its license and the space it takes are shown before anything is downloaded.")
-                                .font(.callout)
+                                .font(.system(size: 15))
                                 .foregroundStyle(.secondary)
-                                .frame(maxWidth: 480)
+                                .frame(maxWidth: 520)
                         } else {
                             Text("New Weights for Your Models")
-                                .font(.system(size: 28, weight: .semibold))
-                                .tracking(-0.4)
+                                .font(.system(size: 32, weight: .semibold))
+                                .tracking(-0.5)
                             Text("This version of Siliconed brings new weights for the models marked below: update them to render again. The space they take is shown before anything is downloaded.")
-                                .font(.callout)
+                                .font(.system(size: 15))
                                 .foregroundStyle(.secondary)
-                                .frame(maxWidth: 500)
+                                .frame(maxWidth: 540)
                         }
                     }
 
                     // Side by side when the canvas holds all five, else 3 + 2, else 2 + 2 + 1 — each row sharing equal card height.
                     ViewThatFits(in: .horizontal) {
                         cardRow(families)
-                        VStack(spacing: 14) {
+                        VStack(spacing: 18) {
                             cardRow(Array(families.prefix(3)))
                             cardRow(Array(families.dropFirst(3)))
                         }
-                        VStack(spacing: 14) {
+                        VStack(spacing: 18) {
                             cardRow(Array(families.prefix(2)))
                             cardRow(Array(families.dropFirst(2).prefix(2)))
                             cardRow(Array(families.dropFirst(4)))
@@ -71,8 +71,8 @@ struct Welcome: View {
                     }
                 }
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 24)
-                .padding(.vertical, 28)
+                .padding(.horizontal, 36)
+                .padding(.vertical, 36)
                 .frame(minWidth: geo.size.width, minHeight: geo.size.height)
             }
             .scrollBounceBehavior(.basedOnSize)
@@ -81,7 +81,7 @@ struct Welcome: View {
     }
 
     private func cardRow(_ row: [Family]) -> some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .top, spacing: 18) {
             ForEach(row, id: \.self) { card($0) }
         }
         .fixedSize(horizontal: false, vertical: true)
@@ -141,10 +141,10 @@ struct Welcome: View {
             .padding(.top, 2)
         }
         .multilineTextAlignment(.leading)
-        .padding(16)
-        .frame(width: 256)
-        .frame(minHeight: family.variants.count > 1 ? 284 : 196, maxHeight: .infinity, alignment: .topLeading)
-        .studioCard(cornerRadius: 14, active: old != nil)
+        .padding(20)
+        .frame(width: 262)
+        .frame(minHeight: family.variants.count > 1 ? 296 : 204, maxHeight: .infinity, alignment: .topLeading)
+        .studioCard(cornerRadius: 16, active: old != nil)
     }
 
     static func symbol(_ family: Family) -> String {

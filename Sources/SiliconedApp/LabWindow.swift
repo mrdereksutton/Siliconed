@@ -40,7 +40,7 @@ final class LabWindow: NSObject, NSWindowDelegate {
         let toolbar = NSToolbar(identifier: "SiliconedLabChrome")
         toolbar.allowsUserCustomization = false
         w.toolbar = toolbar
-        w.toolbarStyle = .unifiedCompact
+        w.toolbarStyle = .unified
         w.titlebarAppearsTransparent = true
         w.titleVisibility = .hidden
         w.titlebarSeparatorStyle = .none

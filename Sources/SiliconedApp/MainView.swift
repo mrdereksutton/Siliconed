@@ -81,9 +81,9 @@ private struct StudioHeaderBar: View {
         ZStack {
             WindowDragArea()
 
-            HStack(spacing: 10) {
-                // Left: Rack toggle + understated typographic Siliconed wordmark (aligned with 40pt unifiedCompact traffic lights)
-                HStack(spacing: 9) {
+            HStack(spacing: 14) {
+                // Left: Rack toggle + understated typographic Siliconed wordmark (aligned with 52pt .unified traffic lights)
+                HStack(spacing: 12) {
                     HeaderIconButton(
                         symbol: "sidebar.left",
                         active: showsSidebar,
@@ -96,11 +96,11 @@ private struct StudioHeaderBar: View {
 
                     Rectangle()
                         .fill(Palette.hairline)
-                        .frame(width: 1, height: 13)
+                        .frame(width: 1, height: 15)
 
-                    HStack(spacing: 7) {
+                    HStack(spacing: 8) {
                         Text(verbatim: "Siliconed")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 14, weight: .semibold))
                             .tracking(-0.15)
                             .foregroundStyle(.primary.opacity(0.92))
 
@@ -109,10 +109,10 @@ private struct StudioHeaderBar: View {
                     .allowsHitTesting(false)
                 }
 
-                Spacer(minLength: 8)
+                Spacer(minLength: 12)
 
                 // Center: Crisp 3-Mode Studio Workspace Switcher
-                HStack(spacing: 2) {
+                HStack(spacing: 3) {
                     workspaceSegment(
                         title: "Studio",
                         symbol: "sparkles",
@@ -150,14 +150,14 @@ private struct StudioHeaderBar: View {
                         }
                     }
                 }
-                .padding(2)
+                .padding(3)
                 .background(Capsule().fill(Palette.well))
                 .overlay(Capsule().strokeBorder(Palette.hairline, lineWidth: 1))
 
-                Spacer(minLength: 8)
+                Spacer(minLength: 12)
 
                 // Right: Theme Switcher + Prompt Lab + Export/Stats Action Bar
-                HStack(spacing: 7) {
+                HStack(spacing: 10) {
                     StudioThemePill()
 
                     PromptLabHeaderButton()
@@ -165,10 +165,10 @@ private struct StudioHeaderBar: View {
                     actionCluster
                 }
             }
-            .padding(.leading, 84)
-            .padding(.trailing, 12)
+            .padding(.leading, 96)
+            .padding(.trailing, 20)
         }
-        .frame(height: 40)
+        .frame(height: 52)
         .background(Palette.column)
     }
 
@@ -209,24 +209,24 @@ private struct StudioHeaderBar: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Image(systemName: symbol)
-                    .font(.system(size: 10.5, weight: active ? .semibold : .medium))
+                    .font(.system(size: 11.5, weight: active ? .semibold : .medium))
                     .foregroundStyle(active ? Palette.live : .secondary)
                 Text(title)
-                    .font(.system(size: 11.5, weight: active ? .semibold : .medium))
+                    .font(.system(size: 12.5, weight: active ? .semibold : .medium))
                     .foregroundStyle(active ? .primary : .secondary)
                 if let badge {
                     Text(verbatim: badge)
-                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
                         .foregroundStyle(badgeTint ?? (active ? Palette.live : .secondary))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
+                        .padding(.horizontal, 5.5)
+                        .padding(.vertical, 1.5)
                         .background(Capsule().fill((badgeTint ?? Palette.live).opacity(0.14)))
                 }
             }
-            .padding(.horizontal, 10)
-            .frame(height: 24)
+            .padding(.horizontal, 14)
+            .frame(height: 28)
             .background {
                 if active {
                     Capsule()
@@ -249,7 +249,7 @@ private struct StudioHeaderBar: View {
 
     private var actionCluster: some View {
         let group = app.targets
-        return HStack(spacing: 1) {
+        return HStack(spacing: 2) {
             HeaderIconButton(
                 symbol: "doc.on.doc",
                 disabled: group.isEmpty,
@@ -270,16 +270,16 @@ private struct StudioHeaderBar: View {
 
             ShareLink(items: group.map(app.transferable), preview: { SharePreview($0.name) }) {
                 Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(group.isEmpty ? Color.secondary.opacity(0.32) : .secondary)
-                    .frame(width: 26, height: 24)
+                    .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(group.isEmpty)
             .help("Share — AirDrop, Messages, Mail, Photos…")
 
-            Divider().frame(height: 12).padding(.horizontal, 2)
+            Divider().frame(height: 14).padding(.horizontal, 3)
 
             HeaderIconButton(
                 symbol: "gauge.with.dots.needle.33percent",
@@ -287,8 +287,8 @@ private struct StudioHeaderBar: View {
                 action: toggleStatistics
             )
         }
-        .padding(.horizontal, 4)
-        .frame(height: 26)
+        .padding(.horizontal, 5)
+        .frame(height: 32)
         .background(Capsule().fill(Color.primary.opacity(0.045)))
         .overlay(Capsule().strokeBorder(Palette.hairline, lineWidth: 1))
     }
@@ -301,16 +301,16 @@ private struct PromptLabHeaderButton: View {
         Button {
             LabWindow.shared.openStudio()
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Image(systemName: "wand.and.sparkles")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(hovering ? .primary : .secondary)
                 Text("Prompt Lab")
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(.primary.opacity(0.9))
             }
-            .padding(.horizontal, 10)
-            .frame(height: 26)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
             .background(Capsule().fill(hovering ? Palette.surfaceElevated : Color.primary.opacity(0.05)))
             .overlay(Capsule().strokeBorder(Palette.hairline, lineWidth: 1))
             .contentShape(Capsule())
@@ -332,11 +332,11 @@ private struct HeaderIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 11.5, weight: active ? .semibold : .medium))
+                .font(.system(size: 12.5, weight: active ? .semibold : .medium))
                 .foregroundStyle(disabled ? Color.secondary.opacity(0.32) : (active ? Palette.live : (hovering ? .primary : .secondary)))
-                .frame(width: 26, height: 24)
+                .frame(width: 28, height: 28)
                 .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
                         .fill(active ? Palette.live.opacity(0.13) : (hovering && !disabled ? Color.primary.opacity(0.08) : .clear))
                 )
                 .contentShape(Rectangle())
@@ -460,29 +460,29 @@ private struct GraphCanvas: View {
 
             if (!app.history.isEmpty || app.explored != nil) && !showingGallery {
                 Banner(app: app)
-                    .frame(maxWidth: 880)
-                    .padding(.horizontal, 24)
+                    .frame(maxWidth: 1080)
+                    .padding(.horizontal, 32)
             }
 
             if studioMode {
                 let showsComposer = !showingGallery && !app.welcomes
                 if showsComposer || showsFloatingActivity {
-                    VStack(spacing: 10) {
+                    VStack(spacing: 12) {
                         if showsFloatingActivity { ActivityCard(app: app) }
                         if showsComposer { Composer(app: app) }
                     }
-                    .frame(maxWidth: 860)
-                    .padding(.horizontal, 24)
-                    .padding(.top, 8)
-                    .padding(.bottom, 16)
+                    .frame(maxWidth: 1080)
+                    .padding(.horizontal, 32)
+                    .padding(.top, 10)
+                    .padding(.bottom, 22)
                     .animation(Motion.pick(.easeInOut(duration: 0.2)), value: showsFloatingActivity)
                 }
             } else if !showingGallery, !app.welcomes, !(lab.detached && lab.unfolded) {
                 LabView(model: lab)
-                    .frame(maxWidth: 880)
-                    .padding(.horizontal, 24)
-                    .padding(.top, 8)
-                    .padding(.bottom, 16)
+                    .frame(maxWidth: 1040)
+                    .padding(.horizontal, 32)
+                    .padding(.top, 10)
+                    .padding(.bottom, 20)
                     .animation(Motion.pick(.spring(duration: 0.3)), value: lab.unfolded)
             }
         }

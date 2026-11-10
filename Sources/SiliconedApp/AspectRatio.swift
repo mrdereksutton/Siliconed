@@ -169,7 +169,7 @@ struct OutputSizePopover: View {
                 }
             }
         }
-        .padding(14)
+        .padding(18)
         .onAppear {
             showCustom = app.sizeCell == nil
         }
@@ -400,13 +400,13 @@ struct PillFace<Content: View>: View {
     @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 6) { content }
+        HStack(spacing: 6.5) { content }
             .font(.callout)
-            .padding(.horizontal, 11)
-            .frame(height: 30)
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(active ? Palette.live.opacity(0.14) : Color.primary.opacity(hovering ? 0.12 : 0.06)))
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(active ? Palette.live.opacity(0.14) : Color.primary.opacity(hovering ? 0.11 : 0.055)))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(active ? Palette.live.opacity(0.75) : (hovering ? Color.primary.opacity(0.22) : Palette.hairline)))
             .contentShape(Rectangle())
             .onHover { hovering = $0 }

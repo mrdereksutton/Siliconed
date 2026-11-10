@@ -611,44 +611,45 @@ struct InteractiveEmptyStage: View {
     ]
 
     private let gridColumns = [
-        GridItem(.fixed(216), spacing: 12),
-        GridItem(.fixed(216), spacing: 12),
-        GridItem(.fixed(216), spacing: 12),
+        GridItem(.flexible(minimum: 230, maximum: 316), spacing: 18),
+        GridItem(.flexible(minimum: 230, maximum: 316), spacing: 18),
+        GridItem(.flexible(minimum: 230, maximum: 316), spacing: 18),
     ]
 
     var body: some View {
         let _ = StudioHub.shared.theme
-        VStack(spacing: 22) {
-            VStack(spacing: 8) {
+        VStack(spacing: 32) {
+            VStack(spacing: 10) {
                 HStack(spacing: 6) {
                     Image(systemName: "camera.aperture")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Palette.live)
                     Text("APPLE SILICON CREATIVE STUDIO")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
                         .tracking(1.1)
                         .foregroundStyle(Palette.live)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
                 .background(Capsule().fill(Palette.live.opacity(0.11)))
-                .overlay(Capsule().strokeBorder(Palette.live.opacity(0.32)))
+                .overlay(Capsule().strokeBorder(Palette.live.opacity(0.30)))
 
                 Text("What do you want to direct?")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .tracking(-0.4)
+                    .font(.system(size: 32, weight: .semibold))
+                    .tracking(-0.5)
                     .foregroundStyle(.primary)
                 Text(app.editingPossible
                      ? "Describe an image, pick a director shot below, or drop a photo here to edit it."
                      : "Describe an image below or load a director shot with pre-dialed camera, lens and lighting.")
-                    .font(.callout)
+                    .font(.system(size: 15))
                     .foregroundStyle(.secondary)
             }
 
-            LazyVGrid(columns: gridColumns, spacing: 12) {
+            LazyVGrid(columns: gridColumns, spacing: 18) {
                 ForEach(ideas) { idea in
                     StarterCardButton(
                         ideaTitle: idea.title,
+                        promptPreview: idea.prompt,
                         specLabel: idea.specLabel,
                         ratio: idea.ratio,
                         symbol: idea.colors.isEmpty ? "sparkles" : idea.symbol,
@@ -666,13 +667,16 @@ struct InteractiveEmptyStage: View {
                     }
                 }
             }
+            .frame(maxWidth: 984)
         }
-        .padding(24)
+        .padding(.horizontal, 40)
+        .padding(.vertical, 32)
     }
 }
 
 private struct StarterCardButton: View {
     let ideaTitle: LocalizedStringKey
+    let promptPreview: String
     let specLabel: String
     let ratio: SizeRatio
     let symbol: String
@@ -682,62 +686,69 @@ private struct StarterCardButton: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 9) {
+            VStack(alignment: .leading, spacing: 11) {
                 ZStack(alignment: .topTrailing) {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
                         .fill(LinearGradient(
                             colors: colors.map { Color(hex: $0) },
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ))
-                        .frame(height: 74)
+                        .frame(height: 108)
                         .overlay {
                             LinearGradient(
-                                colors: [.white.opacity(hovering ? 0.16 : 0.06), .clear, .black.opacity(0.35)],
+                                colors: [.white.opacity(hovering ? 0.15 : 0.06), .clear, .black.opacity(0.38)],
                                 startPoint: .top,
                                 endPoint: .bottom
                             )
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                         }
                         .overlay(alignment: .bottomLeading) {
-                            HStack(spacing: 6) {
+                            HStack(spacing: 7) {
                                 Image(systemName: symbol)
-                                    .font(.system(size: 15, weight: .semibold))
+                                    .font(.system(size: 16, weight: .semibold))
                                     .foregroundStyle(.white.opacity(0.95))
                                 Text(verbatim: specLabel)
-                                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                                    .foregroundStyle(.white.opacity(0.88))
+                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.90))
                                     .lineLimit(1)
                             }
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 7)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
                         }
 
                     Text(verbatim: ratio.description)
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.95))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2.5)
                         .background(Capsule().fill(.black.opacity(0.45)))
-                        .padding(7)
+                        .padding(9)
                 }
 
-                HStack(spacing: 4) {
-                    Text(ideaTitle)
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(.primary)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(ideaTitle)
+                            .font(.system(size: 14.5, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(hovering ? Palette.live : .secondary)
+                            .opacity(hovering ? 1 : 0.45)
+                    }
+
+                    Text(verbatim: promptPreview)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
-                    Spacer(minLength: 4)
-                    Image(systemName: "arrow.up.right")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(hovering ? Palette.live : .secondary)
-                        .opacity(hovering ? 1 : 0.45)
+                        .truncationMode(.tail)
                 }
                 .padding(.horizontal, 3)
             }
-            .padding(8)
-            .studioCard(cornerRadius: 14, active: hovering)
-            .scaleEffect(hovering ? 1.018 : 1.0)
+            .padding(12)
+            .studioCard(cornerRadius: 16, active: hovering)
             .animation(Motion.pick(.easeOut(duration: 0.14)), value: hovering)
             .contentShape(Rectangle())
         }

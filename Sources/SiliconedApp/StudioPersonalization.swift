@@ -283,12 +283,21 @@ final class StudioHub {
         selectedCameraId != "none" || selectedLensId != "none" || selectedLightingId != "none"
     }
 
-    var opticsSummaryBadge: String {
+    var opticsFullSummary: String {
         var tags: [String] = []
         if activeCamera.id != "none" { tags.append(activeCamera.badge) }
         if activeLens.id != "none" { tags.append(activeLens.badge) }
         if activeLighting.id != "none" { tags.append(activeLighting.badge) }
         return tags.joined(separator: " · ")
+    }
+
+    var opticsSummaryBadge: String {
+        var tags: [String] = []
+        if activeCamera.id != "none" { tags.append(activeCamera.badge) }
+        if activeLens.id != "none" { tags.append(activeLens.badge) }
+        if activeLighting.id != "none" { tags.append(activeLighting.badge) }
+        if tags.count <= 2 { return tags.joined(separator: " · ") }
+        return "\(tags[0]) · \(tags[1]) +\(tags.count - 2)"
     }
 
     func resetOptics() {
@@ -788,17 +797,17 @@ struct StudioThemePill: View {
     var body: some View {
         let theme = hub.theme
         Button { open.toggle() } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: 7) {
                 Circle()
                     .fill(Palette.live)
-                    .frame(width: 7.5, height: 7.5)
+                    .frame(width: 8, height: 8)
                 Text(theme.title)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(.primary.opacity(0.9))
                     .lineLimit(1)
             }
-            .padding(.horizontal, 10)
-            .frame(height: 26)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
             .background(Capsule().fill(hovering || open ? Palette.surfaceElevated : Color.primary.opacity(0.05)))
             .overlay(Capsule().strokeBorder(open ? Palette.live.opacity(0.6) : Palette.hairline, lineWidth: 1))
             .contentShape(Capsule())
@@ -948,7 +957,7 @@ struct CameraPill: View {
         } choices: {
             OpticsPopover { open = false }
         }
-        .help("Cinema Camera, Lens & Lighting Rig — composes authentic optical look into the prompt")
+        .help(active ? Text(verbatim: hub.opticsFullSummary) : Text("Cinema Camera, Lens & Lighting Rig — composes authentic optical look into the prompt"))
     }
 }
 
@@ -1065,8 +1074,8 @@ private struct OpticsPopover: View {
                 }
             }
         }
-        .padding(14)
-        .frame(width: 400)
+        .padding(18)
+        .frame(width: 436)
     }
 }
 
