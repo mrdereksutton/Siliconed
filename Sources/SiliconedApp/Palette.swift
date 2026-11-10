@@ -39,9 +39,9 @@ enum StudioTheme: String, CaseIterable, Identifiable, Sendable {
     /// Preview swatch hexes `[ground, accentStart, accentEnd]`.
     var swatchHexes: [Int] {
         switch self {
-        case .cinemaLime: [0x090A0F, 0xE4FF54, 0xB8F218]
-        case .electricStudio: [0x0A0914, 0xF43F5E, 0x7C3AED]
-        case .siliconedIndigo: [0x131424, 0x6EF1DD, 0x56C0B0]
+        case .cinemaLime: [0x09090B, 0xD1FA48, 0xB8E82C]
+        case .electricStudio: [0x09090D, 0xEC4899, 0x9333EA]
+        case .siliconedIndigo: [0x131424, 0x68E8D4, 0x48B5A5]
         }
     }
 }
@@ -80,8 +80,8 @@ enum Palette {
     static let liveInk = dynamicInk(
         dark: { theme in
             switch theme {
-            case .cinemaLime: 0xD4FF33
-            case .electricStudio: 0xD946EF
+            case .cinemaLime: 0xC8F53B
+            case .electricStudio: 0xE879F9
             case .siliconedIndigo: 0x56C0B0
             }
         },
@@ -94,22 +94,22 @@ enum Palette {
         }
     )
 
-    /// Signature multi-stop CTA gradient for Generate, active mode pills, and studio badges.
+    /// Signature overhead-lit CTA surface for Generate and primary action buttons (crisp machined finish, no neon blur).
     static func ctaGradient(for scheme: ColorScheme) -> LinearGradient {
         if scheme != .dark {
             let colors: [Color] = switch activeTheme {
-            case .cinemaLime: [Color(hex: 0x258542), Color(hex: 0x195E2D)]
-            case .electricStudio: [Color(hex: 0xEC4899), Color(hex: 0x7C3AED)]
+            case .cinemaLime: [Color(hex: 0x258542), Color(hex: 0x1B6832)]
+            case .electricStudio: [Color(hex: 0xDB2777), Color(hex: 0x7C3AED)]
             case .siliconedIndigo: [Color(hex: 0x4F46E5), Color(hex: 0x3F3A8A)]
             }
-            return LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+            return LinearGradient(colors: colors, startPoint: .top, endPoint: .bottom)
         }
         let colors: [Color] = switch activeTheme {
-        case .cinemaLime: [Color(hex: 0xE6FF57), Color(hex: 0xBDFA19)]
-        case .electricStudio: [Color(hex: 0xF43F5E), Color(hex: 0xD946EF), Color(hex: 0x7C3AED)]
-        case .siliconedIndigo: [Color(hex: 0x6EF1DD), Color(hex: 0x48B5A5)]
+        case .cinemaLime: [Color(hex: 0xD1FA48), Color(hex: 0xB8E82C)]
+        case .electricStudio: [Color(hex: 0xEC4899), Color(hex: 0x9333EA)]
+        case .siliconedIndigo: [Color(hex: 0x68E8D4), Color(hex: 0x48B5A5)]
         }
-        return LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+        return LinearGradient(colors: colors, startPoint: .top, endPoint: .bottom)
     }
 
     /// **The words the writer brings** (Rewrite, Describe), over the text.
@@ -169,7 +169,7 @@ enum Palette {
         dynamic(
             dark: { theme in
                 switch theme {
-                case .cinemaLime: 0xCBEF43
+                case .cinemaLime: 0xC2EC3D
                 case .electricStudio: 0xE879F9
                 case .siliconedIndigo: 0x999BEE
                 }
@@ -189,7 +189,7 @@ enum Palette {
         dynamic(
             dark: { theme in
                 switch theme {
-                case .cinemaLime: 0x090C04
+                case .cinemaLime: 0x0A0D05
                 case .electricStudio: 0xFFFFFF
                 case .siliconedIndigo: 0x0F1021
                 }
@@ -200,13 +200,13 @@ enum Palette {
 
     static var failure: Color { dynamic(dark: { _ in 0xFC5852 }, light: { _ in 0xD02C2A }) }
 
-    /// Behind the image: deep darkroom obsidian at night, warm paper by day.
+    /// Behind the image: neutral carbon obsidian at night, warm paper by day.
     static var canvas: Color { Color(nsColor: canvasInk) }
     static let canvasInk = dynamicInk(
         dark: { theme in
             switch theme {
-            case .cinemaLime: 0x08090D
-            case .electricStudio: 0x090812
+            case .cinemaLime: 0x09090B
+            case .electricStudio: 0x09090D
             case .siliconedIndigo: 0x131424
             }
         },
@@ -224,8 +224,8 @@ enum Palette {
     static let columnInk = dynamicInk(
         dark: { theme in
             switch theme {
-            case .cinemaLime: 0x0E1017
-            case .electricStudio: 0x11101E
+            case .cinemaLime: 0x0E0F12
+            case .electricStudio: 0x0F0E15
             case .siliconedIndigo: 0x1B1C2F
             }
         },
@@ -243,8 +243,8 @@ enum Palette {
         dynamic(
             dark: { theme in
                 switch theme {
-                case .cinemaLime: 0x151822
-                case .electricStudio: 0x19172B
+                case .cinemaLime: 0x141519
+                case .electricStudio: 0x15141E
                 case .siliconedIndigo: 0x2A283D
                 }
             },
@@ -252,13 +252,13 @@ enum Palette {
         )
     }
 
-    /// Elevated floating studio surface (popovers, active cards, pills).
+    /// Elevated floating studio surface (Composer, popovers, active pills).
     static var surfaceElevated: Color {
         dynamic(
             dark: { theme in
                 switch theme {
-                case .cinemaLime: 0x1C202E
-                case .electricStudio: 0x221F38
+                case .cinemaLime: 0x18191E
+                case .electricStudio: 0x1B1926
                 case .siliconedIndigo: 0x33314A
                 }
             },
@@ -270,30 +270,30 @@ enum Palette {
     static var well: Color {
         Color(nsColor: NSColor(name: nil) { a in
             a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                ? NSColor(white: 1, alpha: 0.065)
-                : NSColor(white: 0, alpha: 0.055)
+                ? NSColor(white: 1, alpha: 0.05)
+                : NSColor(white: 0, alpha: 0.05)
         })
     }
 
     /// Crisp border hairline.
     static let hairline = Color(nsColor: NSColor(name: nil) { a in
         a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(white: 1, alpha: 0.13)
-            : NSColor(white: 0, alpha: 0.12)
+            ? NSColor(white: 1, alpha: 0.10)
+            : NSColor(white: 0, alpha: 0.10)
     })
 
-    /// Top-edge specular highlight gradient giving cards tactile glass/anodized depth.
+    /// Top-edge specular highlight gradient giving cards subtle anodized depth.
     static func specularRim(for scheme: ColorScheme, active: Bool = false) -> LinearGradient {
         if active {
             return LinearGradient(
-                colors: [live.opacity(0.85), live.opacity(0.28)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+                colors: [live.opacity(0.65), live.opacity(0.24)],
+                startPoint: .top,
+                endPoint: .bottom
             )
         }
-        let top = scheme == .dark ? Color.white.opacity(0.18) : Color.black.opacity(0.08)
-        let mid = scheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.05)
-        let bottom = scheme == .dark ? Color.white.opacity(0.03) : Color.black.opacity(0.10)
+        let top = scheme == .dark ? Color.white.opacity(0.13) : Color.black.opacity(0.08)
+        let mid = scheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.06)
+        let bottom = scheme == .dark ? Color.white.opacity(0.04) : Color.black.opacity(0.10)
         return LinearGradient(colors: [top, mid, bottom], startPoint: .top, endPoint: .bottom)
     }
 
@@ -340,7 +340,7 @@ struct IconTile: View {
 }
 
 /// **The button that starts something** (« Generate », « Install… », « Crop »): filled with the active
-/// Studio Theme's luminous CTA gradient and `onLive` ink, with a soft studio halo at night.
+/// Studio Theme's crisp overhead-lit accent and `onLive` ink, with a razor-clean top specular rim and tight neutral shadow.
 struct ProminentButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View { Face(configuration: configuration) }
 
@@ -349,17 +349,17 @@ struct ProminentButtonStyle: ButtonStyle {
         @Environment(\.isEnabled) private var enabled
         @Environment(\.controlSize) private var size
         @Environment(\.colorScheme) private var scheme
+        @State private var hovering = false
 
         var body: some View {
             let _ = StudioHub.shared.theme
             let large = size == .large || size == .extraLarge
-            let shape = RoundedRectangle(cornerRadius: large ? 9 : 7, style: .continuous)
-            let night = enabled && scheme == .dark
+            let shape = RoundedRectangle(cornerRadius: large ? 9 : 7.5, style: .continuous)
             configuration.label
-                .font(.body.weight(.semibold))
-                .foregroundStyle(enabled ? AnyShapeStyle(Palette.onLive) : AnyShapeStyle(.secondary))
-                .padding(.horizontal, large ? 15 : 11)
-                .frame(minHeight: large ? 32 : 25)
+                .font(.system(size: large ? 13.5 : 12.5, weight: .semibold))
+                .foregroundStyle(enabled ? AnyShapeStyle(Palette.onLive) : AnyShapeStyle(.tertiary))
+                .padding(.horizontal, large ? 15 : 12)
+                .frame(minHeight: large ? 32 : 26)
                 .background {
                     if enabled {
                         shape.fill(Palette.ctaGradient(for: scheme))
@@ -367,11 +367,25 @@ struct ProminentButtonStyle: ButtonStyle {
                         shape.fill(Palette.well)
                     }
                 }
-                .overlay(shape.strokeBorder(.white.opacity(night ? 0.32 : 0), lineWidth: 0.75))
-                .shadow(color: night ? Palette.live.opacity(0.38) : .clear, radius: 9, y: 2)
-                .scaleEffect(configuration.isPressed ? 0.98 : 1)
-                .opacity(configuration.isPressed ? 0.86 : 1)
+                .overlay {
+                    if enabled {
+                        shape.strokeBorder(
+                            LinearGradient(
+                                colors: [.white.opacity(scheme == .dark ? 0.28 : 0.18), .white.opacity(0.04)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 1
+                        )
+                    } else {
+                        shape.strokeBorder(Palette.hairline, lineWidth: 1)
+                    }
+                }
+                .shadow(color: enabled ? .black.opacity(scheme == .dark ? 0.28 : 0.10) : .clear, radius: 2, y: 1)
+                .brightness(hovering && enabled && !configuration.isPressed ? 0.03 : 0)
+                .opacity(configuration.isPressed ? 0.88 : 1)
                 .contentShape(shape)
+                .onHover { hovering = $0 }
         }
     }
 }

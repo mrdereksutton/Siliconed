@@ -82,8 +82,8 @@ private struct StudioHeaderBar: View {
             WindowDragArea()
 
             HStack(spacing: 10) {
-                // Left: Rack toggle + Siliconed Studio Brand Badge
-                HStack(spacing: 10) {
+                // Left: Rack toggle + understated typographic Siliconed wordmark (aligned with 40pt unifiedCompact traffic lights)
+                HStack(spacing: 9) {
                     HeaderIconButton(
                         symbol: "sidebar.left",
                         active: showsSidebar,
@@ -94,20 +94,15 @@ private struct StudioHeaderBar: View {
                         }
                     }
 
+                    Rectangle()
+                        .fill(Palette.hairline)
+                        .frame(width: 1, height: 13)
+
                     HStack(spacing: 7) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 6.5, style: .continuous)
-                                .fill(Palette.ctaGradient(for: colorScheme))
-                                .frame(width: 22, height: 22)
-                                .shadow(color: Palette.live.opacity(0.35), radius: 6, y: 1)
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 11, weight: .black))
-                                .foregroundStyle(Palette.onLive)
-                        }
                         Text(verbatim: "Siliconed")
-                            .font(.system(size: 13.5, weight: .bold, design: .rounded))
-                            .tracking(-0.2)
-                            .foregroundStyle(.primary)
+                            .font(.system(size: 13, weight: .semibold))
+                            .tracking(-0.15)
+                            .foregroundStyle(.primary.opacity(0.92))
 
                         computeBadge
                     }
@@ -116,8 +111,8 @@ private struct StudioHeaderBar: View {
 
                 Spacer(minLength: 8)
 
-                // Center: Luminous 3-Mode Studio Workspace Switcher
-                HStack(spacing: 3) {
+                // Center: Crisp 3-Mode Studio Workspace Switcher
+                HStack(spacing: 2) {
                     workspaceSegment(
                         title: "Studio",
                         symbol: "sparkles",
@@ -155,54 +150,26 @@ private struct StudioHeaderBar: View {
                         }
                     }
                 }
-                .padding(3)
-                .background(
-                    Capsule()
-                        .fill(Palette.well)
-                )
-                .overlay(
-                    Capsule()
-                        .strokeBorder(Palette.hairline, lineWidth: 1)
-                )
+                .padding(2)
+                .background(Capsule().fill(Palette.well))
+                .overlay(Capsule().strokeBorder(Palette.hairline, lineWidth: 1))
 
                 Spacer(minLength: 8)
 
                 // Right: Theme Switcher + Prompt Lab + Export/Stats Action Bar
-                HStack(spacing: 8) {
+                HStack(spacing: 7) {
                     StudioThemePill()
 
-                    Button {
-                        LabWindow.shared.openStudio()
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: "wand.and.sparkles")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(Palette.live)
-                            Text("Prompt Lab")
-                                .font(.system(size: 12, weight: .medium))
-                        }
-                        .padding(.horizontal, 10)
-                        .frame(height: 28)
-                        .background(
-                            Capsule()
-                                .fill(Color.primary.opacity(0.06))
-                        )
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(Palette.hairline, lineWidth: 1)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .help("Open the Prompt Lab (⌥⌘L)")
+                    PromptLabHeaderButton()
 
                     actionCluster
                 }
             }
-            .padding(.leading, 78)
-            .padding(.trailing, 14)
+            .padding(.leading, 84)
+            .padding(.trailing, 12)
         }
-        .frame(height: 46)
-        .background(Palette.column.opacity(0.92))
+        .frame(height: 40)
+        .background(Palette.column)
     }
 
     @ViewBuilder private var computeBadge: some View {
@@ -244,10 +211,10 @@ private struct StudioHeaderBar: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: symbol)
-                    .font(.system(size: 11, weight: active ? .bold : .medium))
+                    .font(.system(size: 10.5, weight: active ? .semibold : .medium))
                     .foregroundStyle(active ? Palette.live : .secondary)
                 Text(title)
-                    .font(.system(size: 12, weight: active ? .semibold : .medium))
+                    .font(.system(size: 11.5, weight: active ? .semibold : .medium))
                     .foregroundStyle(active ? .primary : .secondary)
                 if let badge {
                     Text(verbatim: badge)
@@ -255,34 +222,34 @@ private struct StudioHeaderBar: View {
                         .foregroundStyle(badgeTint ?? (active ? Palette.live : .secondary))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Capsule().fill((badgeTint ?? Palette.live).opacity(0.15)))
+                        .background(Capsule().fill((badgeTint ?? Palette.live).opacity(0.14)))
                 }
             }
-            .padding(.horizontal, 11)
-            .frame(height: 26)
+            .padding(.horizontal, 10)
+            .frame(height: 24)
             .background {
                 if active {
                     Capsule()
-                        .fill(Palette.surface)
-                        .shadow(color: .black.opacity(0.28), radius: 4, y: 1)
+                        .fill(Palette.surfaceElevated)
+                        .shadow(color: .black.opacity(colorScheme == .dark ? 0.24 : 0.08), radius: 2, y: 1)
                 }
             }
             .overlay {
                 if active {
                     Capsule()
-                        .strokeBorder(Palette.specularRim(for: colorScheme, active: true), lineWidth: 1)
+                        .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.14 : 0.10), lineWidth: 1)
                 }
             }
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .disabled(disabled)
-        .opacity(disabled ? 0.38 : 1)
+        .opacity(disabled ? 0.36 : 1)
     }
 
     private var actionCluster: some View {
         let group = app.targets
-        return HStack(spacing: 2) {
+        return HStack(spacing: 1) {
             HeaderIconButton(
                 symbol: "doc.on.doc",
                 disabled: group.isEmpty,
@@ -303,16 +270,16 @@ private struct StudioHeaderBar: View {
 
             ShareLink(items: group.map(app.transferable), preview: { SharePreview($0.name) }) {
                 Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(group.isEmpty ? .tertiary : .secondary)
-                    .frame(width: 28, height: 26)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(group.isEmpty ? Color.secondary.opacity(0.32) : .secondary)
+                    .frame(width: 26, height: 24)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(group.isEmpty)
             .help("Share — AirDrop, Messages, Mail, Photos…")
 
-            Divider().frame(height: 14).padding(.horizontal, 2)
+            Divider().frame(height: 12).padding(.horizontal, 2)
 
             HeaderIconButton(
                 symbol: "gauge.with.dots.needle.33percent",
@@ -321,9 +288,36 @@ private struct StudioHeaderBar: View {
             )
         }
         .padding(.horizontal, 4)
-        .frame(height: 28)
-        .background(Capsule().fill(Color.primary.opacity(0.05)))
+        .frame(height: 26)
+        .background(Capsule().fill(Color.primary.opacity(0.045)))
         .overlay(Capsule().strokeBorder(Palette.hairline, lineWidth: 1))
+    }
+}
+
+private struct PromptLabHeaderButton: View {
+    @State private var hovering = false
+
+    var body: some View {
+        Button {
+            LabWindow.shared.openStudio()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "wand.and.sparkles")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(hovering ? .primary : .secondary)
+                Text("Prompt Lab")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(.primary.opacity(0.9))
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(Capsule().fill(hovering ? Palette.surfaceElevated : Color.primary.opacity(0.05)))
+            .overlay(Capsule().strokeBorder(Palette.hairline, lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("Open the Prompt Lab (⌥⌘L)")
     }
 }
 
@@ -338,12 +332,12 @@ private struct HeaderIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 12, weight: active ? .bold : .medium))
-                .foregroundStyle(disabled ? Color.secondary.opacity(0.35) : (active ? Palette.live : (hovering ? .primary : .secondary)))
-                .frame(width: 28, height: 26)
+                .font(.system(size: 11.5, weight: active ? .semibold : .medium))
+                .foregroundStyle(disabled ? Color.secondary.opacity(0.32) : (active ? Palette.live : (hovering ? .primary : .secondary)))
+                .frame(width: 26, height: 24)
                 .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(active ? Palette.live.opacity(0.14) : (hovering && !disabled ? Color.primary.opacity(0.08) : .clear))
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(active ? Palette.live.opacity(0.13) : (hovering && !disabled ? Color.primary.opacity(0.08) : .clear))
                 )
                 .contentShape(Rectangle())
         }
@@ -466,25 +460,26 @@ private struct GraphCanvas: View {
 
             if (!app.history.isEmpty || app.explored != nil) && !showingGallery {
                 Banner(app: app)
-                    .frame(maxWidth: 960)
+                    .frame(maxWidth: 880)
                     .padding(.horizontal, 24)
             }
 
             if studioMode {
-                if !showingGallery || showsFloatingActivity {
+                let showsComposer = !showingGallery && !app.welcomes
+                if showsComposer || showsFloatingActivity {
                     VStack(spacing: 10) {
                         if showsFloatingActivity { ActivityCard(app: app) }
-                        if !showingGallery { Composer(app: app) }
+                        if showsComposer { Composer(app: app) }
                     }
-                    .frame(maxWidth: 960)
+                    .frame(maxWidth: 860)
                     .padding(.horizontal, 24)
-                    .padding(.top, 10)
-                    .padding(.bottom, 18)
+                    .padding(.top, 8)
+                    .padding(.bottom, 16)
                     .animation(Motion.pick(.easeInOut(duration: 0.2)), value: showsFloatingActivity)
                 }
-            } else if !showingGallery, !(lab.detached && lab.unfolded) {
+            } else if !showingGallery, !app.welcomes, !(lab.detached && lab.unfolded) {
                 LabView(model: lab)
-                    .frame(maxWidth: 960)
+                    .frame(maxWidth: 880)
                     .padding(.horizontal, 24)
                     .padding(.top, 8)
                     .padding(.bottom, 16)

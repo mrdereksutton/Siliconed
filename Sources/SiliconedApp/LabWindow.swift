@@ -37,6 +37,10 @@ final class LabWindow: NSObject, NSWindowDelegate {
                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                          backing: .buffered, defer: true)
         w.title = String(localized: "Prompt Lab")
+        let toolbar = NSToolbar(identifier: "SiliconedLabChrome")
+        toolbar.allowsUserCustomization = false
+        w.toolbar = toolbar
+        w.toolbarStyle = .unifiedCompact
         w.titlebarAppearsTransparent = true
         w.titleVisibility = .hidden
         w.titlebarSeparatorStyle = .none

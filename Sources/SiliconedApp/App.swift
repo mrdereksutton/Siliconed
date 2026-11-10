@@ -331,6 +331,10 @@ final class MainWindow: NSObject, NSWindowDelegate {
         f.title = String(localized: "Siliconed")
         f.subtitle = Self.instanceName
         f.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        let toolbar = NSToolbar(identifier: "SiliconedStudioChrome")
+        toolbar.allowsUserCustomization = false
+        f.toolbar = toolbar
+        f.toolbarStyle = .unifiedCompact
         f.titlebarAppearsTransparent = true
         f.titleVisibility = .hidden
         f.titlebarSeparatorStyle = .none

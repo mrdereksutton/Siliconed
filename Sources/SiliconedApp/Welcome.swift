@@ -21,38 +21,70 @@ struct Welcome: View {
     private var outdated: [Family] { AppState.frontFamilies.filter { app.outdatedVariant(of: $0) != nil } }
 
     var body: some View {
-        VStack(spacing: 22) {
-            VStack(spacing: 8) {
-                if outdated.isEmpty {
-                    Text("Welcome to Siliconed").font(.largeTitle.weight(.semibold))
-                    Text("Choose a model to begin. Its license and the space it takes are shown before anything is downloaded.")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .frame(maxWidth: 460)
-                } else {
-                    Text("New Weights for Your Models").font(.largeTitle.weight(.semibold))
-                    Text("This version of Siliconed brings new weights for the models marked below: update them to render again. The space they take is shown before anything is downloaded.")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .frame(maxWidth: 460)
+        let families = AppState.frontFamilies
+        GeometryReader { geo in
+            ScrollView(.vertical) {
+                VStack(spacing: 24) {
+                    VStack(spacing: 8) {
+                        if outdated.isEmpty {
+                            Text("Welcome to Siliconed")
+                                .font(.system(size: 28, weight: .semibold))
+                                .tracking(-0.4)
+                            Text("Choose a model to begin. Its license and the space it takes are shown before anything is downloaded.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: 480)
+                        } else {
+                            Text("New Weights for Your Models")
+                                .font(.system(size: 28, weight: .semibold))
+                                .tracking(-0.4)
+                            Text("This version of Siliconed brings new weights for the models marked below: update them to render again. The space they take is shown before anything is downloaded.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: 500)
+                        }
+                    }
+
+                    // Side by side when the canvas holds all five, else 3 + 2, else 2 + 2 + 1 — each row sharing equal card height.
+                    ViewThatFits(in: .horizontal) {
+                        cardRow(families)
+                        VStack(spacing: 14) {
+                            cardRow(Array(families.prefix(3)))
+                            cardRow(Array(families.dropFirst(3)))
+                        }
+                        VStack(spacing: 14) {
+                            cardRow(Array(families.prefix(2)))
+                            cardRow(Array(families.dropFirst(2).prefix(2)))
+                            cardRow(Array(families.dropFirst(4)))
+                        }
+                    }
+
+                    if let title = app.forgeInProgress {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text(title).font(.callout).foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Button("All Models…") { app.managementOpen = true }
+                            .buttonStyle(.chartLink)
+                            .font(.callout.weight(.medium))
+                    }
                 }
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 28)
+                .frame(minWidth: geo.size.width, minHeight: geo.size.height)
             }
-            // Side by side when the canvas holds them, else two by two.
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 16) { ForEach(AppState.frontFamilies, id: \.self) { card($0) } }
-                VStack(spacing: 16) {
-                    HStack(alignment: .top, spacing: 16) { ForEach(AppState.frontFamilies.prefix(2), id: \.self) { card($0) } }
-                    HStack(alignment: .top, spacing: 16) { ForEach(AppState.frontFamilies.dropFirst(2), id: \.self) { card($0) } }
-                }
-            }
-            if let title = app.forgeInProgress {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text(title).font(.callout).foregroundStyle(.secondary)
-                }
-            } else {
-                Button("All Models…") { app.managementOpen = true }.buttonStyle(.chartLink)
-            }
+            .scrollBounceBehavior(.basedOnSize)
+            .scrollIndicators(.automatic)
         }
-        .multilineTextAlignment(.center)
+    }
+
+    private func cardRow(_ row: [Family]) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            ForEach(row, id: \.self) { card($0) }
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func card(_ family: Family) -> some View {
@@ -61,25 +93,33 @@ struct Welcome: View {
         let variant = choice[family] ?? old ?? family.preselectedVariant()
         let size = family.installedSize(variant)
         return VStack(alignment: .leading, spacing: 10) {
-            HStack {
+            HStack(spacing: 8) {
                 Image(systemName: Self.symbol(family))
-                    .font(.title2).foregroundStyle(Palette.live)
-                Spacer()
-                Text(verbatim: model.licenseName).font(.caption).foregroundStyle(.secondary)
-                    .lineLimit(1).truncationMode(.tail)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Palette.live)
+                Spacer(minLength: 6)
+                Text(verbatim: model.licenseName)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
             HStack(spacing: 6) {
-                Text(verbatim: model.name).font(.title3.weight(.semibold))
+                Text(verbatim: model.name)
+                    .font(.system(size: 16, weight: .semibold))
                 if family.isBeta { BetaBadge() }
             }
             Text(Self.blurb(family))
-                .font(.callout).foregroundStyle(.secondary)
+                .font(.callout)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if let old {
                 Label(String(localized: "Your \(VersionChoice.name(old)) takes new weights"), systemImage: "arrow.down.circle")
-                    .font(.caption.weight(.medium)).foregroundStyle(Palette.live)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Palette.live)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 10)
             // Standard, Compact or Light, each with its space on disk (`Family.installedSize`): the rack
             // shows another figure, the memory a render needs (`ModelCard.memoryNeed`).
             if family.variants.count > 1 {
@@ -89,7 +129,8 @@ struct Welcome: View {
             HStack {
                 if family.variants.count == 1 {
                     Label("\(Figures.disk(size.dit + size.encoder + size.components)) on disk", systemImage: "internaldrive")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                         .help("The space it takes on disk once installed")
                 }
                 Spacer()
@@ -97,12 +138,13 @@ struct Welcome: View {
                     .buttonStyle(.prominent)
                     .disabled(!app.managementPossible)
             }
+            .padding(.top, 2)
         }
         .multilineTextAlignment(.leading)
         .padding(16)
-        .frame(width: 270, height: family.variants.count > 1 ? 270 : 200)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.surface))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Palette.hairline))
+        .frame(width: 256)
+        .frame(minHeight: family.variants.count > 1 ? 284 : 196, maxHeight: .infinity, alignment: .topLeading)
+        .studioCard(cornerRadius: 14, active: old != nil)
     }
 
     static func symbol(_ family: Family) -> String {

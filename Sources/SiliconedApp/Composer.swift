@@ -11,11 +11,12 @@ import SwiftUI
 
 struct Composer: View {
     @Bindable var app: AppState
+    @FocusState private var promptFocused: Bool
 
     var body: some View {
         let hub = StudioHub.shared
         let _ = hub.theme
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             if app.editingPossible, !app.references.isEmpty {
                 references
             } else if let start = app.usedStart {
@@ -45,39 +46,27 @@ struct Composer: View {
                 .padding(.horizontal, 4)
             }
             SeriesSummary(app: app)
-            ScrollView(.horizontal) {
-                HStack(alignment: .center, spacing: 7) {
-                    if app.editingPossible { AttachPill(app: app) }
-                    SubjectsVaultPill(app: app)
-                    ModelPill(app: app)
-                    if app.references.isEmpty {
-                        SizePills(app: app)
-                    } else {
-                        // An edit keeps image 1's framing: its size, not a choice.
-                        let f = app.outputFormat
-                        PillFace {
-                            Text(verbatim: "\(f.width) × \(f.height)").monospacedDigit()
-                            Image(systemName: "lock.fill").imageScale(.small).foregroundStyle(.secondary)
-                        }
-                        .help("An edit keeps the framing of image 1: about 1 megapixel at its proportions, each side at least 512, 1024² at most")
-                    }
-                    StylePill(app: app)
-                    CameraPill(app: app)
-                    if app.missing == nil, app.card != nil {
-                        LoRAPill(app: app)
-                        SettingsPill(app: app)
-                    }
-                    BatchPill(app: app)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 6) {
+                    pillsRow
+                    Spacer(minLength: 10)
+                    GenerateButton(app: app)
+                }
+
+                ScrollView(.horizontal) {
+                    pillsRow
+                }
+                .scrollIndicators(.never)
+                .safeAreaInset(edge: .trailing, spacing: 10) {
+                    GenerateButton(app: app)
                 }
             }
-            .scrollIndicators(.never)
-            .safeAreaInset(edge: .trailing, spacing: 10) {
-                GenerateButton(app: app)
-            }
+
             StatusLine(app: app)
         }
-        .padding(16)
-        .studioCard(cornerRadius: 22, elevated: true)
+        .padding(14)
+        .studioCard(cornerRadius: 18, elevated: true)
         // As on the canvas: a PNG Siliconed wrote brings back its settings; on a model that edits, any
         // other image joins the edit; when a starting image is held, a dropped image replaces it.
         .dropDestination(for: DroppedImage.self) { items, _ in
@@ -110,35 +99,62 @@ struct Composer: View {
         }
     }
 
+    private var pillsRow: some View {
+        HStack(alignment: .center, spacing: 6) {
+            if app.editingPossible { AttachPill(app: app) }
+            SubjectsVaultPill(app: app)
+            ModelPill(app: app)
+            if app.references.isEmpty {
+                SizePills(app: app)
+            } else {
+                // An edit keeps image 1's framing: its size, not a choice.
+                let f = app.outputFormat
+                PillFace {
+                    Text(verbatim: "\(f.width) × \(f.height)").monospacedDigit()
+                    Image(systemName: "lock.fill").imageScale(.small).foregroundStyle(.secondary)
+                }
+                .help("An edit keeps the framing of image 1: about 1 megapixel at its proportions, each side at least 512, 1024² at most")
+            }
+            StylePill(app: app)
+            CameraPill(app: app)
+            if app.missing == nil, app.card != nil {
+                LoRAPill(app: app)
+                SettingsPill(app: app)
+            }
+            BatchPill(app: app)
+        }
+    }
+
     // MARK: The prompt and an edit's images
 
     /// **The prompt**: as tall as its text — two lines to seven, then it scrolls. Return makes a new
-    /// line; ⌘↩ renders. On its right: the clear button (⌘Z brings the prompt back) and the Prompt Lab (⌥⌘L).
+    /// line; ⌘↩ renders. On its right: the clear button (⌘Z brings the prompt back), Polish, and Prompt Lab (⌥⌘L).
     private var prompt: some View {
         let hub = StudioHub.shared
-        let trailingPad: CGFloat = app.prompt.isEmpty ? 68 : 96
+        let trailingPad: CGFloat = app.prompt.isEmpty ? 66 : 94
         // The text, invisible, gives the editor its height (`TextEditor` takes any height it is offered);
         // its line limit is the cap — a `frame(maxHeight:)` would grow to the height offered.
         return Text(verbatim: app.prompt + " ")
-            .font(.system(size: 15))
+            .font(.system(size: 14.5))
             .lineLimit(7)
             .padding(.leading, 5)
             .padding(.trailing, trailingPad)
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 38, alignment: .topLeading)
             .opacity(0)
             .accessibilityHidden(true)
             .overlay {
                 ZStack(alignment: .topLeading) {
                     TextEditor(text: $app.prompt)
+                        .focused($promptFocused)
                         .accessibilityLabel(Text("Prompt"))
-                        .font(.system(size: 15))
+                        .font(.system(size: 14.5))
                         .scrollContentBackground(.hidden)
                         .scrollIndicators(.never)
                         // Room for the clear, Polish and Prompt Lab buttons: a line never runs under them.
                         .contentMargins(.trailing, trailingPad - 2, for: .scrollContent)
                     if app.prompt.isEmpty {
                         Text(app.references.isEmpty ? "Describe the image…" : "Say what changes…")
-                            .font(.system(size: 15))
+                            .font(.system(size: 14.5))
                             .foregroundStyle(.tertiary)
                             .padding(.leading, 5)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -146,14 +162,14 @@ struct Composer: View {
                     }
                 }
                 .overlay(alignment: .topTrailing) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 5) {
                         if !app.prompt.isEmpty {
                             Button {
                                 hub.prePolishPrompt = nil
                                 MainWindow.shared.setPrompt("", of: app, action: String(localized: "Clear Prompt"))
                             } label: {
                                 Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
-                                    .frame(width: 22, height: 26).contentShape(Rectangle())
+                                    .frame(width: 22, height: 24).contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .help("Clear the prompt (⌘Z brings it back)")
@@ -168,16 +184,16 @@ struct Composer: View {
                                     ProgressView().controlSize(.mini)
                                 } else {
                                     Image(systemName: "sparkles")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(hub.autoPolish ? Palette.onLive : Palette.live)
+                                        .font(.system(size: 11.5, weight: .semibold))
+                                        .foregroundStyle(hub.autoPolish ? Palette.onLive : (app.promptIsEmpty ? Color.secondary.opacity(0.4) : Palette.live))
                                 }
                             }
-                            .frame(width: 26, height: 26)
+                            .frame(width: 25, height: 25)
                             .background(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .fill(hub.autoPolish ? Palette.live : Color.primary.opacity(0.08))
+                                RoundedRectangle(cornerRadius: 6.5, style: .continuous)
+                                    .fill(hub.autoPolish ? Palette.live : Color.primary.opacity(0.06))
                             )
-                            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Palette.hairline))
+                            .overlay(RoundedRectangle(cornerRadius: 6.5, style: .continuous).strokeBorder(Palette.hairline))
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -195,11 +211,11 @@ struct Composer: View {
 
                         Button { LabWindow.shared.openStudio() } label: {
                             Image(systemName: "wand.and.sparkles")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.system(size: 11.5, weight: .semibold))
                                 .foregroundStyle(WireKind.text.color)
-                                .frame(width: 26, height: 26)
-                                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.primary.opacity(0.08)))
-                                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Palette.hairline))
+                                .frame(width: 25, height: 25)
+                                .background(RoundedRectangle(cornerRadius: 6.5, style: .continuous).fill(Color.primary.opacity(0.06)))
+                                .overlay(RoundedRectangle(cornerRadius: 6.5, style: .continuous).strokeBorder(Palette.hairline))
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -208,6 +224,16 @@ struct Composer: View {
                     }
                 }
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Palette.well)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(promptFocused ? Color.primary.opacity(0.20) : Palette.hairline, lineWidth: 1)
+            )
     }
 
     /// An edit's images, numbered as the prompt names them — image 1 is the one edited.
@@ -543,8 +569,8 @@ private struct BatchPill: View {
 
 // MARK: - Generate
 
-/// **« Generate »**: luminous Studio CTA with theme gradient, high-contrast ink, and outer glow;
-/// greyed while something stops the render (said in the status line under it).
+/// **« Generate »**: crisp overhead-lit Studio CTA with high-contrast ink and zero neon blur;
+/// cleanly recessed in neutral dark ink while something stops the render (said in the status line under it).
 private struct GenerateButton: View {
     @Bindable var app: AppState
     @Environment(\.colorScheme) private var colorScheme
@@ -552,41 +578,50 @@ private struct GenerateButton: View {
 
     var body: some View {
         let blocked = app.formBlocker != nil || app.memoryRefusal != nil
-        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
         Button { app.render() } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: 7) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 12, weight: .bold))
-                Text(GenerateControls.title(app))
-                    .font(.system(size: 14, weight: .bold))
-                Text(verbatim: "⌘↩")
                     .font(.system(size: 11.5, weight: .semibold))
-                    .opacity(0.68)
+                Text(GenerateControls.title(app))
+                    .font(.system(size: 13.5, weight: .semibold))
+                Text(verbatim: "⌘↩")
+                    .font(.system(size: 11, weight: .medium))
+                    .opacity(blocked ? 0.7 : 0.62)
             }
-            .foregroundStyle(Palette.onLive)
-            .padding(.horizontal, 18)
-            .frame(height: 38)
-            .background(shape.fill(Palette.ctaGradient(for: colorScheme)))
-            .overlay(
-                shape.strokeBorder(
-                    LinearGradient(
-                        colors: [.white.opacity(0.45), .white.opacity(0.08)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    ),
-                    lineWidth: 1
-                )
-            )
-            .shadow(color: blocked ? .clear : Palette.live.opacity(hovering ? 0.46 : 0.28),
-                    radius: hovering ? 14 : 9, y: 2)
-            .scaleEffect(hovering && !blocked ? 1.015 : 1.0)
-            .opacity(blocked ? 0.38 : 1)
+            .foregroundStyle(blocked ? AnyShapeStyle(Color.primary.opacity(0.38)) : AnyShapeStyle(Palette.onLive))
+            .padding(.horizontal, 15)
+            .frame(height: 34)
+            .background {
+                if blocked {
+                    shape.fill(Color.primary.opacity(0.07))
+                } else {
+                    shape.fill(Palette.ctaGradient(for: colorScheme))
+                }
+            }
+            .overlay {
+                if blocked {
+                    shape.strokeBorder(Palette.hairline, lineWidth: 1)
+                } else {
+                    shape.strokeBorder(
+                        LinearGradient(
+                            colors: [.white.opacity(colorScheme == .dark ? 0.30 : 0.18), .white.opacity(0.05)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ),
+                        lineWidth: 1
+                    )
+                }
+            }
+            .shadow(color: blocked ? .clear : .black.opacity(colorScheme == .dark ? 0.28 : 0.10),
+                    radius: 2.5, y: 1)
+            .brightness(hovering && !blocked ? 0.04 : 0)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(blocked)
         .onHover { hovering = $0 }
-        .animation(Motion.pick(.easeOut(duration: 0.14)), value: hovering)
+        .animation(Motion.pick(.easeOut(duration: 0.12)), value: hovering)
         .help(app.plannedCost.map { Text(verbatim: "≈ " + Figures.duration($0)) } ?? Text(verbatim: "⌘↩"))
     }
 }

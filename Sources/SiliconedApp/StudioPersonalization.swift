@@ -790,17 +790,17 @@ struct StudioThemePill: View {
         Button { open.toggle() } label: {
             HStack(spacing: 6) {
                 Circle()
-                    .fill(Palette.ctaGradient(for: scheme))
-                    .frame(width: 9, height: 9)
-                    .shadow(color: Palette.live.opacity(0.6), radius: 4)
+                    .fill(Palette.live)
+                    .frame(width: 7.5, height: 7.5)
                 Text(theme.title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(.primary.opacity(0.9))
                     .lineLimit(1)
             }
             .padding(.horizontal, 10)
-            .frame(height: 28)
-            .background(Capsule().fill(hovering || open ? Palette.surfaceElevated : Palette.surface))
-            .overlay(Capsule().strokeBorder(Palette.specularRim(for: scheme, active: open), lineWidth: 1))
+            .frame(height: 26)
+            .background(Capsule().fill(hovering || open ? Palette.surfaceElevated : Color.primary.opacity(0.05)))
+            .overlay(Capsule().strokeBorder(open ? Palette.live.opacity(0.6) : Palette.hairline, lineWidth: 1))
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -1651,51 +1651,29 @@ struct AmbientBackdropView: View {
         return hub.aura(for: app.selectedEntry)
     }
 
-    private var studioAmbientColors: (Color, Color) {
-        switch hub.theme {
-        case .cinemaLime:
-            return (Color(hex: 0xD4FF33), Color(hex: 0x10B981))
-        case .electricStudio:
-            return (Color(hex: 0xEC4899), Color(hex: 0x6366F1))
-        case .siliconedIndigo:
-            return (Color(hex: 0x56C0B0), Color(hex: 0x6660CB))
-        }
-    }
-
     var body: some View {
         let _ = hub.theme
         ZStack {
             Palette.canvas
-            GeometryReader { geo in
-                let w = geo.size.width
-                let h = geo.size.height
-                if let aura = activeAura {
+            if let aura = activeAura {
+                GeometryReader { geo in
+                    let w = geo.size.width
+                    let h = geo.size.height
                     ZStack {
                         Circle()
-                            .fill(aura.primary.opacity(colorScheme == .dark ? 0.25 : 0.15))
-                            .frame(width: max(w, h) * 0.72, height: max(w, h) * 0.72)
+                            .fill(aura.primary.opacity(colorScheme == .dark ? 0.22 : 0.13))
+                            .frame(width: max(w, h) * 0.68, height: max(w, h) * 0.68)
                             .position(x: w * 0.36, y: h * 0.42)
                         Circle()
-                            .fill(aura.secondary.opacity(colorScheme == .dark ? 0.20 : 0.12))
-                            .frame(width: max(w, h) * 0.65, height: max(w, h) * 0.65)
+                            .fill(aura.secondary.opacity(colorScheme == .dark ? 0.18 : 0.10))
+                            .frame(width: max(w, h) * 0.62, height: max(w, h) * 0.62)
                             .position(x: w * 0.66, y: h * 0.62)
                     }
-                    .blur(radius: 115)
-                    .transition(.opacity)
-                } else if hub.ambientBacklight {
-                    let (c1, c2) = studioAmbientColors
-                    ZStack {
-                        Ellipse()
-                            .fill(c1.opacity(colorScheme == .dark ? 0.065 : 0.04))
-                            .frame(width: w * 0.62, height: h * 0.40)
-                            .position(x: w * 0.50, y: h * 0.08)
-                        Ellipse()
-                            .fill(c2.opacity(colorScheme == .dark ? 0.055 : 0.035))
-                            .frame(width: w * 0.50, height: h * 0.42)
-                            .position(x: w * 0.78, y: h * 0.85)
-                    }
-                    .blur(radius: 110)
+                    .blur(radius: 120)
+                    // 16-bit float Metal compositing eliminates 8-bit sRGB gradient banding on dark obsidian surfaces.
+                    .drawingGroup(opaque: false, colorMode: .extendedLinear)
                 }
+                .transition(.opacity)
             }
         }
         .animation(Motion.pick(.easeInOut(duration: 0.55)), value: app.selectedEntry?.id)

@@ -203,11 +203,11 @@ struct LabView: View {
                 }
                 detachButton
             }
-            .padding(.leading, 78)
-            .padding(.trailing, 14)
+            .padding(.leading, 84)
+            .padding(.trailing, 12)
         }
-        .frame(height: 44)
-        .background(Palette.surface.opacity(0.55))
+        .frame(height: 40)
+        .background(Palette.column)
     }
 
     private var header: some View {

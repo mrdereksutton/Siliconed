@@ -230,9 +230,8 @@ private struct RatioPreviewStage: View {
                     .fill(Palette.live.opacity(0.14))
                     .overlay(
                         RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .strokeBorder(Palette.live, lineWidth: 1.7)
+                            .strokeBorder(Palette.live, lineWidth: 1.6)
                     )
-                    .shadow(color: Palette.live.opacity(0.24), radius: 7, y: 1)
                     .frame(width: frameW, height: frameH)
                     .animation(Motion.pick(.spring(response: 0.24, dampingFraction: 0.78)), value: ratio)
             }
