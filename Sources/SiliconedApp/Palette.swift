@@ -41,7 +41,7 @@ enum StudioTheme: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .cinemaLime: [0x09090B, 0xD1FA48, 0xB8E82C]
         case .electricStudio: [0x09090D, 0xEC4899, 0x9333EA]
-        case .siliconedIndigo: [0x131424, 0x68E8D4, 0x48B5A5]
+        case .siliconedIndigo: [0x131424, 0x10CFC2, 0x09A39A]
         }
     }
 }
@@ -82,7 +82,7 @@ enum Palette {
             switch theme {
             case .cinemaLime: 0xC8F53B
             case .electricStudio: 0xE879F9
-            case .siliconedIndigo: 0x56C0B0
+            case .siliconedIndigo: 0x14C8BA
             }
         },
         light: { theme in
@@ -107,7 +107,7 @@ enum Palette {
         let colors: [Color] = switch activeTheme {
         case .cinemaLime: [Color(hex: 0xD1FA48), Color(hex: 0xB8E82C)]
         case .electricStudio: [Color(hex: 0xEC4899), Color(hex: 0x9333EA)]
-        case .siliconedIndigo: [Color(hex: 0x68E8D4), Color(hex: 0x48B5A5)]
+        case .siliconedIndigo: [Color(hex: 0x10CFC2), Color(hex: 0x09A39A)]
         }
         return LinearGradient(colors: colors, startPoint: .top, endPoint: .bottom)
     }
@@ -191,7 +191,7 @@ enum Palette {
                 switch theme {
                 case .cinemaLime: 0x0A0D05
                 case .electricStudio: 0xFFFFFF
-                case .siliconedIndigo: 0x0F1021
+                case .siliconedIndigo: 0x051217
                 }
             },
             light: { _ in 0xFCFCFC }

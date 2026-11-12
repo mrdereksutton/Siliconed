@@ -15,7 +15,7 @@ struct Composer: View {
     var body: some View {
         let hub = StudioHub.shared
         let _ = hub.theme
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 11) {
             if app.editingPossible, !app.references.isEmpty {
                 references
             } else if let start = app.usedStart {
@@ -64,11 +64,13 @@ struct Composer: View {
                     .fixedSize()
             }
 
-            StatusLine(app: app)
+            if StatusLine.hasContent(for: app) {
+                StatusLine(app: app)
+            }
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 18)
-        .padding(.bottom, 14)
+        .padding(.horizontal, 18)
+        .padding(.top, 14)
+        .padding(.bottom, 13)
         .studioCard(cornerRadius: 20, elevated: true)
         // As on the canvas: a PNG Siliconed wrote brings back its settings; on a model that edits, any
         // other image joins the edit; when a starting image is held, a dropped image replaces it.
@@ -132,98 +134,96 @@ struct Composer: View {
     /// line; ⌘↩ renders. On its right: the clear button (⌘Z brings the prompt back), Polish, and Prompt Lab (⌥⌘L).
     private var prompt: some View {
         let hub = StudioHub.shared
-        let trailingPad: CGFloat = app.prompt.isEmpty ? 74 : 104
-        // The text, invisible, gives the editor its height (`TextEditor` takes any height it is offered);
-        // its line limit is the cap — a `frame(maxHeight:)` would grow to the height offered.
-        return Text(verbatim: app.prompt + " ")
-            .font(.system(size: 15.5))
-            .lineLimit(7)
-            .padding(.leading, 5)
-            .padding(.trailing, trailingPad)
-            .frame(maxWidth: .infinity, minHeight: 54, alignment: .topLeading)
-            .opacity(0)
-            .accessibilityHidden(true)
-            .overlay {
-                ZStack(alignment: .topLeading) {
-                    TextEditor(text: $app.prompt)
-                        .accessibilityLabel(Text("Prompt"))
-                        .font(.system(size: 15.5))
-                        .scrollContentBackground(.hidden)
-                        .scrollIndicators(.never)
-                        // Room for the clear, Polish and Prompt Lab buttons: a line never runs under them.
-                        .contentMargins(.trailing, trailingPad - 2, for: .scrollContent)
-                    if app.prompt.isEmpty {
-                        Text(app.references.isEmpty ? "Describe the image…" : "Say what changes…")
+        // Dedicated HStack so TextEditor stops cleanly to the left of the Clear, Polish, and Prompt Lab buttons
+        // and never runs lines of text underneath them.
+        return HStack(alignment: .top, spacing: 10) {
+            Text(verbatim: app.prompt + " ")
+                .font(.system(size: 15.5))
+                .lineLimit(7)
+                .padding(.leading, 5)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
+                .opacity(0)
+                .accessibilityHidden(true)
+                .overlay {
+                    ZStack(alignment: .topLeading) {
+                        TextEditor(text: $app.prompt)
+                            .accessibilityLabel(Text("Prompt"))
                             .font(.system(size: 15.5))
-                            .foregroundStyle(.tertiary)
-                            .padding(.leading, 5)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                            .allowsHitTesting(false)
+                            .scrollContentBackground(.hidden)
+                            .scrollIndicators(.never)
+                        if app.prompt.isEmpty {
+                            Text(app.references.isEmpty ? "Describe the image…" : "Say what changes…")
+                                .font(.system(size: 15.5))
+                                .foregroundStyle(.tertiary)
+                                .padding(.leading, 5)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                .allowsHitTesting(false)
+                        }
                     }
                 }
-                .overlay(alignment: .topTrailing) {
-                    HStack(spacing: 6) {
-                        if !app.prompt.isEmpty {
-                            Button {
-                                hub.prePolishPrompt = nil
-                                MainWindow.shared.setPrompt("", of: app, action: String(localized: "Clear Prompt"))
-                            } label: {
-                                Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
-                                    .frame(width: 24, height: 28).contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .help("Clear the prompt (⌘Z brings it back)")
-                            .accessibilityLabel(Text("Clear Prompt"))
-                        }
 
-                        Button {
-                            hub.polishPrompt(on: app)
-                        } label: {
-                            HStack(spacing: 3) {
-                                if hub.isPolishing {
-                                    ProgressView().controlSize(.mini)
-                                } else {
-                                    Image(systemName: "sparkles")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(hub.autoPolish ? Palette.onLive : (app.promptIsEmpty ? Color.secondary.opacity(0.4) : Palette.live))
-                                }
-                            }
-                            .frame(width: 28, height: 28)
-                            .background(
-                                RoundedRectangle(cornerRadius: 7.5, style: .continuous)
-                                    .fill(hub.autoPolish ? Palette.live : Color.primary.opacity(0.06))
-                            )
-                            .overlay(RoundedRectangle(cornerRadius: 7.5, style: .continuous).strokeBorder(Palette.hairline))
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(app.promptIsEmpty && !hub.isPolishing)
-                        .contextMenu {
-                            Toggle("Auto-Polish on Generate", isOn: Bindable(hub).autoPolish)
-                            if hub.prePolishPrompt != nil {
-                                Button("Revert") { hub.revertPolish(on: app) }
-                            }
-                        }
-                        .help(hub.autoPolish
-                              ? "Polish prompt now (Auto-Polish is ON — right-click to turn off)"
-                              : "Polish prompt with the local AI writer (right-click to enable Auto-Polish)")
-                        .accessibilityLabel(Text("Polish Prompt"))
+            HStack(spacing: 6) {
+                if !app.prompt.isEmpty {
+                    Button {
+                        hub.prePolishPrompt = nil
+                        MainWindow.shared.setPrompt("", of: app, action: String(localized: "Clear Prompt"))
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                            .frame(width: 24, height: 28).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clear the prompt (⌘Z brings it back)")
+                    .accessibilityLabel(Text("Clear Prompt"))
+                }
 
-                        Button { LabWindow.shared.openStudio() } label: {
-                            Image(systemName: "wand.and.sparkles")
+                Button {
+                    hub.polishPrompt(on: app)
+                } label: {
+                    HStack(spacing: 3) {
+                        if hub.isPolishing {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Image(systemName: "sparkles")
                                 .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(WireKind.text.color)
-                                .frame(width: 28, height: 28)
-                                .background(RoundedRectangle(cornerRadius: 7.5, style: .continuous).fill(Color.primary.opacity(0.06)))
-                                .overlay(RoundedRectangle(cornerRadius: 7.5, style: .continuous).strokeBorder(Palette.hairline))
-                                .contentShape(Rectangle())
+                                .foregroundStyle(hub.autoPolish ? Palette.onLive : (app.promptIsEmpty ? Color.secondary.opacity(0.4) : Palette.live))
                         }
-                        .buttonStyle(.plain)
-                        .help("Open the Prompt Lab (⌥⌘L)")
-                        .accessibilityLabel(Text("Prompt Lab"))
+                    }
+                    .frame(width: 28, height: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7.5, style: .continuous)
+                            .fill(hub.autoPolish ? Palette.live : Color.primary.opacity(0.06))
+                    )
+                    .overlay(RoundedRectangle(cornerRadius: 7.5, style: .continuous).strokeBorder(Palette.hairline))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(app.promptIsEmpty && !hub.isPolishing)
+                .contextMenu {
+                    Toggle("Auto-Polish on Generate", isOn: Bindable(hub).autoPolish)
+                    if hub.prePolishPrompt != nil {
+                        Button("Revert") { hub.revertPolish(on: app) }
                     }
                 }
+                .help(hub.autoPolish
+                      ? "Polish prompt now (Auto-Polish is ON — right-click to turn off)"
+                      : "Polish prompt with the local AI writer (right-click to enable Auto-Polish)")
+                .accessibilityLabel(Text("Polish Prompt"))
+
+                Button { LabWindow.shared.openStudio() } label: {
+                    Image(systemName: "wand.and.sparkles")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(WireKind.text.color)
+                        .frame(width: 28, height: 28)
+                        .background(RoundedRectangle(cornerRadius: 7.5, style: .continuous).fill(Color.primary.opacity(0.06)))
+                        .overlay(RoundedRectangle(cornerRadius: 7.5, style: .continuous).strokeBorder(Palette.hairline))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Open the Prompt Lab (⌥⌘L)")
+                .accessibilityLabel(Text("Prompt Lab"))
             }
+            .fixedSize()
+        }
     }
 
     /// An edit's images, numbered as the prompt names them — image 1 is the one edited.
@@ -566,21 +566,28 @@ private struct GenerateButton: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var hovering = false
 
+    private var tooltip: String {
+        guard app.missing == nil, app.card != nil else { return "⌘↩" }
+        let f = app.outputFormat
+        var parts = ["\(f.width) × \(f.height)"]
+        if let need = app.memoryNeed { parts.append(Figures.memory(need)) }
+        if let t = app.plannedCost { parts.append("≈ " + Figures.duration(t)) }
+        return parts.joined(separator: " · ")
+    }
+
     var body: some View {
         let blocked = app.formBlocker != nil || app.memoryRefusal != nil
         let shape = RoundedRectangle(cornerRadius: 10.5, style: .continuous)
         Button { app.render() } label: {
             HStack(spacing: 8) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 12, weight: .semibold))
                 Text(GenerateControls.title(app))
                     .font(.system(size: 14, weight: .semibold))
                 Text(verbatim: "⌘↩")
                     .font(.system(size: 11.5, weight: .medium))
-                    .opacity(blocked ? 0.7 : 0.62)
+                    .opacity(blocked ? 0.65 : 0.68)
             }
             .foregroundStyle(blocked ? AnyShapeStyle(Color.primary.opacity(0.4)) : AnyShapeStyle(Palette.onLive))
-            .padding(.horizontal, 18)
+            .padding(.horizontal, 16)
             .frame(height: 36)
             .background {
                 if blocked {
@@ -595,7 +602,7 @@ private struct GenerateButton: View {
                 } else {
                     shape.strokeBorder(
                         LinearGradient(
-                            colors: [.white.opacity(colorScheme == .dark ? 0.30 : 0.18), .white.opacity(0.05)],
+                            colors: [.white.opacity(colorScheme == .dark ? 0.24 : 0.18), .white.opacity(0.04)],
                             startPoint: .top,
                             endPoint: .bottom
                         ),
@@ -612,29 +619,35 @@ private struct GenerateButton: View {
         .disabled(blocked)
         .onHover { hovering = $0 }
         .animation(Motion.pick(.easeOut(duration: 0.12)), value: hovering)
-        .help(app.plannedCost.map { Text(verbatim: "≈ " + Figures.duration($0)) } ?? Text(verbatim: "⌘↩"))
+        .help(Text(verbatim: tooltip))
     }
 }
 
 // MARK: - The status line
 
-/// **Under the pills, one line**: the cost before the click (size, memory, time learned on this Mac),
-/// then on the right what stops « Generate » (except an empty prompt), a memory refusal with the size
-/// this Mac renders, the measure a first render waits for, or — when the canvas shows another image —
-/// the running render's step and time left, with its stop.
+/// **Under the pills, shown only when there is something actionable to report**: what stops « Generate »
+/// (except an empty prompt), a memory refusal with the size this Mac renders, the measure a first render
+/// waits for, or — when the canvas shows another image — the running render's step and time left.
 private struct StatusLine: View {
     @Bindable var app: AppState
 
+    static func hasContent(for app: AppState) -> Bool {
+        let form = app.formBlocker.flatMap { app.promptIsEmpty ? nil : $0 }
+        let refusal = app.formBlocker == nil ? app.memoryRefusal : nil
+        if form != nil || refusal?.text != nil { return true }
+        if case .running = app.diagnostic { return true }
+        if app.state(of: .denoising) == .active, app.totalSteps > 0,
+           !(app.followsRender || app.history.isEmpty) { return true }
+        return false
+    }
+
     var body: some View {
-        // Read once per drawing: the memory half computes the need against B (`MemoryBudget`).
         let form = app.formBlocker.flatMap { app.promptIsEmpty ? nil : $0 }
         let refusal = app.formBlocker == nil ? app.memoryRefusal : nil
         HStack(spacing: 8) {
-            cost
-            Spacer(minLength: 12)
+            Spacer(minLength: 0)
             if let reason = form ?? refusal?.text {
                 Text(reason).lineLimit(1).truncationMode(.tail)
-                // A memory refusal is never a dead end: a size this Mac renders.
                 if let f = refusal?.smaller {
                     Button(String(localized: "Use \(String(f.width)) × \(String(f.height))")) { app.useFormat(f) }
                         .buttonStyle(.link)
@@ -647,7 +660,6 @@ private struct StatusLine: View {
                 Text(verbatim: "\(line) · \(done + 1)/\(total)").foregroundStyle(.tertiary).lineLimit(1)
             } else if app.state(of: .denoising) == .active, app.totalSteps > 0,
                       !(app.followsRender || app.history.isEmpty) {
-                // The canvas shows another image: the running render's progress is said here instead.
                 Text("step \(app.currentStep)/\(app.totalSteps)").monospacedDigit()
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     if let r = app.remaining(at: context.date) {
@@ -666,26 +678,6 @@ private struct StatusLine: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 4)
     }
-
-    /// Size · memory · time: the figures, text only.
-    @ViewBuilder private var cost: some View {
-        if app.missing == nil, app.card != nil {
-            let f = app.outputFormat
-            HStack(spacing: 6) {
-                Text(verbatim: "\(f.width) × \(f.height)").monospacedDigit()
-                if let need = app.memoryNeed {
-                    separator
-                    Text(Figures.memory(need)).monospacedDigit()
-                }
-                if let t = app.plannedCost {
-                    separator
-                    Text(verbatim: "≈ " + Figures.duration(t)).monospacedDigit()
-                }
-            }
-        }
-    }
-
-    private var separator: some View { Text(verbatim: "·").foregroundStyle(.tertiary) }
 }
 
 extension AppState {

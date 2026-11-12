@@ -173,9 +173,9 @@ struct SceneView: View {
     // ── Nothing yet ──
 
     private var empty: some View {
-        VStack(spacing: 10) {
-            if !app.visibleReady.isEmpty, app.missing != nil {
-                Image(systemName: "shippingbox")
+        VStack(spacing: 12) {
+            if !app.visibleReady.isEmpty, app.sidebarTab != .explore {
+                Image(systemName: app.missing == nil ? "sparkles" : "shippingbox")
                     .font(.system(size: 44, weight: .light))
                     .foregroundStyle(.secondary)
             }
@@ -207,7 +207,10 @@ struct SceneView: View {
                     .font(.callout).foregroundStyle(.secondary)
                     .frame(maxWidth: 440)
             } else {
-                InteractiveEmptyStage(app: app)
+                Text("Describe an image, then press ⌘↩").font(.title3).foregroundStyle(.secondary)
+                if app.editingPossible {
+                    Text("Drop an image here to edit it.").font(.callout).foregroundStyle(.secondary)
+                }
             }
         }
         .multilineTextAlignment(.center)

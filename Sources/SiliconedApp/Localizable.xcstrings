@@ -6459,46 +6459,6 @@
         }
       }
     },
-    "APPLE SILICON CREATIVE STUDIO" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "APPLE SILICON KREATIVSTUDIO"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ESTUDIO CREATIVO APPLE SILICON"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "STUDIO CRÉATIF APPLE SILICON"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "STUDIO CREATIVO APPLE SILICON"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "APPLE SILICON クリエイティブスタジオ"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "APPLE SILICON 创意工作室"
-          }
-        }
-      }
-    },
     "About Siliconed" : {
       "localizations" : {
         "de" : {
@@ -14219,6 +14179,46 @@
         }
       }
     },
+    "Describe an image, then press ⌘↩" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beschreiben Sie ein Bild und drücken Sie dann ⌘↩"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Describe una imagen y pulsa ⌘↩"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Décrivez une image, puis ⌘↩"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Descrivi un’immagine, poi premi ⌘↩"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "画像を説明してから⌘↩を押してください"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "描述一张图像，然后按 ⌘↩"
+          }
+        }
+      }
+    },
     "Describe follows your instruction for %@, not Siliconed’s." : {
       "localizations" : {
         "de" : {
@@ -15077,6 +15077,46 @@
         }
       }
     },
+    "Drop an image here to edit it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bild hierher ziehen, um es zu bearbeiten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Suelta una imagen aquí para editarla."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Glissez une image ici pour l’éditer."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trascina qui un’immagine per modificarla."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "画像をここにドロップして編集します。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将图像拖放到此处进行编辑。"
+          }
+        }
+      }
+    },
     "Drop images here. The first one is the image to edit; a name makes a picture citable as @name in the text." : {
       "localizations" : {
         "de" : {
@@ -15633,46 +15673,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已编辑"
-          }
-        }
-      }
-    },
-    "Editorial Portrait" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Editorial-Porträt"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Retrato editorial"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Portrait éditorial"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ritratto editoriale"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "エディトリアルポートレート"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "杂志肖像"
           }
         }
       }
@@ -23103,46 +23103,6 @@
         }
       }
     },
-    "Mechanical Chronograph" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mechanischer Chronograph"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cronógrafo mecánico"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Chronographe mécanique"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cronografo meccanico"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "機械式クロノグラフ"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "机械计时码表"
-          }
-        }
-      }
-    },
     "Memory" : {
       "localizations" : {
         "de" : {
@@ -23219,46 +23179,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "内存（峰值）"
-          }
-        }
-      }
-    },
-    "Midnight Warehouse Coupe" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Coupé in nächtlicher Lagerhalle"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Coupé nocturno en almacén"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Coupé dans un entrepôt la nuit"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Coupé notturna nel capannone"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "真夜中の倉庫のクーペ"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "午夜仓库跑车"
           }
         }
       }
@@ -29522,46 +29442,6 @@
         }
       }
     },
-    "Rain-Slicked Alley" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Regennasse Gasse"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Callejón bajo la lluvia"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ruelle sous la pluie"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Vicolo bagnato dalla pioggia"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "雨上がりの路地裏"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "雨夜小巷"
-          }
-        }
-      }
-    },
     "Random" : {
       "localizations" : {
         "de" : {
@@ -34639,46 +34519,6 @@
         }
       }
     },
-    "Skyline Observatory" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sternwarte über den Wolken"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Observatorio sobre las nubes"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Observatoire au-dessus des nuages"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Osservatorio sopra le nuvole"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "雲上の天文台"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "云端天文台"
-          }
-        }
-      }
-    },
     "Smaller on disk: the image model in 8 bits, the publisher’s text encoder; images slightly different." : {
       "localizations" : {
         "de" : {
@@ -36123,46 +35963,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "停止安装：已下载的文件会保留，正在进行的那个将重新开始"
-          }
-        }
-      }
-    },
-    "Stormy Coastline Oil" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Stürmische Küste in Öl"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Costa tormentosa al óleo"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Côte orageuse à l’huile"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Costa in tempesta a olio"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "嵐の海岸線の油彩"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "风暴海岸油画"
           }
         }
       }
@@ -46818,46 +46618,6 @@
         }
       }
     },
-    "What do you want to create?" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Was möchten Sie erschaffen?"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "¿Qué quieres crear?"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Que voulez-vous créer ?"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cosa vuoi creare?"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "何を作りますか？"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "你想创作什么？"
-          }
-        }
-      }
-    },
     "What each engine reaches" : {
       "localizations" : {
         "de" : {
@@ -47380,86 +47140,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在提示词中写入 @%@ 即可引用它。"
-          }
-        }
-      }
-    },
-    "Write a prompt below or click a starter idea to load it into the prompt bar." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Schreiben Sie unten einen Prompt oder klicken Sie auf eine Startidee, um sie in die Eingabeleiste zu laden."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Escribe un prompt abajo o haz clic en una idea inicial para cargarla en la barra de prompt."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Écrivez un prompt ci-dessous ou cliquez sur une idée de départ pour la charger dans la barre de prompt."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Scrivi un prompt qui sotto o fai clic su un’idea iniziale per caricarla nella barra del prompt."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "下にプロンプトを入力するか、スターターアイデアをクリックしてプロンプトバーに読み込みます。"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在下方输入提示词，或点击一个入门灵感将其加载到提示词栏中。"
-          }
-        }
-      }
-    },
-    "Write a prompt below, pick a starter idea, or drop a photo here to edit it." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Schreiben Sie unten einen Prompt, wählen Sie eine Startidee oder ziehen Sie ein Foto zum Bearbeiten hierher."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Escribe un prompt abajo, elige una idea inicial o suelta una foto aquí para editarla."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Écrivez un prompt ci-dessous, choisissez une idée de départ ou déposez une photo ici pour la modifier."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Scrivi un prompt qui sotto, scegli un’idea iniziale o trascina qui una foto per modificarla."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "下にプロンプトを入力するか、スターターアイデアを選ぶか、写真をここにドロップして編集します。"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在下方输入提示词、选择一个入门灵感，或将照片拖放到此处进行编辑。"
           }
         }
       }
