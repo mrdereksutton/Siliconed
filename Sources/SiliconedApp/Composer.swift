@@ -118,8 +118,6 @@ struct Composer: View {
                 }
                 .help("An edit keeps the framing of image 1: about 1 megapixel at its proportions, each side at least 512, 1024² at most")
             }
-            StylePill(app: app)
-            CameraPill(app: app)
             if app.missing == nil, app.card != nil {
                 LoRAPill(app: app)
                 SettingsPill(app: app)

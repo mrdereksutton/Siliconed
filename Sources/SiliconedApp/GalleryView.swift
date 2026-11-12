@@ -520,10 +520,6 @@ struct InteractiveEmptyStage: View {
         let title: LocalizedStringKey
         let prompt: String
         let ratio: SizeRatio
-        let styleId: String
-        let cameraId: String
-        let lensId: String
-        let lightingId: String
         let specLabel: String
         let symbol: String
         let colors: [Int]
@@ -533,78 +529,54 @@ struct InteractiveEmptyStage: View {
         StarterIdea(
             id: "street-coupe",
             title: "Midnight Warehouse Coupe",
-            prompt: "White JDM sports coupe parked inside an industrial concrete warehouse at dusk, glowing crimson taillights reflecting on damp concrete, volumetric shaft of twilight through high factory windows",
+            prompt: "White JDM sports coupe parked inside an industrial concrete warehouse at dusk, glowing crimson taillights reflecting on damp concrete, volumetric shaft of twilight through high factory windows, 35mm cinema film",
             ratio: SizeRatio(16, 9),
-            styleId: "film35",
-            cameraId: "alexa35",
-            lensId: "anamorphic24",
-            lightingId: "volumetric",
-            specLabel: "ALEXA 35 · 24MM ANA",
+            specLabel: "CINEMA · 16:9",
             symbol: "car.rear.and.tire.marks",
             colors: [0x9E2A2B, 0x131A2E]
         ),
         StarterIdea(
             id: "studio-musician",
             title: "Editorial Portrait",
-            prompt: "Candid medium-format portrait of an indie guitarist holding an offset electric guitar in a sunlit loft studio, natural window key light, subtle dust motes in warm air",
+            prompt: "Candid medium-format portrait of an indie guitarist holding an offset electric guitar in a sunlit loft studio, natural window key light, subtle dust motes in warm air, 85mm f/1.4 shallow depth of field",
             ratio: SizeRatio(3, 4),
-            styleId: "editorial",
-            cameraId: "portra400",
-            lensId: "portrait85",
-            lightingId: "goldenRim",
-            specLabel: "PORTRA 400 · 85MM F/1.4",
+            specLabel: "PORTRAIT · 3:4",
             symbol: "guitars",
             colors: [0xB07D52, 0x241B14]
         ),
         StarterIdea(
             id: "neon-rain",
             title: "Rain-Slicked Alley",
-            prompt: "Quiet Tokyo side street after midnight rain, glowing paper lanterns and cyan neon signage mirrored in puddles, steam rising from a tiny ramen stall, cinematic depth",
+            prompt: "Quiet Tokyo side street after midnight rain, glowing paper lanterns and cyan neon signage mirrored in puddles, steam rising from a tiny ramen stall, nocturnal 35mm photograph",
             ratio: SizeRatio(16, 9),
-            styleId: "neon",
-            cameraId: "cinestill800t",
-            lensId: "prime35",
-            lightingId: "wetNeon",
-            specLabel: "800T · 35MM · NEON",
+            specLabel: "NIGHT · 16:9",
             symbol: "sparkles.tv",
             colors: [0x0E7490, 0x4A1942]
         ),
         StarterIdea(
             id: "anime-observatory",
             title: "Skyline Observatory",
-            prompt: "Cliffside astronomical observatory above a sea of golden sunset clouds, warm brass telescopes catching twilight, swallows in flight, sweeping sense of wonder",
+            prompt: "Anime feature film keyframe of a cliffside astronomical observatory above a sea of golden sunset clouds, warm brass telescopes catching twilight, swallows in flight, painted sky",
             ratio: SizeRatio(3, 2),
-            styleId: "anime",
-            cameraId: "none",
-            lensId: "ultra18",
-            lightingId: "goldenRim",
-            specLabel: "ANIME · 18MM WIDE",
+            specLabel: "ANIME · 3:2",
             symbol: "moon.stars",
             colors: [0x4F46E5, 0xBE185D]
         ),
         StarterIdea(
             id: "watch-macro",
             title: "Mechanical Chronograph",
-            prompt: "Extreme close-up of an open-worked mechanical watch movement, blued steel screws, brushed titanium bridges, ruby jewels catching soft studio rim lighting",
+            prompt: "Extreme macro photograph of an open-worked mechanical watch movement, blued steel screws, brushed titanium bridges, ruby jewels catching soft studio rim lighting",
             ratio: SizeRatio(1, 1),
-            styleId: "macro",
-            cameraId: "hasselblad",
-            lensId: "macro100",
-            lightingId: "softbox",
-            specLabel: "X2D · 100MM MACRO",
+            specLabel: "MACRO · 1:1",
             symbol: "dial.medium",
             colors: [0x15803D, 0x111827]
         ),
         StarterIdea(
             id: "coastal-impasto",
             title: "Stormy Coastline Oil",
-            prompt: "Dramatic Atlantic sea cliffs under breaking storm clouds, turquoise surf crashing into white foam, solitary lighthouse beam cutting through mist",
+            prompt: "Expressive impasto oil painting on coarse linen of dramatic Atlantic sea cliffs under breaking storm clouds, turquoise surf crashing into white foam, solitary lighthouse beam cutting through mist",
             ratio: SizeRatio(4, 3),
-            styleId: "impasto",
-            cameraId: "none",
-            lensId: "cooke50",
-            lightingId: "chiaroscuro",
-            specLabel: "IMPASTO · LOW KEY",
+            specLabel: "OIL PAINTING · 4:3",
             symbol: "paintbrush.pointed",
             colors: [0xC2410C, 0x1E293B]
         ),
@@ -621,7 +593,7 @@ struct InteractiveEmptyStage: View {
         VStack(spacing: 32) {
             VStack(spacing: 10) {
                 HStack(spacing: 6) {
-                    Image(systemName: "camera.aperture")
+                    Image(systemName: "sparkles")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Palette.live)
                     Text("APPLE SILICON CREATIVE STUDIO")
@@ -634,13 +606,13 @@ struct InteractiveEmptyStage: View {
                 .background(Capsule().fill(Palette.live.opacity(0.11)))
                 .overlay(Capsule().strokeBorder(Palette.live.opacity(0.30)))
 
-                Text("What do you want to direct?")
+                Text("What do you want to create?")
                     .font(.system(size: 32, weight: .semibold))
                     .tracking(-0.5)
                     .foregroundStyle(.primary)
                 Text(app.editingPossible
-                     ? "Describe an image, pick a director shot below, or drop a photo here to edit it."
-                     : "Describe an image below or load a director shot with pre-dialed camera, lens and lighting.")
+                     ? "Write a prompt below, pick a starter idea, or drop a photo here to edit it."
+                     : "Write a prompt below or click a starter idea to load it into the prompt bar.")
                     .font(.system(size: 15))
                     .foregroundStyle(.secondary)
             }
@@ -658,11 +630,6 @@ struct InteractiveEmptyStage: View {
                         withAnimation(Motion.pick(.easeOut(duration: 0.18))) {
                             app.prompt = idea.prompt
                             app.selectScale(idea.ratio, .oneK)
-                            let hub = StudioHub.shared
-                            hub.selectedStyleId = idea.styleId
-                            hub.selectedCameraId = idea.cameraId
-                            hub.selectedLensId = idea.lensId
-                            hub.selectedLightingId = idea.lightingId
                         }
                     }
                 }

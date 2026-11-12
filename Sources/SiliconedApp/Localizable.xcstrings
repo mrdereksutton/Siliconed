@@ -5053,46 +5053,6 @@
         }
       }
     },
-    "35mm Film" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "35-mm-Film"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Película de 35 mm"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Film 35 mm"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pellicola 35 mm"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "35mmフィルム"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "35mm胶片"
-          }
-        }
-      }
-    },
     "8-bit weights" : {
       "localizations" : {
         "de" : {
@@ -8099,46 +8059,6 @@
         }
       }
     },
-    "Anime Keyframe" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Anime-Schlüsselbild"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Fotograma clave de anime"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Image clé d’anime"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Fotogramma chiave anime"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アニメ原画"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "动画关键帧"
-          }
-        }
-      }
-    },
     "Another Rewrite or Describe is under way." : {
       "localizations" : {
         "de" : {
@@ -9655,46 +9575,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "CPU 矩阵单元"
-          }
-        }
-      }
-    },
-    "Camera & Stock" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kamera & Filmmaterial"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cámara y película"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Caméra et pellicule"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Fotocamera e pellicola"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "カメラとフィルム"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "摄影机与胶片"
           }
         }
       }
@@ -11339,46 +11219,6 @@
         }
       }
     },
-    "Cinema Camera, Lens & Lighting Rig — composes authentic optical look into the prompt" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kinokamera-, Objektiv- & Licht-Rig — fügt einen authentischen optischen Look in den Prompt ein"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Equipo de cámara, lente e iluminación de cine — compone un aspecto óptico auténtico en el prompt"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Configuration cinéma caméra, optique et éclairage — compose un rendu optique authentique dans le prompt"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Set cinematografico di fotocamera, obiettivo e luci — compone una resa ottica autentica nel prompt"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "シネマカメラ・レンズ・照明リグ — 本格的な光学ルックをプロンプトに合成します"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "电影摄影机、镜头与灯光组——将真实的光学质感融入提示词"
-          }
-        }
-      }
-    },
     "Cinema Lime" : {
       "localizations" : {
         "de" : {
@@ -11415,86 +11255,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "影院青柠"
-          }
-        }
-      }
-    },
-    "Cinema Optics Rig" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kino-Optik-Rig"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Equipo óptico de cine"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Optiques cinéma"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Set ottico cinema"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "シネマ光学リグ"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "电影光学套件"
-          }
-        }
-      }
-    },
-    "Cinematic Neon" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kino-Neon"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Neón cinematográfico"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Néon cinématographique"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Neon cinematografico"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "シネマティックネオン"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "电影霓虹"
           }
         }
       }
@@ -14099,46 +13859,6 @@
         }
       }
     },
-    "Custom style" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Eigener Stil"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Estilo personalizado"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Style personnalisé"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Stile personalizzato"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "カスタムスタイル"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自定义风格"
-          }
-        }
-      }
-    },
     "Decline" : {
       "localizations" : {
         "de" : {
@@ -14495,86 +14215,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "描述"
-          }
-        }
-      }
-    },
-    "Describe an image below or load a director shot with pre-dialed camera, lens and lighting." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Beschreibe unten ein Bild oder lade eine Regie-Einstellung mit voreingestellter Kamera, Optik und Beleuchtung."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Describe una imagen abajo o carga un plano de director con cámara, lente e iluminación preajustadas."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Décrivez une image ci-dessous ou chargez un plan réalisateur avec caméra, optique et éclairage préréglés."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Descrivi un’immagine qui sotto o carica un’inquadratura da regista con fotocamera, obiettivo e luci preimpostati."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "下にイメージを入力するか、カメラ・レンズ・照明が調整済みのディレクターズショットを読み込みます。"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在下方描述画面，或加载预设好摄影机、镜头与灯光的导演镜头。"
-          }
-        }
-      }
-    },
-    "Describe an image, pick a director shot below, or drop a photo here to edit it." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Beschreibe ein Bild, wähle unten eine Regie-Einstellung oder ziehe ein Foto zum Bearbeiten hierher."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Describe una imagen, elige un plano de director abajo o suelta una foto aquí para editarla."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Décrivez une image, choisissez un plan réalisateur ci-dessous ou déposez une photo ici pour la modifier."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Descrivi un’immagine, scegli un’inquadratura da regista qui sotto o trascina qui una foto per modificarla."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "イメージを入力するか、下のディレクターズショットを選ぶか、写真をここにドロップして編集します。"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "描述画面、选择下方的导演镜头，或将照片拖放到此处进行编辑。"
           }
         }
       }
@@ -15993,46 +15633,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已编辑"
-          }
-        }
-      }
-    },
-    "Editorial" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Editorial"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Editorial"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Éditorial"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Editoriale"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "エディトリアル"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "时尚大片"
           }
         }
       }
@@ -21863,46 +21463,6 @@
         }
       }
     },
-    "Lens & Focal" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Objektiv & Brennweite"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Lente y focal"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Objectif et focale"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Obiettivo e focale"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "レンズと焦点距離"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "镜头与焦距"
-          }
-        }
-      }
-    },
     "Lets a LoRA’s strength go from −1.5 to 1.5, for “slider” LoRAs. An ordinary LoRA is damaged by a negative strength." : {
       "localizations" : {
         "de" : {
@@ -22099,46 +21659,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "轻量"
-          }
-        }
-      }
-    },
-    "Lighting" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Beleuchtung"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Iluminación"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Éclairage"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Illuminazione"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ライティング"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "布光"
           }
         }
       }
@@ -24063,46 +23583,6 @@
         }
       }
     },
-    "Monochrome" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Monochrom"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Monocromo"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Monochrome"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Monocromatico"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "モノクローム"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "黑白胶片"
-          }
-        }
-      }
-    },
     "More" : {
       "comment" : "Detail level",
       "localizations" : {
@@ -25786,46 +25266,6 @@
         }
       }
     },
-    "No optical modifier added" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kein optischer Zusatz aktiv"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sin modificador óptico añadido"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Aucun modificateur optique ajouté"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nessun modificatore ottico aggiunto"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "光学モディファイアなし"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "未添加光学修饰"
-          }
-        }
-      }
-    },
     "No reference" : {
       "localizations" : {
         "de" : {
@@ -25902,46 +25342,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "尚无生成记录。"
-          }
-        }
-      }
-    },
-    "No style added" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kein Stil hinzugefügt"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sin estilo adicional"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Aucun style ajouté"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nessuno stile aggiunto"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "スタイルなし"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "未添加风格"
           }
         }
       }
@@ -26222,46 +25622,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "非商用：该模型仅限个人使用和研究。其生成的图像可用于任何目的，包括商业用途。"
-          }
-        }
-      }
-    },
-    "None" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keine"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ninguno"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Aucun"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nessuno"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "なし"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无"
           }
         }
       }
@@ -27280,46 +26640,6 @@
         }
       }
     },
-    "Oil Impasto" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Öl-Impasto"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Óleo con empaste"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Empâtement à l’huile"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Olio a impasto"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "油彩インパスト"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "厚涂油画"
-          }
-        }
-      }
-    },
     "On Another Disk" : {
       "localizations" : {
         "de" : {
@@ -28276,46 +27596,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在单独的窗口中打开提示词实验室"
-          }
-        }
-      }
-    },
-    "Optics" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Optik"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Óptica"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Optique"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ottica"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "光学"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "光学"
           }
         }
       }
@@ -29638,46 +28918,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "上一张图像"
-          }
-        }
-      }
-    },
-    "Product Macro" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Produkt-Makro"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Macro de producto"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Macro produit"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Macro prodotto"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "プロダクトマクロ"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "商业微距"
           }
         }
       }
@@ -32509,46 +31749,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "请报告此问题：App 构建了引擎拒绝的处理链。"
-          }
-        }
-      }
-    },
-    "Reset" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Zurücksetzen"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Restablecer"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Réinitialiser"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Reimposta"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "リセット"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "重置"
           }
         }
       }
@@ -37283,46 +36483,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "工作室"
-          }
-        }
-      }
-    },
-    "Studio Strobe" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Studioblitz"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Flash de estudio"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Flash de studio"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Flash da studio"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "スタジオストロボ"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "影棚闪光"
           }
         }
       }
@@ -47372,46 +46532,6 @@
         }
       }
     },
-    "Visual style preset layered onto the prompt" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Visuelle Stilvorlage, die dem Prompt hinzugefügt wird"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Preajuste de estilo visual aplicado al prompt"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Préréglage de style visuel ajouté au prompt"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Predefinito di stile visivo applicato al prompt"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "プロンプトに重ねるビジュアルスタイルプリセット"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "叠加到提示词上的视觉风格预设"
-          }
-        }
-      }
-    },
     "Wait for it to finish, then render again." : {
       "localizations" : {
         "de" : {
@@ -47698,42 +46818,42 @@
         }
       }
     },
-    "What do you want to direct?" : {
+    "What do you want to create?" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Was möchtest du inszenieren?"
+            "value" : "Was möchten Sie erschaffen?"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "¿Qué quieres dirigir?"
+            "value" : "¿Qué quieres crear?"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Que voulez-vous mettre en scène ?"
+            "value" : "Que voulez-vous créer ?"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Cosa vuoi dirigere?"
+            "value" : "Cosa vuoi creare?"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "どんなシーンを演出しますか？"
+            "value" : "何を作りますか？"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "今天想执导怎样的画面？"
+            "value" : "你想创作什么？"
           }
         }
       }
@@ -48260,6 +47380,86 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在提示词中写入 @%@ 即可引用它。"
+          }
+        }
+      }
+    },
+    "Write a prompt below or click a starter idea to load it into the prompt bar." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schreiben Sie unten einen Prompt oder klicken Sie auf eine Startidee, um sie in die Eingabeleiste zu laden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Escribe un prompt abajo o haz clic en una idea inicial para cargarla en la barra de prompt."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Écrivez un prompt ci-dessous ou cliquez sur une idée de départ pour la charger dans la barre de prompt."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scrivi un prompt qui sotto o fai clic su un’idea iniziale per caricarla nella barra del prompt."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下にプロンプトを入力するか、スターターアイデアをクリックしてプロンプトバーに読み込みます。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在下方输入提示词，或点击一个入门灵感将其加载到提示词栏中。"
+          }
+        }
+      }
+    },
+    "Write a prompt below, pick a starter idea, or drop a photo here to edit it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schreiben Sie unten einen Prompt, wählen Sie eine Startidee oder ziehen Sie ein Foto zum Bearbeiten hierher."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Escribe un prompt abajo, elige una idea inicial o suelta una foto aquí para editarla."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Écrivez un prompt ci-dessous, choisissez une idée de départ ou déposez une photo ici pour la modifier."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scrivi un prompt qui sotto, scegli un’idea iniziale o trascina qui una foto per modificarla."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下にプロンプトを入力するか、スターターアイデアを選ぶか、写真をここにドロップして編集します。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在下方输入提示词、选择一个入门灵感，或将照片拖放到此处进行编辑。"
           }
         }
       }
