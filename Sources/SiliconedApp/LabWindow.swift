@@ -34,11 +34,12 @@ final class LabWindow: NSObject, NSWindowDelegate {
             return
         }
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 540),
-                         styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                         styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                          backing: .buffered, defer: true)
         w.title = String(localized: "Prompt Lab")
         w.toolbarStyle = .unified
-        w.titlebarSeparatorStyle = .automatic
+        w.titlebarAppearsTransparent = true
+        w.titlebarSeparatorStyle = .none
         w.backgroundColor = Palette.columnInk
         w.isReleasedWhenClosed = false
         w.isRestorable = false

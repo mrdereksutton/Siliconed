@@ -41,7 +41,8 @@ struct LabView: View {
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .background(Palette.column)
+                .background(Palette.column.ignoresSafeArea())
+                .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
                 .navigationSubtitle(modelName.map { String(localized: "Write for \($0)") } ?? "")
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
@@ -71,12 +72,12 @@ struct LabView: View {
                         foldedBar.padding(.horizontal, 12).frame(height: Self.foldedHeight)
                     }
                 }
-                .vapour(cornerRadius: 16)
+                .glass(RoundedRectangle(cornerRadius: 20, style: .continuous))
             }
         }
         .overlay {
             if targeted {
-                RoundedRectangle(cornerRadius: inWindow ? 0 : 16, style: .continuous).strokeBorder(Palette.live, lineWidth: 2)
+                RoundedRectangle(cornerRadius: inWindow ? 0 : 20, style: .continuous).strokeBorder(Palette.live, lineWidth: 2)
             }
         }
         .dropDestination(for: DroppedImage.self) { items, _ in

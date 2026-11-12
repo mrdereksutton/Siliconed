@@ -46,10 +46,6 @@ struct Composer: View {
             }
             SeriesSummary(app: app)
 
-            Rectangle()
-                .fill(Palette.hairline.opacity(0.65))
-                .frame(height: 1)
-
             // Dedicated non-overlapping HStack: pills scroll cleanly inside their own clipped region on the left,
             // while GenerateButton always reserves its own crisp column on the right.
             HStack(alignment: .center, spacing: 14) {
@@ -147,6 +143,7 @@ struct Composer: View {
                 .overlay {
                     ZStack(alignment: .topLeading) {
                         TextEditor(text: $app.prompt)
+                            .writingToolsBehavior(.disabled)
                             .accessibilityLabel(Text("Prompt"))
                             .font(.system(size: 15.5))
                             .scrollContentBackground(.hidden)
@@ -154,7 +151,7 @@ struct Composer: View {
                         if app.prompt.isEmpty {
                             Text(app.references.isEmpty ? "Describe the image…" : "Say what changes…")
                                 .font(.system(size: 15.5))
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.secondary)
                                 .padding(.leading, 5)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                                 .allowsHitTesting(false)
@@ -168,7 +165,7 @@ struct Composer: View {
                         hub.prePolishPrompt = nil
                         MainWindow.shared.setPrompt("", of: app, action: String(localized: "Clear Prompt"))
                     } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                             .frame(width: 24, height: 28).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -185,13 +182,13 @@ struct Composer: View {
                         } else {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(hub.autoPolish ? Palette.onLive : (app.promptIsEmpty ? Color.secondary.opacity(0.4) : Palette.live))
+                                .foregroundStyle(hub.autoPolish ? Palette.onLive : (app.promptIsEmpty ? Color.secondary.opacity(0.65) : Palette.live))
                         }
                     }
                     .frame(width: 28, height: 28)
                     .background(
                         Circle()
-                            .fill(hub.autoPolish ? Palette.live : Color.primary.opacity(0.075))
+                            .fill(hub.autoPolish ? Palette.live : Color.primary.opacity(0.09))
                     )
                     .overlay(Circle().strokeBorder(Palette.hairline))
                     .contentShape(Circle())
@@ -208,19 +205,6 @@ struct Composer: View {
                       ? "Polish prompt now (Auto-Polish is ON — right-click to turn off)"
                       : "Polish prompt with the local AI writer (right-click to enable Auto-Polish)")
                 .accessibilityLabel(Text("Polish Prompt"))
-
-                Button { LabWindow.shared.openStudio() } label: {
-                    Image(systemName: "wand.and.sparkles")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(WireKind.text.color)
-                        .frame(width: 28, height: 28)
-                        .background(Circle().fill(Color.primary.opacity(0.075)))
-                        .overlay(Circle().strokeBorder(Palette.hairline))
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .help("Open the Prompt Lab (⌥⌘L)")
-                .accessibilityLabel(Text("Prompt Lab"))
             }
             .fixedSize()
         }
@@ -584,21 +568,21 @@ private struct GenerateButton: View {
                     .font(.system(size: 14, weight: .semibold))
                 Text(verbatim: "⌘↩")
                     .font(.system(size: 11.5, weight: .medium))
-                    .opacity(blocked ? 0.65 : 0.68)
+                    .opacity(blocked ? 0.72 : 0.68)
             }
-            .foregroundStyle(blocked ? AnyShapeStyle(Color.primary.opacity(0.4)) : AnyShapeStyle(Palette.onLive))
+            .foregroundStyle(blocked ? AnyShapeStyle(Color.primary.opacity(0.58)) : AnyShapeStyle(Palette.onLive))
             .padding(.horizontal, 18)
             .frame(height: 36)
             .background {
                 if blocked {
-                    shape.fill(Color.primary.opacity(0.065))
+                    shape.fill(Color.primary.opacity(0.11))
                 } else {
                     shape.fill(Palette.ctaGradient(for: colorScheme))
                 }
             }
             .overlay {
                 if blocked {
-                    shape.strokeBorder(Palette.hairline, lineWidth: 1)
+                    shape.strokeBorder(Color.primary.opacity(0.16), lineWidth: 1)
                 } else {
                     shape.strokeBorder(
                         LinearGradient(

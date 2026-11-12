@@ -76,35 +76,55 @@ enum Palette {
     static var bracket: Color { Color(nsColor: bracketInk) }
 
     /// What runs: the stage at work, the steps done, the image followed, the button that starts something.
-    static var live: Color { Color(nsColor: liveInk) }
-    static let liveInk = dynamicInk(
-        dark: { theme in
-            switch theme {
-            case .cinemaLime: 0xC8F53B
-            case .electricStudio: 0xE879F9
-            case .siliconedIndigo: 0x14C8BA
+    static var live: Color {
+        dynamic(
+            dark: { theme in
+                switch theme {
+                case .cinemaLime: 0xC8F53B
+                case .electricStudio: 0xE879F9
+                case .siliconedIndigo: 0x14C8BA
+                }
+            },
+            light: { theme in
+                switch theme {
+                case .cinemaLime: 0x1E6F36
+                case .electricStudio: 0x9333EA
+                case .siliconedIndigo: 0x3F3A8A
+                }
             }
-        },
-        light: { theme in
-            switch theme {
-            case .cinemaLime: 0x1E6F36
-            case .electricStudio: 0x9333EA
-            case .siliconedIndigo: 0x3F3A8A
+        )
+    }
+    static var liveInk: NSColor {
+        dynamicInk(
+            dark: { theme in
+                switch theme {
+                case .cinemaLime: 0xC8F53B
+                case .electricStudio: 0xE879F9
+                case .siliconedIndigo: 0x14C8BA
+                }
+            },
+            light: { theme in
+                switch theme {
+                case .cinemaLime: 0x1E6F36
+                case .electricStudio: 0x9333EA
+                case .siliconedIndigo: 0x3F3A8A
+                }
             }
-        }
-    )
+        )
+    }
 
     /// Signature overhead-lit CTA surface for Generate and primary action buttons (crisp machined finish, no neon blur).
     static func ctaGradient(for scheme: ColorScheme) -> LinearGradient {
+        let theme = currentTheme()
         if scheme != .dark {
-            let colors: [Color] = switch activeTheme {
+            let colors: [Color] = switch theme {
             case .cinemaLime: [Color(hex: 0x258542), Color(hex: 0x1B6832)]
             case .electricStudio: [Color(hex: 0xDB2777), Color(hex: 0x7C3AED)]
             case .siliconedIndigo: [Color(hex: 0x4F46E5), Color(hex: 0x3F3A8A)]
             }
             return LinearGradient(colors: colors, startPoint: .top, endPoint: .bottom)
         }
-        let colors: [Color] = switch activeTheme {
+        let colors: [Color] = switch theme {
         case .cinemaLime: [Color(hex: 0xD1FA48), Color(hex: 0xB8E82C)]
         case .electricStudio: [Color(hex: 0xEC4899), Color(hex: 0x9333EA)]
         case .siliconedIndigo: [Color(hex: 0x10CFC2), Color(hex: 0x09A39A)]
@@ -141,23 +161,25 @@ enum Palette {
     }
 
     /// A selection in the prompt (AppKit).
-    static let selectionInk = dynamicInk(
-        dark: { theme in
-            switch theme {
-            case .cinemaLime: 0x8BB82D
-            case .electricStudio: 0x9333EA
-            case .siliconedIndigo: 0x6660CB
-            }
-        },
-        light: { theme in
-            switch theme {
-            case .cinemaLime: 0x1E6F36
-            case .electricStudio: 0x7C3AED
-            case .siliconedIndigo: 0x3F3A8A
-            }
-        },
-        alpha: 0.34
-    )
+    static var selectionInk: NSColor {
+        dynamicInk(
+            dark: { theme in
+                switch theme {
+                case .cinemaLime: 0x8BB82D
+                case .electricStudio: 0x9333EA
+                case .siliconedIndigo: 0x6660CB
+                }
+            },
+            light: { theme in
+                switch theme {
+                case .cinemaLime: 0x1E6F36
+                case .electricStudio: 0x7C3AED
+                case .siliconedIndigo: 0x3F3A8A
+                }
+            },
+            alpha: 0.34
+        )
+    }
 
     @MainActor static func ink(_ view: NSTextView) {
         view.insertionPointColor = peachInk
@@ -201,42 +223,80 @@ enum Palette {
     static var failure: Color { dynamic(dark: { _ in 0xFC5852 }, light: { _ in 0xD02C2A }) }
 
     /// Behind the image: neutral carbon obsidian at night, warm paper by day.
-    static var canvas: Color { Color(nsColor: canvasInk) }
-    static let canvasInk = dynamicInk(
-        dark: { theme in
-            switch theme {
-            case .cinemaLime: 0x09090B
-            case .electricStudio: 0x09090D
-            case .siliconedIndigo: 0x131424
+    static var canvas: Color {
+        dynamic(
+            dark: { theme in
+                switch theme {
+                case .cinemaLime: 0x09090B
+                case .electricStudio: 0x09090D
+                case .siliconedIndigo: 0x131424
+                }
+            },
+            light: { theme in
+                switch theme {
+                case .cinemaLime: 0xF6F7F4
+                case .electricStudio: 0xF8F6FC
+                case .siliconedIndigo: 0xF9F6F2
+                }
             }
-        },
-        light: { theme in
-            switch theme {
-            case .cinemaLime: 0xF6F7F4
-            case .electricStudio: 0xF8F6FC
-            case .siliconedIndigo: 0xF9F6F2
+        )
+    }
+    static var canvasInk: NSColor {
+        dynamicInk(
+            dark: { theme in
+                switch theme {
+                case .cinemaLime: 0x09090B
+                case .electricStudio: 0x09090D
+                case .siliconedIndigo: 0x131424
+                }
+            },
+            light: { theme in
+                switch theme {
+                case .cinemaLime: 0xF6F7F4
+                case .electricStudio: 0xF8F6FC
+                case .siliconedIndigo: 0xF9F6F2
+                }
             }
-        }
-    )
+        )
+    }
 
     /// The rack's column; the ground of Settings and Prompt Lab.
-    static var column: Color { Color(nsColor: columnInk) }
-    static let columnInk = dynamicInk(
-        dark: { theme in
-            switch theme {
-            case .cinemaLime: 0x0E0F12
-            case .electricStudio: 0x0F0E15
-            case .siliconedIndigo: 0x1B1C2F
+    static var column: Color {
+        dynamic(
+            dark: { theme in
+                switch theme {
+                case .cinemaLime: 0x0E0F12
+                case .electricStudio: 0x0F0E15
+                case .siliconedIndigo: 0x1B1C2F
+                }
+            },
+            light: { theme in
+                switch theme {
+                case .cinemaLime: 0xEDEFE9
+                case .electricStudio: 0xF0ECF9
+                case .siliconedIndigo: 0xF0ECE7
+                }
             }
-        },
-        light: { theme in
-            switch theme {
-            case .cinemaLime: 0xEDEFE9
-            case .electricStudio: 0xF0ECF9
-            case .siliconedIndigo: 0xF0ECE7
+        )
+    }
+    static var columnInk: NSColor {
+        dynamicInk(
+            dark: { theme in
+                switch theme {
+                case .cinemaLime: 0x0E0F12
+                case .electricStudio: 0x0F0E15
+                case .siliconedIndigo: 0x1B1C2F
+                }
+            },
+            light: { theme in
+                switch theme {
+                case .cinemaLime: 0xEDEFE9
+                case .electricStudio: 0xF0ECF9
+                case .siliconedIndigo: 0xF0ECE7
+                }
             }
-        }
-    )
+        )
+    }
 
     /// A card a step above the column.
     static var surface: Color {
@@ -291,11 +351,27 @@ enum Palette {
             : NSColor(white: 0, alpha: 0.10)
     })
 
+    private static func currentTheme() -> StudioTheme {
+        if Thread.isMainThread {
+            return MainActor.assumeIsolated { StudioHub.shared.theme }
+        }
+        return Palette.activeTheme
+    }
+
     private static func dynamic(
         dark: @escaping @Sendable (StudioTheme) -> Int,
         light: @escaping @Sendable (StudioTheme) -> Int
     ) -> Color {
-        Color(nsColor: dynamicInk(dark: dark, light: light))
+        let theme = currentTheme()
+        return Color(nsColor: NSColor(name: nil) { a in
+            let v = a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark(theme) : light(theme)
+            return NSColor(
+                srgbRed: CGFloat(v >> 16 & 0xFF) / 255,
+                green: CGFloat(v >> 8 & 0xFF) / 255,
+                blue: CGFloat(v & 0xFF) / 255,
+                alpha: 1
+            )
+        })
     }
 
     private static func dynamicInk(

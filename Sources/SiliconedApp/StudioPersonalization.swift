@@ -23,6 +23,9 @@ final class StudioHub {
     // MARK: Studio Theme
 
     var theme: StudioTheme = Palette.activeTheme {
+        willSet {
+            Palette.activeTheme = newValue
+        }
         didSet {
             guard theme != oldValue else { return }
             Palette.activeTheme = theme
@@ -686,35 +689,21 @@ struct AmbientBackdropView: View {
         let reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
         ZStack {
             Palette.canvas
-            if hub.ambientBacklight && !reduceTransparency {
+            if let aura = activeAura, !reduceTransparency {
                 GeometryReader { geo in
                     let w = geo.size.width
                     let h = geo.size.height
                     ZStack {
-                        if let aura = activeAura {
-                            Circle()
-                                .fill(aura.primary.opacity(colorScheme == .dark ? 0.24 : 0.13))
-                                .frame(width: max(w, h) * 0.68, height: max(w, h) * 0.68)
-                                .position(x: w * 0.36, y: h * 0.42)
-                            Circle()
-                                .fill(aura.secondary.opacity(colorScheme == .dark ? 0.19 : 0.10))
-                                .frame(width: max(w, h) * 0.62, height: max(w, h) * 0.62)
-                                .position(x: w * 0.66, y: h * 0.66)
-                        } else {
-                            // Subtle studio light field so Liquid Glass surfaces (Composer, Sidebar, Toolbar)
-                            // have smooth optical luminance and color gradients to refract even before the first render.
-                            Ellipse()
-                                .fill(Palette.control.opacity(colorScheme == .dark ? 0.18 : 0.08))
-                                .frame(width: max(w, h) * 0.72, height: max(w, h) * 0.50)
-                                .position(x: w * 0.32, y: h * 0.28)
-                            Ellipse()
-                                .fill(Palette.live.opacity(colorScheme == .dark ? 0.12 : 0.06))
-                                .frame(width: max(w, h) * 0.66, height: max(w, h) * 0.44)
-                                .position(x: w * 0.68, y: h * 0.80)
-                        }
+                        Circle()
+                            .fill(aura.primary.opacity(colorScheme == .dark ? 0.16 : 0.10))
+                            .frame(width: max(w, h) * 0.56, height: max(w, h) * 0.56)
+                            .position(x: w * 0.42, y: h * 0.38)
+                        Circle()
+                            .fill(aura.secondary.opacity(colorScheme == .dark ? 0.13 : 0.08))
+                            .frame(width: max(w, h) * 0.50, height: max(w, h) * 0.50)
+                            .position(x: w * 0.60, y: h * 0.46)
                     }
-                    .blur(radius: 130)
-                    // 16-bit float Metal compositing eliminates 8-bit sRGB gradient banding on dark obsidian surfaces.
+                    .blur(radius: 120)
                     .drawingGroup(opaque: false, colorMode: .extendedLinear)
                 }
                 .transition(.opacity)

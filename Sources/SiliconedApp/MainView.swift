@@ -47,18 +47,60 @@ struct MainView: View {
                 .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 520)
         } detail: {
             GraphCanvas(app: app, showsSidebar: columnVisibility != .detailOnly)
+                .navigationTitle(Text(verbatim: ""))
+                .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         }
+        .toolbar(removing: .sidebarToggle)
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    withAnimation(Motion.pick(.spring(response: 0.28, dampingFraction: 0.86))) {
+                        if columnVisibility == .detailOnly {
+                            app.showsGallery = false
+                            app.sidebarTab = .explore
+                        } else {
+                            app.showsExploration = false
+                            app.sidebarTab = .generate
+                        }
+                    }
+                } label: {
+                    Label("Toggle Sidebar", systemImage: "sidebar.left")
+                }
+                .help("Show or hide the Signal-Chain Rack (⌃⌘S)")
+            }
+
             ToolbarItem(placement: .principal) {
                 Picker("Workspace", selection: workspaceBinding) {
                     Text("Studio").tag(WorkspaceMode.studio)
                     Text("Gallery").tag(WorkspaceMode.gallery)
-                    Text("Chain & Series").tag(WorkspaceMode.series)
+                    Text("Series").tag(WorkspaceMode.series)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .fixedSize()
                 .help("Switch workspace: Studio, Gallery, or Chain & Series")
+            }
+
+            if !app.targets.isEmpty {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    let group = app.targets
+                    Button { app.copyImages(group) } label: {
+                        Label("Copy Image", systemImage: "doc.on.doc")
+                    }
+                    .help(group.count > 1 ? "Copy the selected images (⇧⌘C)" : "Copy the image (PNG, with its metadata)")
+
+                    Button { app.export(group) } label: {
+                        Label("Save…", systemImage: "square.and.arrow.down")
+                    }
+                    .help(group.count > 1 ? "Export the selected images to a folder (⇧⌘E)" : "Save the image (⌘S)")
+
+                    ShareLink(items: group.map(app.transferable), preview: { SharePreview($0.name) }) {
+                        Label("Share…", systemImage: "square.and.arrow.up")
+                    }
+                    .help("Share — AirDrop, Messages, Mail, Photos…")
+                }
+
+                ToolbarSpacer(.fixed, placement: .primaryAction)
             }
 
             ToolbarItemGroup(placement: .primaryAction) {
@@ -76,6 +118,7 @@ struct MainView: View {
                 } label: {
                     Label("Studio Theme", systemImage: "swatchpalette")
                 }
+                .menuIndicator(.hidden)
                 .help("Switch Studio Theme & Atmosphere")
 
                 Button {
@@ -84,29 +127,6 @@ struct MainView: View {
                     Label("Prompt Lab", systemImage: "wand.and.sparkles")
                 }
                 .help("Open the Prompt Lab (⌥⌘L)")
-            }
-
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-
-            ToolbarItemGroup(placement: .primaryAction) {
-                let group = app.targets
-                Button { app.copyImages(group) } label: {
-                    Label("Copy Image", systemImage: "doc.on.doc")
-                }
-                .disabled(group.isEmpty)
-                .help(group.count > 1 ? "Copy the selected images (⇧⌘C)" : "Copy the image (PNG, with its metadata)")
-
-                Button { app.export(group) } label: {
-                    Label("Save…", systemImage: "square.and.arrow.down")
-                }
-                .disabled(group.isEmpty)
-                .help(group.count > 1 ? "Export the selected images to a folder (⇧⌘E)" : "Save the image (⌘S)")
-
-                ShareLink(items: group.map(app.transferable), preview: { SharePreview($0.name) }) {
-                    Label("Share…", systemImage: "square.and.arrow.up")
-                }
-                .disabled(group.isEmpty)
-                .help("Share — AirDrop, Messages, Mail, Photos…")
 
                 Button(action: toggleStatistics) {
                     Label("Statistics", systemImage: "gauge.with.dots.needle.33percent")

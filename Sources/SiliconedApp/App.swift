@@ -333,9 +333,11 @@ final class MainWindow: NSObject, NSWindowDelegate {
         let f = NSWindow(contentViewController: makeRoot())
         f.title = String(localized: "Siliconed")
         f.subtitle = Self.instanceName
-        f.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        f.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         f.toolbarStyle = .unified
-        f.titlebarSeparatorStyle = .automatic
+        f.titleVisibility = .hidden
+        f.titlebarAppearsTransparent = true
+        f.titlebarSeparatorStyle = .none
         f.backgroundColor = Palette.canvasInk
         f.setContentSize(NSSize(width: 1480, height: 940))
         f.isReleasedWhenClosed = false
