@@ -182,6 +182,7 @@ enum Palette {
     }
 
     @MainActor static func ink(_ view: NSTextView) {
+        view.writingToolsBehavior = .none
         view.insertionPointColor = peachInk
         view.selectedTextAttributes = [.backgroundColor: selectionInk]
     }
@@ -427,14 +428,14 @@ struct ProminentButtonStyle: ButtonStyle {
             let shape = Capsule()
             configuration.label
                 .font(.system(size: large ? 13.5 : 12.5, weight: .semibold))
-                .foregroundStyle(enabled ? AnyShapeStyle(Palette.onLive) : AnyShapeStyle(.tertiary))
+                .foregroundStyle(enabled ? AnyShapeStyle(Palette.onLive) : AnyShapeStyle(Color.primary.opacity(0.56)))
                 .padding(.horizontal, large ? 16 : 14)
                 .frame(minHeight: large ? 34 : 28)
                 .background {
                     if enabled {
                         shape.fill(Palette.ctaGradient(for: scheme))
                     } else {
-                        shape.fill(Palette.well)
+                        shape.fill(Color.primary.opacity(0.10))
                     }
                 }
                 .overlay {
@@ -448,7 +449,7 @@ struct ProminentButtonStyle: ButtonStyle {
                             lineWidth: 1
                         )
                     } else {
-                        shape.strokeBorder(Palette.hairline, lineWidth: 1)
+                        shape.strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
                     }
                 }
                 .shadow(color: enabled ? .black.opacity(scheme == .dark ? 0.26 : 0.09) : .clear, radius: 2, y: 1)
