@@ -266,6 +266,15 @@ enum Palette {
         )
     }
 
+    /// Translucent vibrancy card fill inside a Liquid Glass sidebar (never opaque, never stacked glass-on-glass).
+    static var sidebarCard: Color {
+        Color(nsColor: NSColor(name: nil) { a in
+            a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor(white: 1, alpha: 0.055)
+                : NSColor(white: 1, alpha: 0.56)
+        })
+    }
+
     /// A field inside a box: a recess.
     static var well: Color {
         Color(nsColor: NSColor(name: nil) { a in
@@ -281,21 +290,6 @@ enum Palette {
             ? NSColor(white: 1, alpha: 0.10)
             : NSColor(white: 0, alpha: 0.10)
     })
-
-    /// Top-edge specular highlight gradient giving cards subtle anodized depth.
-    static func specularRim(for scheme: ColorScheme, active: Bool = false) -> LinearGradient {
-        if active {
-            return LinearGradient(
-                colors: [live.opacity(0.65), live.opacity(0.24)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
-        let top = scheme == .dark ? Color.white.opacity(0.13) : Color.black.opacity(0.08)
-        let mid = scheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.06)
-        let bottom = scheme == .dark ? Color.white.opacity(0.04) : Color.black.opacity(0.10)
-        return LinearGradient(colors: [top, mid, bottom], startPoint: .top, endPoint: .bottom)
-    }
 
     private static func dynamic(
         dark: @escaping @Sendable (StudioTheme) -> Int,
@@ -354,12 +348,12 @@ struct ProminentButtonStyle: ButtonStyle {
         var body: some View {
             let _ = StudioHub.shared.theme
             let large = size == .large || size == .extraLarge
-            let shape = RoundedRectangle(cornerRadius: large ? 9 : 7.5, style: .continuous)
+            let shape = Capsule()
             configuration.label
                 .font(.system(size: large ? 13.5 : 12.5, weight: .semibold))
                 .foregroundStyle(enabled ? AnyShapeStyle(Palette.onLive) : AnyShapeStyle(.tertiary))
-                .padding(.horizontal, large ? 15 : 12)
-                .frame(minHeight: large ? 32 : 26)
+                .padding(.horizontal, large ? 16 : 14)
+                .frame(minHeight: large ? 34 : 28)
                 .background {
                     if enabled {
                         shape.fill(Palette.ctaGradient(for: scheme))
@@ -381,7 +375,7 @@ struct ProminentButtonStyle: ButtonStyle {
                         shape.strokeBorder(Palette.hairline, lineWidth: 1)
                     }
                 }
-                .shadow(color: enabled ? .black.opacity(scheme == .dark ? 0.28 : 0.10) : .clear, radius: 2, y: 1)
+                .shadow(color: enabled ? .black.opacity(scheme == .dark ? 0.26 : 0.09) : .clear, radius: 2, y: 1)
                 .brightness(hovering && enabled && !configuration.isPressed ? 0.03 : 0)
                 .opacity(configuration.isPressed ? 0.88 : 1)
                 .contentShape(shape)
@@ -416,32 +410,9 @@ extension ButtonStyle where Self == ChartLinkStyle {
     static var chartLink: ChartLinkStyle { ChartLinkStyle() }
 }
 
-// MARK: - Studio Specular Surface & Window Drag Area
+// MARK: - Window Drag Area
 
-private struct StudioCardModifier: ViewModifier {
-    let cornerRadius: CGFloat
-    let elevated: Bool
-    let active: Bool
-    @Environment(\.colorScheme) private var scheme
-
-    func body(content: Content) -> some View {
-        let _ = StudioHub.shared.theme
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        content
-            .background(shape.fill(elevated ? Palette.surfaceElevated : Palette.surface))
-            .overlay(shape.strokeBorder(Palette.specularRim(for: scheme, active: active), lineWidth: active ? 1.5 : 1))
-            .shadow(color: .black.opacity(scheme == .dark ? 0.34 : 0.08), radius: elevated ? 16 : 8, y: elevated ? 6 : 3)
-    }
-}
-
-extension View {
-    /// Layered darkroom card with a `1px` top-edge specular rim highlight and ambient shadow.
-    func studioCard(cornerRadius: CGFloat = 14, elevated: Bool = false, active: Bool = false) -> some View {
-        modifier(StudioCardModifier(cornerRadius: cornerRadius, elevated: elevated, active: active))
-    }
-}
-
-/// Allows dragging a full-bleed borderless window from any non-interactive region of a custom Studio Header,
+/// Allows dragging a full-bleed borderless window (such as Settings) from non-interactive header regions,
 /// and zooms the window on double-click just like a native macOS titlebar.
 struct WindowDragArea: NSViewRepresentable {
     final class DragView: NSView {

@@ -70,8 +70,8 @@ struct Composer: View {
         }
         .padding(.horizontal, 18)
         .padding(.top, 14)
-        .padding(.bottom, 13)
-        .studioCard(cornerRadius: 20, elevated: true)
+        .padding(.bottom, 14)
+        .glass(RoundedRectangle(cornerRadius: 24, style: .continuous))
         // As on the canvas: a PNG Siliconed wrote brings back its settings; on a model that edits, any
         // other image joins the edit; when a starting image is held, a dropped image replaces it.
         .dropDestination(for: DroppedImage.self) { items, _ in
@@ -190,11 +190,11 @@ struct Composer: View {
                     }
                     .frame(width: 28, height: 28)
                     .background(
-                        RoundedRectangle(cornerRadius: 7.5, style: .continuous)
-                            .fill(hub.autoPolish ? Palette.live : Color.primary.opacity(0.06))
+                        Circle()
+                            .fill(hub.autoPolish ? Palette.live : Color.primary.opacity(0.075))
                     )
-                    .overlay(RoundedRectangle(cornerRadius: 7.5, style: .continuous).strokeBorder(Palette.hairline))
-                    .contentShape(Rectangle())
+                    .overlay(Circle().strokeBorder(Palette.hairline))
+                    .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .disabled(app.promptIsEmpty && !hub.isPolishing)
@@ -214,9 +214,9 @@ struct Composer: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(WireKind.text.color)
                         .frame(width: 28, height: 28)
-                        .background(RoundedRectangle(cornerRadius: 7.5, style: .continuous).fill(Color.primary.opacity(0.06)))
-                        .overlay(RoundedRectangle(cornerRadius: 7.5, style: .continuous).strokeBorder(Palette.hairline))
-                        .contentShape(Rectangle())
+                        .background(Circle().fill(Color.primary.opacity(0.075)))
+                        .overlay(Circle().strokeBorder(Palette.hairline))
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .help("Open the Prompt Lab (⌥⌘L)")
@@ -280,8 +280,8 @@ private struct StartImageRow: View {
             }
         }
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Palette.well))
-        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(Palette.hairline))
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Palette.hairline))
         .contextMenu {
             Button("Reset to \(StartWords.percent(app.defaultStartStrength))") { app.setStartStrength(app.defaultStartStrength) }
             Button("Replace…") { app.chooseStartReplacement() }
@@ -577,7 +577,7 @@ private struct GenerateButton: View {
 
     var body: some View {
         let blocked = app.formBlocker != nil || app.memoryRefusal != nil
-        let shape = RoundedRectangle(cornerRadius: 10.5, style: .continuous)
+        let shape = Capsule()
         Button { app.render() } label: {
             HStack(spacing: 8) {
                 Text(GenerateControls.title(app))
@@ -587,11 +587,11 @@ private struct GenerateButton: View {
                     .opacity(blocked ? 0.65 : 0.68)
             }
             .foregroundStyle(blocked ? AnyShapeStyle(Color.primary.opacity(0.4)) : AnyShapeStyle(Palette.onLive))
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 18)
             .frame(height: 36)
             .background {
                 if blocked {
-                    shape.fill(Palette.surface).overlay(shape.fill(Palette.well))
+                    shape.fill(Color.primary.opacity(0.065))
                 } else {
                     shape.fill(Palette.ctaGradient(for: colorScheme))
                 }
@@ -602,7 +602,7 @@ private struct GenerateButton: View {
                 } else {
                     shape.strokeBorder(
                         LinearGradient(
-                            colors: [.white.opacity(colorScheme == .dark ? 0.24 : 0.18), .white.opacity(0.04)],
+                            colors: [.white.opacity(colorScheme == .dark ? 0.26 : 0.18), .white.opacity(0.04)],
                             startPoint: .top,
                             endPoint: .bottom
                         ),
@@ -613,7 +613,7 @@ private struct GenerateButton: View {
             .shadow(color: blocked ? .clear : .black.opacity(colorScheme == .dark ? 0.28 : 0.10),
                     radius: 2.5, y: 1)
             .brightness(hovering && !blocked ? 0.04 : 0)
-            .contentShape(Rectangle())
+            .contentShape(shape)
         }
         .buttonStyle(.plain)
         .disabled(blocked)

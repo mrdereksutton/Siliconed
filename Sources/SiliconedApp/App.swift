@@ -40,7 +40,10 @@ struct SiliconedApplication: App {
         // window): a single `AppState` per process, hence a single `EngineSettings.load` —
         // and nothing of what SwiftUI would retain from a scene (position, restored state).
         Settings { EmptyView() }
-            .commands { AppCommands(window: .shared) }
+            .commands {
+                SidebarCommands()
+                AppCommands(window: .shared)
+            }
     }
 }
 
@@ -330,14 +333,9 @@ final class MainWindow: NSObject, NSWindowDelegate {
         let f = NSWindow(contentViewController: makeRoot())
         f.title = String(localized: "Siliconed")
         f.subtitle = Self.instanceName
-        f.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-        let toolbar = NSToolbar(identifier: "SiliconedStudioChrome")
-        toolbar.allowsUserCustomization = false
-        f.toolbar = toolbar
+        f.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         f.toolbarStyle = .unified
-        f.titlebarAppearsTransparent = true
-        f.titleVisibility = .hidden
-        f.titlebarSeparatorStyle = .none
+        f.titlebarSeparatorStyle = .automatic
         f.backgroundColor = Palette.canvasInk
         f.setContentSize(NSSize(width: 1480, height: 940))
         f.isReleasedWhenClosed = false
@@ -366,13 +364,13 @@ final class MainWindow: NSObject, NSWindowDelegate {
     }
 
     /// One host for the window's life: the switch changes the state it shows (`Shown`), never the
-    /// host — custom Studio Header replaces stock macOS `NSToolbar` chrome.
+    /// host — SwiftUI's `.toolbar` bridges directly onto the window's unified Liquid Glass toolbar.
     private func makeRoot() -> NSHostingController<Shown> {
         let host = NSHostingController(rootView: Shown(carrier: carrier, local: local) { [weak self] in
             self?.toggleStatistics()
         })
         host.sizingOptions = []
-        host.sceneBridgingOptions = []
+        host.sceneBridgingOptions = [.toolbars]
         return host
     }
 

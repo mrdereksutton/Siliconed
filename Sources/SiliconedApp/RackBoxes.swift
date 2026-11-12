@@ -81,10 +81,9 @@ extension View {
     fileprivate func boxed(edge: Color, width: CGFloat = 1, wash: Color? = nil) -> some View {
         padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(boxShape.fill(Palette.surface))
-            .overlay { if let wash { boxShape.fill(wash.opacity(0.06)).allowsHitTesting(false) } }
+            .background(boxShape.fill(Palette.sidebarCard))
+            .overlay { if let wash { boxShape.fill(wash.opacity(0.07)).allowsHitTesting(false) } }
             .overlay(boxShape.strokeBorder(edge, lineWidth: width))
-            .shadow(color: .black.opacity(0.08), radius: 2, y: 1)
     }
 }
 

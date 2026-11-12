@@ -47,7 +47,9 @@ struct Banner: View {
                 Color.clear.frame(width: 0, height: 0)
             }
         }
+        .padding(.horizontal, 6)
         .frame(height: app.thumbnailSide + 18)
+        .glass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     /// At the strip's end: how many images, a shortcut to the masonry gallery, and the thumbnails' size.
@@ -117,8 +119,8 @@ private struct Thumbnail: View {
                         .padding(4)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(marked ? Palette.live : hover ? Color.white.opacity(0.45) : Palette.hairline,
                               lineWidth: marked ? (shown ? 3 : 2) : 1))
             .opacity(marked || hover ? 1 : 0.88)
@@ -188,8 +190,8 @@ private struct LiveTile: View {
                     .padding(4)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
             .strokeBorder(following ? Palette.live : Palette.hairline, lineWidth: following ? 2.5 : 1))
         .frame(height: side + 4)
         .contentShape(Rectangle())
@@ -219,8 +221,8 @@ private struct ExplorationTile: View {
                 .padding(4)
         }
         .frame(width: side, height: side)
-        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
             .strokeBorder(app.showsExploration ? Palette.live : Palette.hairline, lineWidth: app.showsExploration ? 2.5 : 1))
         .frame(height: side + 4)
         .contentShape(Rectangle())

@@ -32,21 +32,36 @@ struct LabView: View {
         let _ = StudioHub.shared.theme
         Group {
             if inWindow {
-                VStack(alignment: .leading, spacing: 0) {
-                    windowHeader
-                    Rectangle().fill(Palette.hairline).frame(height: 1)
-                    VStack(alignment: .leading, spacing: 10) {
-                        textZone
-                        LabImages(model: model)
-                        status
-                        Divider().opacity(0.5)
-                        GenerateControls(app: model.rack)
-                    }
-                    .padding(16)
+                VStack(alignment: .leading, spacing: 10) {
+                    textZone
+                    LabImages(model: model)
+                    status
+                    Divider().opacity(0.5)
+                    GenerateControls(app: model.rack)
                 }
+                .padding(16)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .background(Palette.column)
-                .ignoresSafeArea(.container, edges: .top)
+                .navigationSubtitle(modelName.map { String(localized: "Write for \($0)") } ?? "")
+                .toolbar {
+                    ToolbarItemGroup(placement: .primaryAction) {
+                        yourInstructions
+                        if model.isWriting {
+                            Button("Stop") { model.stop() }
+                        } else {
+                            Button { model.rewrite() } label: {
+                                Label("Rewrite", systemImage: "sparkles")
+                            }
+                            .disabled(!model.canRewrite)
+                            .help(model.writerPause.map { Text(verbatim: $0.sentence) } ?? Text("Rewrite"))
+                        }
+                        Button { model.detached.toggle() } label: {
+                            Label(model.detached ? "Put the Prompt Lab back under the image" : "Open the Prompt Lab in a window of its own",
+                                  systemImage: model.detached ? "arrow.down.left.square" : "arrow.up.right.square")
+                        }
+                        .help(model.detached ? "Put the Prompt Lab back under the image" : "Open the Prompt Lab in a window of its own")
+                    }
+                }
             } else {
                 Group {
                     if model.unfolded {
@@ -166,48 +181,6 @@ struct LabView: View {
             Divider().opacity(0.6)
             GenerateControls(app: model.rack)
         }
-    }
-
-    private var windowHeader: some View {
-        ZStack {
-            WindowDragArea()
-            HStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "wand.and.sparkles")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(Palette.live)
-                    Text("Prompt Lab")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                if let modelName {
-                    Text("Write for \(modelName)")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2.5)
-                        .background(Capsule().fill(Color.primary.opacity(0.06)))
-                        .overlay(Capsule().strokeBorder(Palette.hairline))
-                }
-                yourInstructions
-                Spacer(minLength: 8)
-                if model.isWriting {
-                    Button("Stop") { model.stop() }.controlSize(.small)
-                } else {
-                    Button { model.rewrite() } label: {
-                        Label("Rewrite", systemImage: "sparkles")
-                    }
-                    .controlSize(.small)
-                    .tint(Palette.control)
-                    .disabled(!model.canRewrite)
-                    .help(model.writerPause.map { Text(verbatim: $0.sentence) } ?? Text("Rewrite"))
-                }
-                detachButton
-            }
-            .padding(.leading, 96)
-            .padding(.trailing, 18)
-        }
-        .frame(height: 52)
-        .background(Palette.column)
     }
 
     private var header: some View {

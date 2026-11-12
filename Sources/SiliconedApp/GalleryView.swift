@@ -194,22 +194,30 @@ struct MasonryGalleryView: View {
 
     var body: some View {
         let entries = filteredEntries
-        ZStack(alignment: .bottom) {
-            VStack(spacing: 0) {
-                headerBar(count: entries.count)
-                    .padding(.horizontal, 24)
-                    .padding(.top, 14)
-                    .padding(.bottom, 10)
-
+        if app.history.isEmpty {
+            ContentUnavailableView {
+                Label("No Images Yet", systemImage: "photo.on.rectangle.angled")
+            } description: {
+                Text("Images you generate or save appear here.")
+            } actions: {
+                Button("Go to Studio") {
+                    withAnimation(Motion.pick(.easeInOut(duration: 0.2))) {
+                        app.showsGallery = false
+                        app.sidebarTab = .generate
+                    }
+                }
+                .buttonStyle(.prominent)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView(.vertical) {
                 if entries.isEmpty {
-                    Spacer()
-                    VStack(spacing: 10) {
-                        Image(systemName: favoritesOnly ? "star.slash" : "photo.on.rectangle.angled")
-                            .font(.system(size: 38, weight: .light))
-                            .foregroundStyle(.secondary)
-                        Text(favoritesOnly ? "No favorite images yet" : "No matching images")
-                            .font(.title3.weight(.medium))
-                            .foregroundStyle(.secondary)
+                    ContentUnavailableView {
+                        Label(
+                            favoritesOnly ? "No favorite images yet" : "No matching images",
+                            systemImage: favoritesOnly ? "star.slash" : "magnifyingglass"
+                        )
+                    } actions: {
                         if favoritesOnly || modelFilter != nil || !searchText.isEmpty {
                             Button("Show All") {
                                 favoritesOnly = false
@@ -219,33 +227,38 @@ struct MasonryGalleryView: View {
                             .buttonStyle(.link)
                         }
                     }
-                    Spacer()
+                    .padding(.top, 96)
                 } else {
-                    ScrollView(.vertical) {
-                        MasonryColumnsLayout(minColumnWidth: CGFloat(targetColumnWidth), spacing: 12) {
-                            ForEach(entries) { entry in
-                                MasonryCard(
-                                    app: app,
-                                    entry: entry,
-                                    isFavorite: hub.isFavorite(entry),
-                                    isMarked: app.isMarked(entry.id)
-                                )
-                                .aspectRatio(
-                                    CGFloat(max(1, entry.width)) / CGFloat(max(1, entry.height)),
-                                    contentMode: .fit
-                                )
-                            }
+                    MasonryColumnsLayout(minColumnWidth: CGFloat(targetColumnWidth), spacing: 12) {
+                        ForEach(entries) { entry in
+                            MasonryCard(
+                                app: app,
+                                entry: entry,
+                                isFavorite: hub.isFavorite(entry),
+                                isMarked: app.isMarked(entry.id)
+                            )
+                            .aspectRatio(
+                                CGFloat(max(1, entry.width)) / CGFloat(max(1, entry.height)),
+                                contentMode: .fit
+                            )
                         }
-                        .padding(.horizontal, 24)
-                        .padding(.top, 4)
-                        .padding(.bottom, app.marked.count > 1 ? 80 : 20)
                     }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 6)
+                    .padding(.bottom, 24)
                 }
             }
-
-            if app.marked.count > 1, let entry = app.selectedEntry {
-                ImageActions(app: app, entry: entry)
-                    .padding(.bottom, 14)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                headerBar(count: entries.count)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 12)
+                    .padding(.bottom, 10)
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if app.marked.count > 1, let entry = app.selectedEntry {
+                    ImageActions(app: app, entry: entry)
+                        .padding(.bottom, 14)
+                }
             }
         }
     }
@@ -268,10 +281,10 @@ struct MasonryGalleryView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 12)
             .frame(height: 30)
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.primary.opacity(0.07)))
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Palette.hairline))
+            .background(Capsule().fill(Color.primary.opacity(0.075)))
+            .overlay(Capsule().strokeBorder(Palette.hairline))
 
             ScrollView(.horizontal) {
                 HStack(spacing: 6) {
@@ -316,11 +329,12 @@ struct MasonryGalleryView: View {
                     .font(.callout.weight(.medium))
             }
             .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
             .controlSize(.small)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .glass(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(.vertical, 7)
+        .glass(Capsule())
     }
 
     private func filterChip(title: String, icon: String?, active: Bool, action: @escaping () -> Void) -> some View {

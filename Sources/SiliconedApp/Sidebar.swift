@@ -31,7 +31,7 @@ struct Sidebar: View {
                             MiniChain(app: app)
                                 .padding(.vertical, 8)
                                 .frame(maxWidth: .infinity)
-                                .background(Palette.column)
+                                .background(.ultraThinMaterial)
                                 .overlay(alignment: .bottom) { Rectangle().fill(Palette.hairline).frame(height: 1) }
                                 .contentShape(Rectangle())
                         }
@@ -51,7 +51,6 @@ struct Sidebar: View {
             }
             Footer(app: app)
         }
-        .background(Palette.column)
         // A `.safetensors` or a `.gguf` dropped on the column is imported (model or LoRA).
         .dropDestination(for: URL.self) { urls, _ in
             let s = urls.filter(AppState.importable)
@@ -308,7 +307,6 @@ struct Footer: View {
         if speaks {
             ActivityStatusContents(app: app, showsRunningJob: true)
                 .padding(14)
-                .background(Palette.column)
                 .overlay(alignment: .top) { Divider() }
         }
     }
@@ -322,7 +320,7 @@ struct ActivityCard: View {
         ActivityStatusContents(app: app, showsRunningJob: !app.file.isEmpty)
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .studioCard(cornerRadius: 18)
+            .glass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 

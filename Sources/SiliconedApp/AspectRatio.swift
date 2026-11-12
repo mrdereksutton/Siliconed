@@ -402,13 +402,17 @@ struct PillFace<Content: View>: View {
     var body: some View {
         HStack(spacing: 6.5) { content }
             .font(.callout)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 13)
             .frame(height: 32)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(active ? Palette.live.opacity(0.14) : Color.primary.opacity(hovering ? 0.11 : 0.055)))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(active ? Palette.live.opacity(0.75) : (hovering ? Color.primary.opacity(0.22) : Palette.hairline)))
-            .contentShape(Rectangle())
+            .background(
+                Capsule()
+                    .fill(active ? Palette.live.opacity(0.18) : Color.primary.opacity(hovering ? 0.13 : 0.075))
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(active ? Palette.live.opacity(0.75) : (hovering ? Color.primary.opacity(0.22) : Palette.hairline))
+            )
+            .contentShape(Capsule())
             .onHover { hovering = $0 }
             .animation(Motion.pick(.easeOut(duration: 0.12)), value: hovering)
     }

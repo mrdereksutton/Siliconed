@@ -359,152 +359,6 @@ final class StudioHub {
     }
 }
 
-// MARK: - Studio Theme Switcher Pill & Popover
-
-struct StudioThemePill: View {
-    @State private var open = false
-    @State private var hovering = false
-    private var hub: StudioHub { .shared }
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        let theme = hub.theme
-        Button { open.toggle() } label: {
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(Palette.live)
-                    .frame(width: 8, height: 8)
-                Text(theme.title)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(.primary.opacity(0.9))
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 32)
-            .background(Capsule().fill(hovering || open ? Palette.surfaceElevated : Color.primary.opacity(0.05)))
-            .overlay(Capsule().strokeBorder(open ? Palette.live.opacity(0.6) : Palette.hairline, lineWidth: 1))
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .popover(isPresented: $open, arrowEdge: .bottom) {
-            StudioThemePopover { open = false }
-        }
-        .help("Switch Studio Theme & Atmosphere")
-        .accessibilityLabel(Text("Studio Theme"))
-    }
-}
-
-struct StudioThemePopover: View {
-    let done: () -> Void
-    private var hub: StudioHub { .shared }
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        let _ = hub.theme
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Studio Theme")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(verbatim: "SILICONED STUDIO")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-            }
-
-            VStack(spacing: 8) {
-                ForEach(StudioTheme.allCases) { item in
-                    let selected = hub.theme == item
-                    Button {
-                        withAnimation(Motion.pick(.easeInOut(duration: 0.2))) {
-                            hub.theme = item
-                        }
-                    } label: {
-                        HStack(spacing: 12) {
-                            ThemeMiniatureSwatch(theme: item)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.title)
-                                    .font(.callout.weight(.semibold))
-                                Text(item.subtitle)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                            Spacer(minLength: 6)
-                            if selected {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(Palette.live)
-                                    .imageScale(.medium)
-                            }
-                        }
-                        .padding(9)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(selected ? Palette.live.opacity(0.12) : Palette.well)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .strokeBorder(selected ? Palette.live.opacity(0.75) : Palette.hairline, lineWidth: selected ? 1.5 : 1)
-                        )
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            Divider()
-
-            Toggle(isOn: Bindable(hub).ambientBacklight) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Ambient Backlight").font(.callout.weight(.medium))
-                    Text("Samples atmospheric color glow from the active canvas image")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .tint(Palette.control)
-        }
-        .padding(14)
-        .frame(width: 320)
-    }
-}
-
-private struct ThemeMiniatureSwatch: View {
-    let theme: StudioTheme
-
-    var body: some View {
-        let hexes = theme.swatchHexes
-        ZStack(alignment: .bottomTrailing) {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color(hex: hexes[0]))
-                .frame(width: 44, height: 34)
-                .overlay(alignment: .topLeading) {
-                    HStack(spacing: 2.5) {
-                        Circle().fill(.white.opacity(0.28)).frame(width: 4, height: 4)
-                        Circle().fill(.white.opacity(0.28)).frame(width: 4, height: 4)
-                    }
-                    .padding(5)
-                }
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(.white.opacity(0.16), lineWidth: 1)
-                )
-
-            Capsule()
-                .fill(LinearGradient(
-                    colors: [Color(hex: hexes[1]), Color(hex: hexes[2])],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                ))
-                .frame(width: 22, height: 9)
-                .padding(5)
-        }
-    }
-}
-
 // MARK: - Composer @Subject Vault, Autocomplete & Cited Chips
 
 struct SubjectsVaultPill: View {
@@ -829,23 +683,37 @@ struct AmbientBackdropView: View {
 
     var body: some View {
         let _ = hub.theme
+        let reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
         ZStack {
             Palette.canvas
-            if let aura = activeAura {
+            if hub.ambientBacklight && !reduceTransparency {
                 GeometryReader { geo in
                     let w = geo.size.width
                     let h = geo.size.height
                     ZStack {
-                        Circle()
-                            .fill(aura.primary.opacity(colorScheme == .dark ? 0.22 : 0.13))
-                            .frame(width: max(w, h) * 0.68, height: max(w, h) * 0.68)
-                            .position(x: w * 0.36, y: h * 0.42)
-                        Circle()
-                            .fill(aura.secondary.opacity(colorScheme == .dark ? 0.18 : 0.10))
-                            .frame(width: max(w, h) * 0.62, height: max(w, h) * 0.62)
-                            .position(x: w * 0.66, y: h * 0.62)
+                        if let aura = activeAura {
+                            Circle()
+                                .fill(aura.primary.opacity(colorScheme == .dark ? 0.24 : 0.13))
+                                .frame(width: max(w, h) * 0.68, height: max(w, h) * 0.68)
+                                .position(x: w * 0.36, y: h * 0.42)
+                            Circle()
+                                .fill(aura.secondary.opacity(colorScheme == .dark ? 0.19 : 0.10))
+                                .frame(width: max(w, h) * 0.62, height: max(w, h) * 0.62)
+                                .position(x: w * 0.66, y: h * 0.66)
+                        } else {
+                            // Subtle studio light field so Liquid Glass surfaces (Composer, Sidebar, Toolbar)
+                            // have smooth optical luminance and color gradients to refract even before the first render.
+                            Ellipse()
+                                .fill(Palette.control.opacity(colorScheme == .dark ? 0.18 : 0.08))
+                                .frame(width: max(w, h) * 0.72, height: max(w, h) * 0.50)
+                                .position(x: w * 0.32, y: h * 0.28)
+                            Ellipse()
+                                .fill(Palette.live.opacity(colorScheme == .dark ? 0.12 : 0.06))
+                                .frame(width: max(w, h) * 0.66, height: max(w, h) * 0.44)
+                                .position(x: w * 0.68, y: h * 0.80)
+                        }
                     }
-                    .blur(radius: 120)
+                    .blur(radius: 130)
                     // 16-bit float Metal compositing eliminates 8-bit sRGB gradient banding on dark obsidian surfaces.
                     .drawingGroup(opaque: false, colorMode: .extendedLinear)
                 }

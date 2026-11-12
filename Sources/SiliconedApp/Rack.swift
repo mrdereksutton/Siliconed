@@ -60,8 +60,8 @@ extension View {
     }
 }
 
-/// The boxes' shape: a continuous rounded rectangle, the system's own.
-let boxShape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+/// The boxes' shape: a continuous rounded rectangle concentric with the Liquid Glass sidebar.
+let boxShape = RoundedRectangle(cornerRadius: 14, style: .continuous)
 
 /// What a wire carries: three types, three hues, the same everywhere in the app.
 enum WireKind {

@@ -46,16 +46,18 @@ struct Welcome: View {
                     }
 
                     // Side by side when the canvas holds all five, else 3 + 2, else 2 + 2 + 1 — each row sharing equal card height.
-                    ViewThatFits(in: .horizontal) {
-                        cardRow(families)
-                        VStack(spacing: 18) {
-                            cardRow(Array(families.prefix(3)))
-                            cardRow(Array(families.dropFirst(3)))
-                        }
-                        VStack(spacing: 18) {
-                            cardRow(Array(families.prefix(2)))
-                            cardRow(Array(families.dropFirst(2).prefix(2)))
-                            cardRow(Array(families.dropFirst(4)))
+                    GlassEffectContainer(spacing: 18) {
+                        ViewThatFits(in: .horizontal) {
+                            cardRow(families)
+                            VStack(spacing: 18) {
+                                cardRow(Array(families.prefix(3)))
+                                cardRow(Array(families.dropFirst(3)))
+                            }
+                            VStack(spacing: 18) {
+                                cardRow(Array(families.prefix(2)))
+                                cardRow(Array(families.dropFirst(2).prefix(2)))
+                                cardRow(Array(families.dropFirst(4)))
+                            }
                         }
                     }
 
@@ -144,7 +146,13 @@ struct Welcome: View {
         .padding(20)
         .frame(width: 262)
         .frame(minHeight: family.variants.count > 1 ? 296 : 204, maxHeight: .infinity, alignment: .topLeading)
-        .studioCard(cornerRadius: 16, active: old != nil)
+        .glass(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay {
+            if old != nil {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(Palette.live.opacity(0.75), lineWidth: 1.5)
+            }
+        }
     }
 
     static func symbol(_ family: Family) -> String {

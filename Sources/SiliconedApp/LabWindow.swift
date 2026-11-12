@@ -34,16 +34,11 @@ final class LabWindow: NSObject, NSWindowDelegate {
             return
         }
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 540),
-                         styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                         styleMask: [.titled, .closable, .miniaturizable, .resizable],
                          backing: .buffered, defer: true)
         w.title = String(localized: "Prompt Lab")
-        let toolbar = NSToolbar(identifier: "SiliconedLabChrome")
-        toolbar.allowsUserCustomization = false
-        w.toolbar = toolbar
         w.toolbarStyle = .unified
-        w.titlebarAppearsTransparent = true
-        w.titleVisibility = .hidden
-        w.titlebarSeparatorStyle = .none
+        w.titlebarSeparatorStyle = .automatic
         w.backgroundColor = Palette.columnInk
         w.isReleasedWhenClosed = false
         w.isRestorable = false
@@ -51,6 +46,7 @@ final class LabWindow: NSObject, NSWindowDelegate {
         w.delegate = self
         let host = NSHostingController(rootView: LabView(model: model, inWindow: true))
         host.sizingOptions = []
+        host.sceneBridgingOptions = [.toolbars]
         w.contentViewController = host
         w.setContentSize(NSSize(width: 780, height: 540))
         w.center()
